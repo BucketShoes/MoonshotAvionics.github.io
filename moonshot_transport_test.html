@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Moonshot Browser Test</title>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --card: #111827;
+    --border: #1e293b;
+    --text: #e2e8f0;
+    --dim: #64748b;
+    --accent: #22d3ee;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --fail: #f87171;
+    --blue: #60a5fa;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    background: var(--bg);
+    color: var(--text);
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 16px;
+    color: var(--accent);
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+  }
+  .subtitle {
+    color: var(--dim);
+    font-size: 11px;
+    margin-bottom: 16px;
+  }
+  .section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--blue);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .section-title .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dim);
+    flex-shrink: 0;
+  }
+  .section-title .dot.ok { background: var(--ok); }
+  .section-title .dot.warn { background: var(--warn); }
+  .section-title .dot.fail { background: var(--fail); }
+  .section-title .dot.active { background: var(--accent); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row .label { color: var(--dim); }
+  .row .value { color: var(--text); text-align: right; }
+  .row .value.ok { color: var(--ok); }
+  .row .value.warn { color: var(--warn); }
+  .row .value.fail { color: var(--fail); }
+
+  button {
+    background: var(--border);
+    color: var(--text);
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    margin: 4px 4px 4px 0;
+    transition: background 0.15s;
+  }
+  button:hover { background: #334155; }
+  button:active { background: #475569; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary {
+    background: #164e63;
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .log-area {
+    background: #0f172a;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 8px;
+    word-break: break-all;
+  }
+  .log-area .log-ok { color: var(--ok); }
+  .log-area .log-warn { color: var(--warn); }
+  .log-area .log-fail { color: var(--fail); }
+  .log-area .log-data { color: var(--accent); }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .progress-bar .fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.1s;
+  }
+
+  .throughput {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+    text-align: center;
+    padding: 8px 0;
+  }
+  .throughput .unit {
+    font-size: 12px;
+    color: var(--dim);
+    font-weight: 400;
+  }
+</style>
+</head>
+<body>
+
+<h1>MOONSHOT BROWSER TEST</h1>
+<div class="subtitle">Testing BLE, USB, Storage, Crypto, Speech, PWA</div>
+
+<!-- ── API Support Detection ── -->
+<div class="section" id="sec-detect">
+  <div class="section-title"><span class="dot" id="dot-detect"></span> API Detection</div>
+  <div id="detect-rows"></div>
+</div>
+
+<!-- ── BLE Test ── -->
+<div class="section" id="sec-ble">
+  <div class="section-title"><span class="dot" id="dot-ble"></span> Web Bluetooth (BLE)</div>
+  <div>
+    <button class="primary" onclick="bleConnect()">Connect</button>
+    <button onclick="bleDisconnect()" id="btn-ble-dc" disabled>Disconnect</button>
+    <button onclick="blePing()" id="btn-ble-ping" disabled>Ping</button>
+    <button onclick="bleDownload(100)" id="btn-ble-dl100" disabled>DL 100</button>
+    <button onclick="bleDownload(2000)" id="btn-ble-dl2000" disabled>DL 2k</button>
+    <button onclick="bleDownload(10000)" id="btn-ble-dl10k" disabled>DL 10k</button>
+    <button onclick="bleDownload(100000)" id="btn-ble-dl100k" disabled>DL 100k</button>
+  </div>
+  <div id="ble-status-rows">
+    <div class="row"><span class="label">State</span><span class="value" id="ble-state">Disconnected</span></div>
+    <div class="row"><span class="label">MTU</span><span class="value" id="ble-mtu">—</span></div>
+    <div class="row"><span class="label">Device</span><span class="value" id="ble-device">—</span></div>
+    <div class="row"><span class="label">Data mode</span><span class="value" id="ble-datamode">—</span></div>
+    <div class="row"><span class="label">Available records</span><span class="value" id="ble-totalrecs">—</span></div>
+  </div>
+  <div id="ble-dl-info" style="display:none">
+    <div class="row"><span class="label">Records</span><span class="value" id="ble-dl-records">0</span></div>
+    <div class="row"><span class="label">Bytes</span><span class="value" id="ble-dl-bytes">0</span></div>
+    <div class="row"><span class="label">Time</span><span class="value" id="ble-dl-time">—</span></div>
+    <div class="throughput"><span id="ble-throughput">—</span> <span class="unit">KB/s</span></div>
+    <div class="progress-bar"><div class="fill" id="ble-progress"></div></div>
+  </div>
+  <div class="log-area" id="ble-log"></div>
+</div>
+
+<!-- ── USB Test ── -->
+<div class="section" id="sec-usb">
+  <div class="section-title"><span class="dot" id="dot-usb"></span> WebSerial (USB)</div>
+  <div>
+    <button class="primary" onclick="usbConnect()">Connect</button>
+    <button onclick="usbDisconnect()" id="btn-usb-dc" disabled>Disconnect</button>
+    <button onclick="usbPing()" id="btn-usb-ping" disabled>Ping</button>
+    <button onclick="usbDownload(100)" id="btn-usb-dl100" disabled>Download 100</button>
+    <button onclick="usbDownload(500)" id="btn-usb-dl500" disabled>Download 500</button>
+    <button onclick="usbDownload(2000)" id="btn-usb-dl2000" disabled>Download 2000</button>
+  </div>
+  <div id="usb-status-rows">
+    <div class="row"><span class="label">State</span><span class="value" id="usb-state">Disconnected</span></div>
+    <div class="row"><span class="label">Port</span><span class="value" id="usb-port">—</span></div>
+  </div>
+  <div id="usb-dl-info" style="display:none">
+    <div class="row"><span class="label">Bytes</span><span class="value" id="usb-dl-bytes">0</span></div>
+    <div class="row"><span class="label">Time</span><span class="value" id="usb-dl-time">—</span></div>
+    <div class="throughput"><span id="usb-throughput">—</span> <span class="unit">KB/s</span></div>
+    <div class="progress-bar"><div class="fill" id="usb-progress"></div></div>
+  </div>
+  <div class="log-area" id="usb-log"></div>
+</div>
+
+<!-- ── IndexedDB Test ── -->
+<div class="section" id="sec-idb">
+  <div class="section-title"><span class="dot" id="dot-idb"></span> IndexedDB Storage</div>
+  <div>
+    <button class="primary" onclick="idbTestWrite()">Write 6MB</button>
+    <button onclick="idbTestRead()">Read Back</button>
+    <button onclick="idbTestDelete()">Delete</button>
+    <button onclick="idbEstimateQuota()">Check Quota</button>
+  </div>
+  <div id="idb-rows">
+    <div class="row"><span class="label">Available</span><span class="value" id="idb-avail">—</span></div>
+    <div class="row"><span class="label">Quota</span><span class="value" id="idb-quota">—</span></div>
+    <div class="row"><span class="label">Write speed</span><span class="value" id="idb-write-speed">—</span></div>
+    <div class="row"><span class="label">Read speed</span><span class="value" id="idb-read-speed">—</span></div>
+    <div class="row"><span class="label">Integrity</span><span class="value" id="idb-integrity">—</span></div>
+  </div>
+  <div class="log-area" id="idb-log"></div>
+</div>
+
+<!-- ── Crypto Test ── -->
+<div class="section" id="sec-crypto">
+  <div class="section-title"><span class="dot" id="dot-crypto"></span> SubtleCrypto / HMAC</div>
+  <div>
+    <button class="primary" onclick="cryptoTestSubtle()">Test SubtleCrypto</button>
+    <button onclick="cryptoTestPbkdf2()">Test PBKDF2</button>
+  </div>
+  <div id="crypto-rows">
+    <div class="row"><span class="label">SubtleCrypto</span><span class="value" id="crypto-subtle">—</span></div>
+    <div class="row"><span class="label">HMAC-SHA256</span><span class="value" id="crypto-hmac">—</span></div>
+    <div class="row"><span class="label">PBKDF2</span><span class="value" id="crypto-pbkdf2">—</span></div>
+    <div class="row"><span class="label">Time</span><span class="value" id="crypto-time">—</span></div>
+  </div>
+  <div class="log-area" id="crypto-log"></div>
+</div>
+
+<!-- ── Speech Test ── -->
+<div class="section" id="sec-speech">
+  <div class="section-title"><span class="dot" id="dot-speech"></span> Web Speech API</div>
+  <div>
+    <button class="primary" onclick="speechTest()">Test Voice</button>
+    <button onclick="speechTestFlight()">Simulate Flight Callouts</button>
+  </div>
+  <div id="speech-rows">
+    <div class="row"><span class="label">Available</span><span class="value" id="speech-avail">—</span></div>
+    <div class="row"><span class="label">Voices</span><span class="value" id="speech-voices">—</span></div>
+    <div class="row"><span class="label">Offline capable</span><span class="value" id="speech-offline">—</span></div>
+  </div>
+  <div class="log-area" id="speech-log"></div>
+</div>
+
+<!-- ── Service Worker / PWA ── -->
+<div class="section" id="sec-sw">
+  <div class="section-title"><span class="dot" id="dot-sw"></span> Service Worker / PWA</div>
+  <div>
+    <button class="primary" onclick="swRegister()">Register SW</button>
+    <button onclick="swUnregister()">Unregister</button>
+  </div>
+  <div id="sw-rows">
+    <div class="row"><span class="label">Secure context</span><span class="value" id="sw-secure">—</span></div>
+    <div class="row"><span class="label">SW support</span><span class="value" id="sw-support">—</span></div>
+    <div class="row"><span class="label">SW state</span><span class="value" id="sw-state">—</span></div>
+    <div class="row"><span class="label">Protocol</span><span class="value" id="sw-protocol">—</span></div>
+  </div>
+  <div class="log-area" id="sw-log"></div>
+</div>
+
+<script>
+// ── Logging helpers ──────────────────────────────────────────────────────────
+
+function log(areaId, msg, cls = '') {
+  const area = document.getElementById(areaId);
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  const ts = new Date().toLocaleTimeString('en-AU', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  line.textContent = `[${ts}] ${msg}`;
+  area.appendChild(line);
+  area.scrollTop = area.scrollHeight;
+}
+
+function setVal(id, text, cls = '') {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'value' + (cls ? ' ' + cls : '');
+}
+
+function setDot(id, state) {
+  document.getElementById(id).className = 'dot ' + state;
+}
+
+// ── API Detection ──────────────────────────────────────────────────────────
+
+function detectAPIs() {
+  const apis = [
+    ['Web Bluetooth', !!navigator.bluetooth],
+    ['WebSerial', !!navigator.serial],
+    ['WebUSB', !!navigator.usb],
+    ['IndexedDB', !!window.indexedDB],
+    ['SubtleCrypto', !!(window.crypto && window.crypto.subtle)],
+    ['Web Speech', !!window.speechSynthesis],
+    ['Service Worker', !!navigator.serviceWorker],
+    ['Secure Context', !!window.isSecureContext],
+    ['Storage Estimate', !!(navigator.storage && navigator.storage.estimate)],
+  ];
+
+  const container = document.getElementById('detect-rows');
+  let allOk = true;
+  let anyFail = false;
+
+  apis.forEach(([name, ok]) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<span class="label">${name}</span><span class="value ${ok ? 'ok' : 'fail'}">${ok ? '✓' : '✗'}</span>`;
+    container.appendChild(row);
+    if (!ok) allOk = false;
+    if (!ok && ['Web Bluetooth', 'IndexedDB'].includes(name)) anyFail = true;
+  });
+
+  setDot('dot-detect', allOk ? 'ok' : anyFail ? 'fail' : 'warn');
+}
+
+// ── BLE ────────────────────────────────────────────────────────────────────
+
+const BLE_SERVICE = '4d4f4f4e-5348-4f54-0001-000000000000';
+const BLE_CONTROL = '4d4f4f4e-5348-4f54-0001-000000000001';
+const BLE_DATA    = '4d4f4f4e-5348-4f54-0001-000000000002';
+const BLE_STATUS  = '4d4f4f4e-5348-4f54-0001-000000000003';
+const BLE_TELEM   = '4d4f4f4e-5348-4f54-0001-000000000004';
+
+let bleDevice = null;
+let bleServer = null;
+let bleControlChar = null;
+let bleDataChar = null;
+let bleStatusChar = null;
+let bleTelemChar = null;
+
+// Download state
+let bleDownloadResolve = null;
+let bleDownloadBytes = 0;
+let bleDownloadRecords = 0;
+let bleDownloadStart = 0;
+let bleDownloadExpected = 0;
+let bleRawChunks = [];
+
+async function bleConnect() {
+  try {
+    log('ble-log', 'Requesting device...');
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [BLE_SERVICE] }],
+      optionalServices: [BLE_SERVICE]
+    });
+
+    setVal('ble-device', bleDevice.name || 'Unknown');
+    log('ble-log', `Device: ${bleDevice.name}`, 'log-ok');
+
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      setVal('ble-state', 'Disconnected', 'fail');
+      setDot('dot-ble', 'fail');
+      setBleButtons(false);
+      log('ble-log', 'Disconnected', 'log-warn');
+    });
+
+    log('ble-log', 'Connecting GATT...');
+    bleServer = await bleDevice.gatt.connect();
+    
+    // Check MTU (not directly exposed in Web Bluetooth, but we can infer from notification size)
+    setVal('ble-state', 'Connected', 'ok');
+    setVal('ble-mtu', 'negotiating...');
+    
+    log('ble-log', 'Getting service...');
+    const service = await bleServer.getPrimaryService(BLE_SERVICE);
+
+    bleControlChar = await service.getCharacteristic(BLE_CONTROL);
+    bleDataChar = await service.getCharacteristic(BLE_DATA);
+    bleStatusChar = await service.getCharacteristic(BLE_STATUS);
+    bleTelemChar = await service.getCharacteristic(BLE_TELEM);
+
+    // Subscribe to data notifications
+    await bleDataChar.startNotifications();
+    bleDataChar.addEventListener('characteristicvaluechanged', onBleData);
+
+    // Subscribe to status
+    await bleStatusChar.startNotifications();
+    bleStatusChar.addEventListener('characteristicvaluechanged', onBleStatus);
+
+    // Subscribe to telemetry
+    await bleTelemChar.startNotifications();
+    bleTelemChar.addEventListener('characteristicvaluechanged', onBleTelemetry);
+
+    // Read initial status
+    const statusVal = await bleStatusChar.readValue();
+    parseStatus(statusVal);
+
+    setDot('dot-ble', 'ok');
+    setBleButtons(true);
+    log('ble-log', 'All characteristics ready', 'log-ok');
+
+  } catch (e) {
+    log('ble-log', `Error: ${e.message}`, 'log-fail');
+    setDot('dot-ble', 'fail');
+  }
+}
+
+function setBleButtons(connected) {
+  document.getElementById('btn-ble-dc').disabled = !connected;
+  document.getElementById('btn-ble-ping').disabled = !connected;
+  document.getElementById('btn-ble-dl100').disabled = !connected;
+  document.getElementById('btn-ble-dl2000').disabled = !connected;
+  document.getElementById('btn-ble-dl10k').disabled = !connected;
+  document.getElementById('btn-ble-dl100k').disabled = !connected;
+}
+
+async function bleDisconnect() {
+  if (bleDevice && bleDevice.gatt.connected) {
+    bleDevice.gatt.disconnect();
+  }
+}
+
+async function blePing() {
+  try {
+    const cmd = new Uint8Array([0x40]);  // PING
+    await bleControlChar.writeValue(cmd);
+    log('ble-log', 'Ping sent', 'log-data');
+  } catch (e) {
+    log('ble-log', `Ping error: ${e.message}`, 'log-fail');
+  }
+}
+
+async function bleDownload(count) {
+  try {
+    document.getElementById('ble-dl-info').style.display = '';
+    bleDownloadBytes = 0;
+    bleDownloadRecords = 0;
+    bleDownloadExpected = count;
+    bleRawChunks = [];
+    setVal('ble-dl-records', '0');
+    setVal('ble-dl-bytes', '0');
+    setVal('ble-dl-time', '...');
+    setVal('ble-throughput', '...');
+    document.getElementById('ble-progress').style.width = '0%';
+
+    // Build command: 0x20 + uint32 start + uint16 countLow [+ uint16 countHigh if >65535]
+    const needExtended = count > 65535;
+    const cmdLen = needExtended ? 9 : 7;
+    const cmd = new ArrayBuffer(cmdLen);
+    const view = new DataView(cmd);
+    view.setUint8(0, 0x20);
+    view.setUint32(1, 0, true);  // start at record 0
+    view.setUint16(5, count & 0xFFFF, true);
+    if (needExtended) {
+      view.setUint16(7, (count >> 16) & 0xFFFF, true);
+    }
+
+    bleDownloadStart = performance.now();
+    await bleControlChar.writeValue(new Uint8Array(cmd));
+    log('ble-log', `Download requested: ${count.toLocaleString()} records${needExtended ? ' (extended)' : ''}`, 'log-data');
+
+  } catch (e) {
+    log('ble-log', `Download error: ${e.message}`, 'log-fail');
+  }
+}
+
+function onBleData(event) {
+  const data = new Uint8Array(event.target.value.buffer);
+
+  // Check for end marker: starts with 0xFF 0xFF 0xFF 0xFF
+  if (data.length >= 5 && data[0] === 0xFF && data[1] === 0xFF && data[2] === 0xFF && data[3] === 0xFF) {
+    const elapsed = performance.now() - bleDownloadStart;
+    const kbps = (bleDownloadBytes / 1024) / (elapsed / 1000);
+    setVal('ble-dl-time', `${elapsed.toFixed(0)} ms`);
+    setVal('ble-throughput', kbps.toFixed(1));
+    document.getElementById('ble-progress').style.width = '100%';
+    
+    // Infer MTU from largest chunk received
+    let maxChunk = 0;
+    bleRawChunks.forEach(c => { if (c > maxChunk) maxChunk = c; });
+    setVal('ble-mtu', `~${maxChunk + 3} (inferred)`);
+    
+    log('ble-log', `Download complete: ${bleDownloadRecords.toLocaleString()} records, ${(bleDownloadBytes/1024).toFixed(1)} KB, ${(elapsed/1000).toFixed(1)}s, ${kbps.toFixed(1)} KB/s`, 'log-ok');
+    
+    // Estimate full 6MB download time at this speed
+    if (kbps > 0) {
+      const est6mb = (6 * 1024) / kbps;
+      log('ble-log', `At this speed, 6MB would take ${est6mb.toFixed(0)}s (${(est6mb/60).toFixed(1)} min)`, 'log-data');
+    }
+    
+    // Try to parse first few records
+    parseRecordSample();
+    return;
+  }
+
+  // Parse chunk: uint32 startRecord + uint8 count + records
+  if (data.length < 6) return;
+  const view = new DataView(data.buffer);
+  const startRec = view.getUint32(0, true);
+  const recCount = data[4];
+
+  bleDownloadBytes += data.length;
+  bleDownloadRecords += recCount;
+  bleRawChunks.push(data.length);
+
+  setVal('ble-dl-records', bleDownloadRecords.toString());
+  setVal('ble-dl-bytes', bleDownloadBytes.toString());
+
+  if (bleDownloadExpected > 0) {
+    const pct = Math.min(100, (bleDownloadRecords / bleDownloadExpected) * 100);
+    document.getElementById('ble-progress').style.width = pct.toFixed(1) + '%';
+  }
+
+  // Live throughput
+  const elapsed = performance.now() - bleDownloadStart;
+  if (elapsed > 100) {
+    const kbps = (bleDownloadBytes / 1024) / (elapsed / 1000);
+    setVal('ble-throughput', kbps.toFixed(1));
+  }
+}
+
+function parseRecordSample() {
+  // Just log that we could parse — full parsing would use the same code as the dashboard
+  log('ble-log', `Received ${bleRawChunks.length} BLE notifications`, 'log-data');
+  log('ble-log', `Chunk sizes: min=${Math.min(...bleRawChunks)}, max=${Math.max(...bleRawChunks)}, avg=${(bleRawChunks.reduce((a,b)=>a+b,0)/bleRawChunks.length).toFixed(0)}`, 'log-data');
+}
+
+function onBleStatus(event) {
+  parseStatus(event.target.value);
+}
+
+function parseStatus(dataView) {
+  if (dataView.byteLength < 12) return;
+  const deviceId = dataView.getUint8(0);
+  const totalRecords = dataView.getUint32(1, true);
+  const connected = dataView.getUint8(5);
+  const mtu = dataView.getUint16(6, true);
+  const uptime = dataView.getUint32(8, true);
+  
+  // v2 extended fields
+  let randomMode = '?';
+  let recSize = '?';
+  if (dataView.byteLength >= 14) {
+    randomMode = dataView.getUint8(12) ? 'RANDOM' : 'realistic';
+    recSize = dataView.getUint8(13);
+  }
+
+  setVal('ble-mtu', mtu.toString());
+  setVal('ble-totalrecs', totalRecords.toLocaleString());
+  setVal('ble-datamode', randomMode + (recSize !== '?' ? ` (~${recSize}B/rec)` : ''), 
+         randomMode === 'RANDOM' ? 'warn' : 'ok');
+  log('ble-log', `Status: dev=${deviceId} recs=${totalRecords.toLocaleString()} mtu=${mtu} mode=${randomMode} up=${(uptime/1000).toFixed(1)}s`, 'log-data');
+}
+
+let bleTelemCount = 0;
+function onBleTelemetry(event) {
+  bleTelemCount++;
+  const data = new Uint8Array(event.target.value.buffer);
+  if (data.length < 10) return;
+  
+  // Parse 0xAF header
+  const view = new DataView(data.buffer);
+  const type = data[0];
+  const deviceId = data[1];
+  const fusionAlt = view.getInt16(6, true);
+  const flags = view.getUint16(8, true);
+  const phase = flags & 0x0F;
+  const armed = (flags >> 4) & 1;
+
+  // Log every 5th to avoid flooding
+  if (bleTelemCount % 5 === 0) {
+    let pageStr = '';
+    if (data.length > 10) {
+      pageStr = `, page=0x${data[10].toString(16).padStart(2,'0')}`;
+    }
+    log('ble-log', `Telem #${bleTelemCount}: alt=${fusionAlt}m phase=${phase} armed=${armed}${pageStr} (${data.length}B)`, 'log-data');
+  }
+}
+
+// ── USB (WebSerial) ────────────────────────────────────────────────────────
+
+let usbPort = null;
+let usbReader = null;
+let usbWriter = null;
+let usbReadBuffer = new Uint8Array(0);
+
+// Download state
+let usbDownloadBytes = 0;
+let usbDownloadStartTime = 0;
+let usbDownloadActive = false;
+
+async function usbConnect() {
+  try {
+    log('usb-log', 'Requesting port...');
+    usbPort = await navigator.serial.requestPort();
+    
+    await usbPort.open({ baudRate: 115200 });
+    setVal('usb-state', 'Connected', 'ok');
+    setVal('usb-port', usbPort.getInfo ? JSON.stringify(usbPort.getInfo()) : 'opened');
+    setDot('dot-usb', 'ok');
+
+    document.getElementById('btn-usb-dc').disabled = false;
+    document.getElementById('btn-usb-ping').disabled = false;
+    document.getElementById('btn-usb-dl100').disabled = false;
+    document.getElementById('btn-usb-dl500').disabled = false;
+    document.getElementById('btn-usb-dl2000').disabled = false;
+
+    // Start reading
+    usbReadLoop();
+
+    log('usb-log', 'Port opened', 'log-ok');
+  } catch (e) {
+    log('usb-log', `Error: ${e.message}`, 'log-fail');
+    setDot('dot-usb', 'fail');
+  }
+}
+
+async function usbDisconnect() {
+  try {
+    if (usbReader) {
+      await usbReader.cancel();
+      usbReader = null;
+    }
+    if (usbPort) {
+      await usbPort.close();
+      usbPort = null;
+    }
+    setVal('usb-state', 'Disconnected', 'fail');
+    setDot('dot-usb', '');
+    document.getElementById('btn-usb-dc').disabled = true;
+    document.getElementById('btn-usb-ping').disabled = true;
+    document.getElementById('btn-usb-dl100').disabled = true;
+    document.getElementById('btn-usb-dl500').disabled = true;
+    document.getElementById('btn-usb-dl2000').disabled = true;
+    log('usb-log', 'Disconnected', 'log-warn');
+  } catch (e) {
+    log('usb-log', `Disconnect error: ${e.message}`, 'log-fail');
+  }
+}
+
+async function usbReadLoop() {
+  try {
+    const reader = usbPort.readable.getReader();
+    usbReader = reader;
+    
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      
+      if (usbDownloadActive) {
+        usbDownloadBytes += value.length;
+        
+        // Check for end marker (2 zero bytes)
+        // Simple check: if last 2 bytes are 0,0 it might be end
+        // In practice we'd frame properly, but for test:
+        const elapsed = performance.now() - usbDownloadStartTime;
+        setVal('usb-dl-bytes', usbDownloadBytes.toString());
+        if (elapsed > 50) {
+          const kbps = (usbDownloadBytes / 1024) / (elapsed / 1000);
+          setVal('usb-throughput', kbps.toFixed(1));
+        }
+        
+        // Check for end marker
+        if (value.length >= 2 && value[value.length - 2] === 0 && value[value.length - 1] === 0) {
+          usbDownloadActive = false;
+          const kbps = (usbDownloadBytes / 1024) / (elapsed / 1000);
+          setVal('usb-dl-time', `${elapsed.toFixed(0)} ms`);
+          setVal('usb-throughput', kbps.toFixed(1));
+          document.getElementById('usb-progress').style.width = '100%';
+          log('usb-log', `Download complete: ${usbDownloadBytes} bytes, ${elapsed.toFixed(0)} ms, ${kbps.toFixed(1)} KB/s`, 'log-ok');
+        }
+      } else {
+        // Regular data — log it
+        const text = new TextDecoder().decode(value);
+        if (text.trim()) {
+          log('usb-log', `RX: ${text.trim()}`, 'log-data');
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'NetworkError') {  // expected on disconnect
+      log('usb-log', `Read error: ${e.message}`, 'log-fail');
+    }
+  }
+}
+
+async function usbSend(data) {
+  if (!usbPort || !usbPort.writable) return;
+  const writer = usbPort.writable.getWriter();
+  await writer.write(data);
+  writer.releaseLock();
+}
+
+async function usbPing() {
+  try {
+    await usbSend(new Uint8Array([0x40]));
+    log('usb-log', 'Ping sent', 'log-data');
+  } catch (e) {
+    log('usb-log', `Ping error: ${e.message}`, 'log-fail');
+  }
+}
+
+async function usbDownload(count) {
+  try {
+    document.getElementById('usb-dl-info').style.display = '';
+    usbDownloadBytes = 0;
+    usbDownloadActive = true;
+    setVal('usb-dl-bytes', '0');
+    setVal('usb-dl-time', '...');
+    setVal('usb-throughput', '...');
+    document.getElementById('usb-progress').style.width = '0%';
+
+    const cmd = new ArrayBuffer(7);
+    const view = new DataView(cmd);
+    view.setUint8(0, 0x20);
+    view.setUint32(1, 0, true);
+    view.setUint16(5, count, true);
+
+    usbDownloadStartTime = performance.now();
+    await usbSend(new Uint8Array(cmd));
+    log('usb-log', `Download requested: ${count} records`, 'log-data');
+  } catch (e) {
+    log('usb-log', `Download error: ${e.message}`, 'log-fail');
+  }
+}
+
+// ── IndexedDB ──────────────────────────────────────────────────────────────
+
+const IDB_NAME = 'moonshot-test';
+const IDB_STORE = 'logs';
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbTestWrite() {
+  try {
+    setDot('dot-idb', 'active');
+    log('idb-log', 'Generating 6MB test data...');
+    
+    // Generate 6MB of fake log data
+    const size = 6 * 1024 * 1024;
+    const data = new Uint8Array(size);
+    // Fill with recognizable pattern (not just zeros)
+    for (let i = 0; i < size; i++) {
+      data[i] = (i * 7 + 13) & 0xFF;
+    }
+    
+    const db = await idbOpen();
+    const start = performance.now();
+    
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.put(data, 'test-6mb');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    
+    const elapsed = performance.now() - start;
+    const mbps = (size / (1024 * 1024)) / (elapsed / 1000);
+    setVal('idb-write-speed', `${mbps.toFixed(1)} MB/s (${elapsed.toFixed(0)} ms)`);
+    setDot('dot-idb', 'ok');
+    log('idb-log', `Wrote ${(size/1024/1024).toFixed(1)} MB in ${elapsed.toFixed(0)} ms = ${mbps.toFixed(1)} MB/s`, 'log-ok');
+    db.close();
+  } catch (e) {
+    log('idb-log', `Write error: ${e.message}`, 'log-fail');
+    setDot('dot-idb', 'fail');
+  }
+}
+
+async function idbTestRead() {
+  try {
+    setDot('dot-idb', 'active');
+    const db = await idbOpen();
+    const start = performance.now();
+    
+    const data = await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get('test-6mb');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    
+    const elapsed = performance.now() - start;
+    
+    if (!data) {
+      log('idb-log', 'No data found — write first', 'log-warn');
+      setVal('idb-read-speed', 'no data');
+      db.close();
+      return;
+    }
+    
+    const size = data.byteLength;
+    const mbps = (size / (1024 * 1024)) / (elapsed / 1000);
+    setVal('idb-read-speed', `${mbps.toFixed(1)} MB/s (${elapsed.toFixed(0)} ms)`);
+    
+    // Verify integrity
+    let ok = true;
+    for (let i = 0; i < Math.min(size, 10000); i++) {
+      if (data[i] !== ((i * 7 + 13) & 0xFF)) {
+        ok = false;
+        break;
+      }
+    }
+    setVal('idb-integrity', ok ? '✓ verified' : '✗ CORRUPT', ok ? 'ok' : 'fail');
+    setDot('dot-idb', ok ? 'ok' : 'fail');
+    log('idb-log', `Read ${(size/1024/1024).toFixed(1)} MB in ${elapsed.toFixed(0)} ms = ${mbps.toFixed(1)} MB/s, integrity ${ok ? 'OK' : 'FAIL'}`, ok ? 'log-ok' : 'log-fail');
+    db.close();
+  } catch (e) {
+    log('idb-log', `Read error: ${e.message}`, 'log-fail');
+    setDot('dot-idb', 'fail');
+  }
+}
+
+async function idbTestDelete() {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.delete('test-6mb');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    log('idb-log', 'Deleted test data', 'log-ok');
+    setVal('idb-integrity', '—');
+    db.close();
+  } catch (e) {
+    log('idb-log', `Delete error: ${e.message}`, 'log-fail');
+  }
+}
+
+async function idbEstimateQuota() {
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      const usedMB = (est.usage / 1024 / 1024).toFixed(1);
+      const quotaMB = (est.quota / 1024 / 1024).toFixed(0);
+      setVal('idb-quota', `${usedMB} MB / ${quotaMB} MB`);
+      log('idb-log', `Quota: ${usedMB} MB used of ${quotaMB} MB`, 'log-data');
+    } else {
+      setVal('idb-quota', 'API not available', 'warn');
+    }
+  } catch (e) {
+    log('idb-log', `Quota error: ${e.message}`, 'log-fail');
+  }
+}
+
+// ── Crypto ─────────────────────────────────────────────────────────────────
+
+async function cryptoTestSubtle() {
+  try {
+    setDot('dot-crypto', 'active');
+    
+    if (!window.crypto || !window.crypto.subtle) {
+      setVal('crypto-subtle', '✗ NOT AVAILABLE', 'fail');
+      setDot('dot-crypto', 'fail');
+      log('crypto-log', 'SubtleCrypto not available — not a secure context?', 'log-fail');
+      return;
+    }
+    
+    setVal('crypto-subtle', '✓ available', 'ok');
+    
+    // Test HMAC-SHA256 with Moonshot's actual key
+    const key = new Uint8Array([
+      0x6c,0xb1,0xd8,0x4e,0xd7,0xfb,0xd3,0x6b,0x0f,0x35,0x64,0x7a,0xb8,0xa7,0x7b,0x77,
+      0x5c,0xe2,0xe1,0x85,0x15,0xe5,0xc8,0xeb,0x04,0xfc,0xf7,0x35,0xb3,0xc0,0x3a,0x58
+    ]);
+    
+    const start = performance.now();
+    
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    
+    // Sign a fake command payload
+    const payload = new Uint8Array([0x9A, 0x2A, 0x01, 0x00, 0x00, 0x00, 0x01]);
+    const sig = await crypto.subtle.sign('HMAC', cryptoKey, payload);
+    const sigBytes = new Uint8Array(sig);
+    
+    const elapsed = performance.now() - start;
+    
+    // Truncate to 10 bytes like Moonshot does
+    const truncated = sigBytes.slice(0, 10);
+    const hex = Array.from(truncated).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    
+    setVal('crypto-hmac', `✓ ${hex}`, 'ok');
+    setVal('crypto-time', `${elapsed.toFixed(1)} ms`);
+    setDot('dot-crypto', 'ok');
+    log('crypto-log', `HMAC-SHA256 OK in ${elapsed.toFixed(1)} ms: ${hex}`, 'log-ok');
+    
+  } catch (e) {
+    log('crypto-log', `SubtleCrypto error: ${e.message}`, 'log-fail');
+    setVal('crypto-subtle', `✗ ${e.message}`, 'fail');
+    setDot('dot-crypto', 'fail');
+  }
+}
+
+async function cryptoTestPbkdf2() {
+  try {
+    if (!window.crypto || !window.crypto.subtle) {
+      log('crypto-log', 'SubtleCrypto not available', 'log-fail');
+      return;
+    }
+    
+    const start = performance.now();
+    
+    const password = 'test-password-123';
+    const salt = new TextEncoder().encode('moonshot-hmac-salt');
+    
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']
+    );
+    
+    const derived = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+      keyMaterial, 256
+    );
+    
+    const elapsed = performance.now() - start;
+    const hex = Array.from(new Uint8Array(derived)).slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    
+    setVal('crypto-pbkdf2', `✓ ${hex}...`, 'ok');
+    setVal('crypto-time', `${elapsed.toFixed(0)} ms`);
+    log('crypto-log', `PBKDF2 (100k iterations) in ${elapsed.toFixed(0)} ms`, 'log-ok');
+    
+  } catch (e) {
+    log('crypto-log', `PBKDF2 error: ${e.message}`, 'log-fail');
+    setVal('crypto-pbkdf2', `✗ ${e.message}`, 'fail');
+  }
+}
+
+// ── Speech ─────────────────────────────────────────────────────────────────
+
+function speechTest() {
+  try {
+    if (!window.speechSynthesis) {
+      setVal('speech-avail', '✗', 'fail');
+      setDot('dot-speech', 'fail');
+      return;
+    }
+    
+    setVal('speech-avail', '✓', 'ok');
+    
+    const voices = speechSynthesis.getVoices();
+    setVal('speech-voices', voices.length.toString());
+    
+    const utt = new SpeechSynthesisUtterance('Moonshot is ready to launch');
+    utt.rate = 1.2;
+    
+    utt.onend = () => {
+      setDot('dot-speech', 'ok');
+      log('speech-log', 'Speech completed', 'log-ok');
+      
+      // Test if it would work offline (heuristic: local voices available)
+      const localVoices = voices.filter(v => v.localService);
+      setVal('speech-offline', localVoices.length > 0 ? `✓ (${localVoices.length} local)` : '? (no local voices detected)', localVoices.length > 0 ? 'ok' : 'warn');
+    };
+    
+    utt.onerror = (e) => {
+      log('speech-log', `Speech error: ${e.error}`, 'log-fail');
+      setDot('dot-speech', 'fail');
+    };
+    
+    speechSynthesis.speak(utt);
+    setDot('dot-speech', 'active');
+    log('speech-log', 'Speaking: "Moonshot is ready to launch"');
+    
+  } catch (e) {
+    log('speech-log', `Speech error: ${e.message}`, 'log-fail');
+    setDot('dot-speech', 'fail');
+  }
+}
+
+function speechTestFlight() {
+  const callouts = [
+    { delay: 0, text: 'Armed', moonshot: 'F T S is armed for launch' },
+    { delay: 2000, text: 'Ready to launch', moonshot: 'Moonshot is ready to launch' },
+    { delay: 5000, text: 'Boost', moonshot: 'Max Q' },
+    { delay: 7000, text: 'Coast', moonshot: 'Stage 2 ignition' },
+    { delay: 10000, text: 'Apogee at 6 hundred meters', moonshot: 'Nominal orbit 6 hundred kilometers' },
+    { delay: 12000, text: '4 hundred', moonshot: 'T L I burn 4 hundred seconds' },
+    { delay: 14000, text: '2 hundred', moonshot: 'T L I burn 2 hundred seconds' },
+    { delay: 16000, text: 'Landed', moonshot: 'Trans-lunar injection complete' },
+    { delay: 19000, text: 'Disarmed', moonshot: 'F T S is safe' },
+  ];
+  
+  const useMoonshot = Math.random() > 0.5;
+  log('speech-log', `Simulating flight callouts (${useMoonshot ? 'Moonshot mode' : 'Normal mode'})...`, 'log-data');
+  
+  callouts.forEach(c => {
+    setTimeout(() => {
+      const text = useMoonshot ? c.moonshot : c.text;
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.rate = 1.3;
+      speechSynthesis.speak(utt);
+      log('speech-log', `Callout: "${text}"`, 'log-data');
+    }, c.delay);
+  });
+}
+
+// ── Service Worker ─────────────────────────────────────────────────────────
+
+function checkSW() {
+  setVal('sw-secure', window.isSecureContext ? '✓ yes' : '✗ no', window.isSecureContext ? 'ok' : 'fail');
+  setVal('sw-support', 'serviceWorker' in navigator ? '✓ yes' : '✗ no', 'serviceWorker' in navigator ? 'ok' : 'fail');
+  setVal('sw-protocol', location.protocol);
+  
+  if (!window.isSecureContext) {
+    setDot('dot-sw', 'warn');
+    log('sw-log', 'Not a secure context — SW registration will fail. Need HTTPS or localhost.', 'log-warn');
+  }
+}
+
+async function swRegister() {
+  if (!('serviceWorker' in navigator)) {
+    log('sw-log', 'Service Workers not supported', 'log-fail');
+    setDot('dot-sw', 'fail');
+    return;
+  }
+  
+  if (!window.isSecureContext) {
+    log('sw-log', 'Not a secure context — cannot register. Need HTTPS.', 'log-fail');
+    setVal('sw-state', 'blocked (no HTTPS)', 'fail');
+    setDot('dot-sw', 'fail');
+    return;
+  }
+  
+  try {
+    // We'd need an actual sw.js file — for this test, just verify the API works
+    // by checking if registration would succeed
+    const regs = await navigator.serviceWorker.getRegistrations();
+    log('sw-log', `Existing registrations: ${regs.length}`, 'log-data');
+    
+    // Try to register a minimal inline SW via blob URL (won't actually cache, just tests the API)
+    const swCode = `self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', () => clients.claim());
+self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request)));`;
+    const blob = new Blob([swCode], { type: 'application/javascript' });
+    const swUrl = URL.createObjectURL(blob);
+    
+    // Blob URLs don't work for SW registration on most browsers
+    // So we just report that the API is available
+    setVal('sw-state', 'API available (needs sw.js file)', 'ok');
+    setDot('dot-sw', 'ok');
+    log('sw-log', 'Service Worker API available. For real PWA, deploy sw.js alongside this page.', 'log-ok');
+    
+  } catch (e) {
+    log('sw-log', `SW error: ${e.message}`, 'log-fail');
+    setDot('dot-sw', 'fail');
+  }
+}
+
+async function swUnregister() {
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for (const reg of regs) {
+      await reg.unregister();
+    }
+    log('sw-log', `Unregistered ${regs.length} service workers`, 'log-ok');
+    setVal('sw-state', 'unregistered');
+  } catch (e) {
+    log('sw-log', `Unregister error: ${e.message}`, 'log-fail');
+  }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+detectAPIs();
+checkSW();
+
+setVal('idb-avail', !!window.indexedDB ? '✓' : '✗', !!window.indexedDB ? 'ok' : 'fail');
+
+// Voices may load async
+if (window.speechSynthesis) {
+  speechSynthesis.onvoiceschanged = () => {
+    const voices = speechSynthesis.getVoices();
+    setVal('speech-voices', voices.length.toString());
+  };
+}
+</script>
+</body>
+</html>
