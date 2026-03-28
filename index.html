@@ -306,8 +306,8 @@
         <option value="512000">500 KB</option>
         <option value="1048576">1 MB</option>
       </select>
-      <label>Credits:</label>
-      <select id="ble-credits">
+      <label>Window:</label>
+      <select id="ble-window" title="Max notifications in-flight (credit window)">
         <option value="2">2</option>
         <option value="5">5</option>
         <option value="10" selected>10</option>
@@ -382,7 +382,9 @@ let bleBenchBytes = 0;
 let bleBenchReceived = 0;
 let bleBenchStart = 0;
 let bleBenchVerifyErrors = 0;
-let bleCreditInterval = null;
+let bleWindow = 10;        // Total credit window (max in-flight)
+let bleCreditsGranted = 0; // Total credits sent to device
+let bleNotifsReceived = 0; // Total notifications received (used to calculate replenishment)
 
 // USB bench state  
 let usbBenchActive = false;
@@ -514,7 +516,6 @@ async function bleConnect() {
       setConnected('ble', false);
       document.getElementById('ble-status').textContent = 'Disconnected';
       bleBenchActive = false;
-      if (bleCreditInterval) { clearInterval(bleCreditInterval); bleCreditInterval = null; }
     });
     
     log(`Connecting to ${bleDevice.name}...`, 'log-ble');
@@ -538,7 +539,6 @@ async function bleConnect() {
 }
 
 async function bleDisconnect() {
-  if (bleCreditInterval) { clearInterval(bleCreditInterval); bleCreditInterval = null; }
   if (bleDevice && bleDevice.gatt.connected) {
     bleDevice.gatt.disconnect();
   }
@@ -565,24 +565,34 @@ function onBleNotification(event) {
   const value = event.target.value;
   
   if (bleBenchActive) {
-    // Binary benchmark data
     const chunk = new Uint8Array(value.buffer);
     
     // Check if this is a JSON control message (starts with '{')
-    if (chunk[0] === 0x7B) { // '{'
+    if (chunk[0] === 0x7B) {
       const text = new TextDecoder().decode(chunk);
       try {
         const msg = JSON.parse(text);
         handleBleControlMsg(msg);
         return;
-      } catch(e) {
-        // Not JSON, treat as data
-      }
+      } catch(e) { /* not JSON, treat as data */ }
     }
     
-    // Benchmark data
+    // Benchmark data — verify and count
     bleBenchVerifyErrors += verifyChunk(chunk, bleBenchReceived);
     bleBenchReceived += chunk.length;
+    bleNotifsReceived++;
+    
+    // ── Receive-driven credit replenishment ──
+    // We granted `bleWindow` credits up front. Each notification consumes one.
+    // As we receive and process notifications, we replenish to keep the
+    // in-flight count at `bleWindow`. This is self-clocking: we only grant
+    // more credits as fast as we can actually consume them.
+    const inFlight = bleCreditsGranted - bleNotifsReceived;
+    const replenish = bleWindow - inFlight;
+    if (replenish > 0) {
+      bleSendCmd({cmd: 'credit', n: replenish});
+      bleCreditsGranted += replenish;
+    }
     
     const pct = (bleBenchReceived / bleBenchBytes) * 100;
     setProgress('ble', pct);
@@ -591,13 +601,13 @@ function onBleNotification(event) {
       const elapsed = performance.now() - bleBenchStart;
       const kBps = (bleBenchReceived / 1024) / (elapsed / 1000);
       document.getElementById('ble-status').textContent = 
-        `Benchmark: ${formatBytes(bleBenchReceived)}/${formatBytes(bleBenchBytes)} (${kBps.toFixed(0)} kB/s)`;
+        `Bench: ${formatBytes(bleBenchReceived)}/${formatBytes(bleBenchBytes)} (${kBps.toFixed(0)} kB/s) inflight:${inFlight}`;
     }
     
     return;
   }
   
-  // Control / response message
+  // Control / response message (not in bench mode)
   const text = new TextDecoder().decode(value.buffer);
   try {
     const msg = JSON.parse(text);
@@ -624,30 +634,28 @@ function handleBleControlMsg(msg) {
     bleBenchReceived = 0;
     bleBenchStart = performance.now();
     bleBenchVerifyErrors = 0;
+    bleNotifsReceived = 0;
+    bleCreditsGranted = 0;
     
-    // Start sending credits periodically
-    const creditBatch = parseInt(document.getElementById('ble-credits').value);
-    bleSendCmd({cmd: 'credit', n: creditBatch});
-    bleCreditInterval = setInterval(() => {
-      if (bleBenchActive) {
-        bleSendCmd({cmd: 'credit', n: creditBatch});
-      }
-    }, 50); // Send credits every 50ms to keep the pipe full
+    // Grant initial credit window — device starts sending immediately
+    bleWindow = parseInt(document.getElementById('ble-window').value);
+    bleSendCmd({cmd: 'credit', n: bleWindow});
+    bleCreditsGranted = bleWindow;
+    log(`BLE credits: initial window = ${bleWindow}`, 'log-ble');
     
   } else if (msg.resp === 'bench_done') {
     bleBenchActive = false;
-    if (bleCreditInterval) { clearInterval(bleCreditInterval); bleCreditInterval = null; }
     
     const clientElapsed = performance.now() - bleBenchStart;
     const kBps = (bleBenchReceived / 1024) / (clientElapsed / 1000);
     const detail = `${formatBytes(bleBenchReceived)} in ${(clientElapsed/1000).toFixed(2)}s | ` +
-                   `Device reported: ${msg.kBps} kB/s | Errors: ${bleBenchVerifyErrors}`;
+                   `Device: ${msg.kBps} kB/s | Credits granted: ${bleCreditsGranted} | Errors: ${bleBenchVerifyErrors}`;
     
     showResult('ble', kBps, detail, bleBenchVerifyErrors === 0);
     setProgress('ble', 100);
     addHistory('ble', bleBenchReceived, clientElapsed, kBps, bleBenchVerifyErrors === 0);
     
-    log(`BLE bench done: ${kBps.toFixed(1)} kB/s (device: ${msg.kBps} kB/s), ${bleBenchVerifyErrors} errors`, 'log-ble');
+    log(`BLE bench done: ${kBps.toFixed(1)} kB/s (device: ${msg.kBps} kB/s), ${bleBenchVerifyErrors} verify errors`, 'log-ble');
     document.getElementById('ble-status').textContent = `Connected: ${bleDevice.name}`;
     
   } else if (msg.resp === 'error') {
@@ -658,7 +666,7 @@ function handleBleControlMsg(msg) {
 async function bleBench() {
   const bytes = parseInt(document.getElementById('ble-size').value);
   setProgress('ble', 0);
-  log(`Starting BLE benchmark: ${formatBytes(bytes)}...`, 'log-ble');
+  log(`Starting BLE benchmark: ${formatBytes(bytes)}, window=${document.getElementById('ble-window').value}...`, 'log-ble');
   await bleSendCmd({cmd: 'bench', bytes: bytes});
 }
 
