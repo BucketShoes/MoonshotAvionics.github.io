@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RocketLink Transport Test</title>
+<title>Moonshot Transport Test</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;600;700&display=swap');
 
@@ -15,9 +15,7 @@
     --text: #e0e4ed;
     --text-dim: #6b7280;
     --accent-ble: #3b82f6;
-    --accent-ble-dim: #1e3a5f;
     --accent-usb: #10b981;
-    --accent-usb-dim: #064e3b;
     --accent-warn: #f59e0b;
     --accent-err: #ef4444;
     --radius: 8px;
@@ -106,36 +104,15 @@
     cursor: pointer;
     transition: all 0.15s;
   }
-  button:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .btn-ble {
-    background: var(--accent-ble);
-    color: white;
-  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-ble { background: var(--accent-ble); color: white; }
   .btn-ble:hover:not(:disabled) { background: #2563eb; }
-
-  .btn-usb {
-    background: var(--accent-usb);
-    color: white;
-  }
+  .btn-usb { background: var(--accent-usb); color: white; }
   .btn-usb:hover:not(:disabled) { background: #059669; }
-
-  .btn-outline {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-  }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn-outline:hover:not(:disabled) { background: var(--surface2); }
 
-  .btn-row {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.75rem;
-  }
+  .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
 
   .bench-config {
     display: flex;
@@ -144,11 +121,8 @@
     margin-bottom: 0.75rem;
     flex-wrap: wrap;
   }
-  .bench-config label {
-    font-size: 0.8rem;
-    color: var(--text-dim);
-  }
-  .bench-config select, .bench-config input {
+  .bench-config label { font-size: 0.8rem; color: var(--text-dim); }
+  .bench-config select {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.8rem;
     background: var(--surface2);
@@ -173,11 +147,7 @@
   }
   .result-box .big-number.ble { color: var(--accent-ble); }
   .result-box .big-number.usb { color: var(--accent-usb); }
-  .result-box .unit {
-    font-size: 0.85rem;
-    color: var(--text-dim);
-    margin-left: 0.25rem;
-  }
+  .result-box .unit { font-size: 0.85rem; color: var(--text-dim); margin-left: 0.25rem; }
   .result-box .detail {
     font-size: 0.75rem;
     color: var(--text-dim);
@@ -193,27 +163,14 @@
     margin-top: 0.5rem;
     overflow: hidden;
   }
-  .progress-bar .fill {
-    height: 100%;
-    border-radius: 2px;
-    transition: width 0.1s;
-    width: 0%;
-  }
+  .progress-bar .fill { height: 100%; border-radius: 2px; transition: width 0.1s; width: 0%; }
   .progress-bar .fill.ble { background: var(--accent-ble); }
   .progress-bar .fill.usb { background: var(--accent-usb); }
 
-  /* Log panel */
-  .log-panel {
-    max-width: 960px;
-    margin: 1rem auto 0;
-  }
+  .log-panel { max-width: 960px; margin: 1rem auto 0; }
   .log-panel h3 {
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem;
+    display: flex; align-items: center; justify-content: space-between;
   }
   #log {
     background: var(--surface);
@@ -232,55 +189,30 @@
   #log .log-err { color: var(--accent-err); }
   #log .log-warn { color: var(--accent-warn); }
 
-  /* API support badges */
-  .api-badges {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: center;
-    margin: 0.5rem 0 1rem;
-    flex-wrap: wrap;
-  }
+  .api-badges { display: flex; gap: 0.5rem; justify-content: center; margin: 0.5rem 0 1rem; flex-wrap: wrap; }
   .badge {
-    font-size: 0.7rem;
-    font-family: 'JetBrains Mono', monospace;
-    padding: 0.15rem 0.5rem;
-    border-radius: 3px;
-    border: 1px solid var(--border);
+    font-size: 0.7rem; font-family: 'JetBrains Mono', monospace;
+    padding: 0.15rem 0.5rem; border-radius: 3px; border: 1px solid var(--border);
   }
   .badge.ok { border-color: var(--accent-usb); color: var(--accent-usb); }
   .badge.no { border-color: var(--accent-err); color: var(--accent-err); }
-  .badge.na { border-color: var(--text-dim); color: var(--text-dim); }
 
-  .results-history {
-    max-width: 960px;
-    margin: 1rem auto 0;
-  }
-  .results-history h3 {
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-  }
+  .results-history { max-width: 960px; margin: 1rem auto 0; }
+  .results-history h3 { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; }
   .history-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.75rem;
-    font-family: 'JetBrains Mono', monospace;
+    width: 100%; border-collapse: collapse;
+    font-size: 0.75rem; font-family: 'JetBrains Mono', monospace;
   }
   .history-table th, .history-table td {
-    padding: 0.4rem 0.6rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
+    padding: 0.4rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border);
   }
-  .history-table th {
-    color: var(--text-dim);
-    font-weight: 500;
-  }
+  .history-table th { color: var(--text-dim); font-weight: 500; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>RocketLink <span class="ble">BLE</span> + <span class="usb">USB</span> Test</h1>
+  <h1>Moonshot <span class="ble">BLE</span> + <span class="usb">USB</span> Test</h1>
   <p>Transport throughput benchmarking for rocket avionics</p>
   <div class="api-badges" id="badges"></div>
 </header>
@@ -297,14 +229,12 @@
       <button class="btn-outline" id="ble-info" onclick="bleInfo()" disabled>Info</button>
     </div>
     <div class="bench-config">
-      <label>Size:</label>
-      <select id="ble-size">
-        <option value="1024">1 KB</option>
-        <option value="10240">10 KB</option>
-        <option value="51200">50 KB</option>
-        <option value="102400" selected>100 KB</option>
-        <option value="512000">500 KB</option>
-        <option value="1048576">1 MB</option>
+      <label>Duration:</label>
+      <select id="ble-secs">
+        <option value="3">3s</option>
+        <option value="5" selected>5s</option>
+        <option value="10">10s</option>
+        <option value="20">20s</option>
       </select>
       <label>Window:</label>
       <select id="ble-window" title="Max notifications in-flight (credit window)">
@@ -324,29 +254,28 @@
 
   <!-- USB Card -->
   <div class="card usb">
-    <h2><span class="dot" id="usb-dot"></span> USB Serial</h2>
+    <h2><span class="dot" id="usb-dot"></span> USB</h2>
     <div class="status-line" id="usb-status">Not connected</div>
     <div class="btn-row">
-      <button class="btn-usb" id="usb-connect" onclick="usbConnect()">Connect</button>
+      <button class="btn-usb" id="usb-webusb-connect" onclick="webusbConnect()" title="Works on Android Chrome">WebUSB</button>
+      <button class="btn-usb" id="usb-serial-connect" onclick="usbSerialConnect()" title="Desktop Chrome only" style="opacity:0.7">Serial</button>
       <button class="btn-outline" id="usb-disconnect" onclick="usbDisconnect()" disabled>Disconnect</button>
       <button class="btn-outline" id="usb-ping" onclick="usbPing()" disabled>Ping</button>
       <button class="btn-outline" id="usb-info" onclick="usbInfo()" disabled>Info</button>
     </div>
     <div class="bench-config">
-      <label>Size:</label>
-      <select id="usb-size">
-        <option value="10240">10 KB</option>
-        <option value="102400">100 KB</option>
-        <option value="512000">500 KB</option>
-        <option value="1048576" selected>1 MB</option>
-        <option value="5242880">5 MB</option>
-        <option value="10485760">10 MB</option>
+      <label>Duration:</label>
+      <select id="usb-secs">
+        <option value="3">3s</option>
+        <option value="5" selected>5s</option>
+        <option value="10">10s</option>
+        <option value="20">20s</option>
       </select>
       <button class="btn-usb" id="usb-bench" onclick="usbBench()" disabled>Benchmark</button>
     </div>
     <div class="progress-bar"><div class="fill usb" id="usb-progress"></div></div>
     <div class="result-box" id="usb-result">
-      <div style="color: var(--text-dim); font-size: 0.8rem;">Connect and run benchmark</div>
+      <div style="color: var(--text-dim); font-size: 0.8rem;">WebUSB (Android) or Serial (desktop)</div>
     </div>
   </div>
 </div>
@@ -368,41 +297,34 @@
 
 <script>
 // ── Constants ────────────────────────────────────────────────────────────────
-const SERVICE_UUID        = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f6';
-const TX_CHAR_UUID        = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f7';
-const RX_CHAR_UUID        = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f8';
+const SERVICE_UUID = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f6';
+const TX_CHAR_UUID = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f7';
+const RX_CHAR_UUID = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f8';
 
-// ── State ────────────────────────────────────────────────────────────────────
+// ── BLE State ────────────────────────────────────────────────────────────────
 let bleDevice = null, bleServer = null, bleTxChar = null, bleRxChar = null;
-let usbPort = null, usbReader = null, usbWriter = null;
+let bleBenchActive = false, bleBenchReceived = 0, bleBenchStart = 0;
+let bleBenchVerifyErrors = 0, bleBenchSecs = 5;
+let bleWindow = 10, bleCreditsGranted = 0, bleNotifsReceived = 0;
 
-// BLE bench state
-let bleBenchActive = false;
-let bleBenchBytes = 0;
-let bleBenchReceived = 0;
-let bleBenchStart = 0;
-let bleBenchVerifyErrors = 0;
-let bleWindow = 10;        // Total credit window (max in-flight)
-let bleCreditsGranted = 0; // Total credits sent to device
-let bleNotifsReceived = 0; // Total notifications received (used to calculate replenishment)
-
-// USB bench state  
-let usbBenchActive = false;
-let usbBenchBytes = 0;
-let usbBenchReceived = 0;
-let usbBenchStart = 0;
-let usbBenchVerifyErrors = 0;
-
-// USB read buffer for framing
+// ── USB State (shared between WebUSB and Web Serial) ─────────────────────────
+let usbMode = null; // 'webusb' | 'serial' | null
+// Web Serial
+let serialPort = null, serialReader = null, serialWriter = null;
+// WebUSB
+let webusbDevice = null, webusbEpIn = null, webusbEpOut = null, webusbIfaceNum = -1;
+// Shared bench state
+let usbBenchActive = false, usbBenchReceived = 0, usbBenchStart = 0;
+let usbBenchVerifyErrors = 0, usbBenchSecs = 5;
 let usbReadBuffer = new Uint8Array(0);
 
-// Results history
+// History
 const results = [];
 
 // ── Logging ──────────────────────────────────────────────────────────────────
 function log(msg, cls = '') {
   const el = document.getElementById('log');
-  const ts = new Date().toLocaleTimeString('en-AU', {hour12: false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  const ts = new Date().toLocaleTimeString('en-AU', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
   const line = document.createElement('div');
   if (cls) line.className = cls;
   line.textContent = `[${ts}] ${msg}`;
@@ -419,23 +341,22 @@ function verifyChunk(data, globalOffset) {
   for (let i = 0; i < data.length; i++) {
     if (data[i] !== benchPattern(globalOffset + i)) {
       errors++;
-      if (errors <= 3) {
-        log(`  verify fail @ offset ${globalOffset+i}: got 0x${data[i].toString(16)}, expected 0x${benchPattern(globalOffset+i).toString(16)}`, 'log-warn');
-      }
+      if (errors <= 3) log(`verify fail @ ${globalOffset+i}: 0x${data[i].toString(16)} != 0x${benchPattern(globalOffset+i).toString(16)}`, 'log-warn');
     }
   }
   return errors;
 }
 
-// ── API Support Detection ────────────────────────────────────────────────────
+// ── API Detection ────────────────────────────────────────────────────────────
 function checkAPIs() {
   const badges = document.getElementById('badges');
   const apis = [
-    ['Web Bluetooth', !!navigator.bluetooth],
+    ['Bluetooth', !!navigator.bluetooth],
+    ['WebUSB', !!navigator.usb],
     ['Web Serial', !!navigator.serial],
-    ['Secure Context', !!window.isSecureContext],
+    ['HTTPS', !!window.isSecureContext],
   ];
-  badges.innerHTML = apis.map(([name, ok]) => 
+  badges.innerHTML = apis.map(([name, ok]) =>
     `<span class="badge ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'} ${name}</span>`
   ).join('');
 }
@@ -443,28 +364,25 @@ checkAPIs();
 
 // ── UI Helpers ───────────────────────────────────────────────────────────────
 function setConnected(transport, connected) {
-  const dot = document.getElementById(`${transport}-dot`);
-  const connectBtn = document.getElementById(`${transport}-connect`);
-  const disconnectBtn = document.getElementById(`${transport}-disconnect`);
-  const pingBtn = document.getElementById(`${transport}-ping`);
-  const infoBtn = document.getElementById(`${transport}-info`);
-  const benchBtn = document.getElementById(`${transport}-bench`);
-  
-  dot.className = connected ? 'dot connected' : 'dot';
-  connectBtn.disabled = connected;
-  disconnectBtn.disabled = !connected;
-  pingBtn.disabled = !connected;
-  infoBtn.disabled = !connected;
-  benchBtn.disabled = !connected;
+  document.getElementById(`${transport}-dot`).className = connected ? 'dot connected' : 'dot';
+  document.getElementById(`${transport}-disconnect`).disabled = !connected;
+  document.getElementById(`${transport}-ping`).disabled = !connected;
+  document.getElementById(`${transport}-info`).disabled = !connected;
+  document.getElementById(`${transport}-bench`).disabled = !connected;
+  if (transport === 'ble') {
+    document.getElementById('ble-connect').disabled = connected;
+  } else if (transport === 'usb') {
+    document.getElementById('usb-webusb-connect').disabled = connected;
+    document.getElementById('usb-serial-connect').disabled = connected;
+  }
 }
 
 function showResult(transport, kBps, detail, verified) {
   const box = document.getElementById(`${transport}-result`);
-  const colorClass = transport;
   box.innerHTML = `
-    <div class="big-number ${colorClass}">${kBps.toFixed(1)}<span class="unit">kB/s</span></div>
+    <div class="big-number ${transport}">${kBps.toFixed(1)}<span class="unit">kB/s</span></div>
     <div class="detail">${detail}</div>
-    ${verified !== undefined ? `<div class="detail" style="color: ${verified ? 'var(--accent-usb)' : 'var(--accent-err)'}">
+    ${verified !== undefined ? `<div class="detail" style="color:${verified ? 'var(--accent-usb)' : 'var(--accent-err)'}">
       ${verified ? '✓ Data verified' : '✗ Verification errors'}</div>` : ''}
   `;
 }
@@ -475,18 +393,16 @@ function setProgress(transport, pct) {
 
 function addHistory(transport, bytes, elapsed, kBps, verified) {
   results.push({transport, bytes, elapsed, kBps, verified});
-  const section = document.getElementById('history-section');
-  section.style.display = '';
-  const tbody = document.getElementById('history-body');
+  document.getElementById('history-section').style.display = '';
   const tr = document.createElement('tr');
   tr.innerHTML = `
-    <td style="color: var(--accent-${transport})">${transport.toUpperCase()}</td>
+    <td style="color:var(--accent-${transport})">${transport.toUpperCase()}</td>
     <td>${formatBytes(bytes)}</td>
     <td>${(elapsed/1000).toFixed(2)}s</td>
     <td>${kBps.toFixed(1)} kB/s</td>
-    <td style="color: ${verified ? 'var(--accent-usb)' : 'var(--accent-err)'}">${verified ? '✓' : '✗'}</td>
+    <td style="color:${verified ? 'var(--accent-usb)' : 'var(--accent-err)'}">${verified ? '✓' : '✗'}</td>
   `;
-  tbody.prepend(tr);
+  document.getElementById('history-body').prepend(tr);
 }
 
 function formatBytes(b) {
@@ -495,53 +411,41 @@ function formatBytes(b) {
   return b + ' B';
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // BLE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function bleConnect() {
-  if (!navigator.bluetooth) {
-    log('Web Bluetooth not available. Need HTTPS (GitHub Pages) and Chrome/Edge.', 'log-err');
-    return;
-  }
+  if (!navigator.bluetooth) { log('Web Bluetooth not available', 'log-err'); return; }
   try {
     log('Requesting BLE device...', 'log-ble');
     bleDevice = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE_UUID] }],
-      optionalServices: [SERVICE_UUID]
+      filters: [{ services: [SERVICE_UUID] }]
     });
-    
     bleDevice.addEventListener('gattserverdisconnected', () => {
       log('BLE disconnected', 'log-ble');
       setConnected('ble', false);
       document.getElementById('ble-status').textContent = 'Disconnected';
       bleBenchActive = false;
     });
-    
     log(`Connecting to ${bleDevice.name}...`, 'log-ble');
     bleServer = await bleDevice.gatt.connect();
-    
     const service = await bleServer.getPrimaryService(SERVICE_UUID);
     bleTxChar = await service.getCharacteristic(TX_CHAR_UUID);
     bleRxChar = await service.getCharacteristic(RX_CHAR_UUID);
-    
-    // Subscribe to notifications
     await bleTxChar.startNotifications();
     bleTxChar.addEventListener('characteristicvaluechanged', onBleNotification);
-    
     setConnected('ble', true);
     document.getElementById('ble-status').textContent = `Connected: ${bleDevice.name}`;
     log(`BLE connected to ${bleDevice.name}`, 'log-ble');
-    
   } catch (e) {
     log(`BLE connect error: ${e.message}`, 'log-err');
   }
 }
 
 async function bleDisconnect() {
-  if (bleDevice && bleDevice.gatt.connected) {
-    bleDevice.gatt.disconnect();
-  }
+  if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
 }
 
 async function bleSendCmd(obj) {
@@ -551,69 +455,59 @@ async function bleSendCmd(obj) {
 }
 
 async function blePing() {
-  const t0 = performance.now();
+  window._blePingStart = performance.now();
   bleSendCmd({cmd: 'ping'});
-  // Response handled in notification handler
-  window._blePingStart = t0;
 }
 
-async function bleInfo() {
-  bleSendCmd({cmd: 'info'});
-}
+async function bleInfo() { bleSendCmd({cmd: 'info'}); }
 
 function onBleNotification(event) {
   const value = event.target.value;
-  
+
   if (bleBenchActive) {
     const chunk = new Uint8Array(value.buffer);
-    
-    // Check if this is a JSON control message (starts with '{')
+
+    // Check for JSON control message
     if (chunk[0] === 0x7B) {
-      const text = new TextDecoder().decode(chunk);
       try {
-        const msg = JSON.parse(text);
+        const msg = JSON.parse(new TextDecoder().decode(chunk));
         handleBleControlMsg(msg);
         return;
-      } catch(e) { /* not JSON, treat as data */ }
+      } catch(e) { /* data, not JSON */ }
     }
-    
-    // Benchmark data — verify and count
+
+    // Benchmark data
     bleBenchVerifyErrors += verifyChunk(chunk, bleBenchReceived);
     bleBenchReceived += chunk.length;
     bleNotifsReceived++;
-    
-    // ── Receive-driven credit replenishment ──
-    // We granted `bleWindow` credits up front. Each notification consumes one.
-    // As we receive and process notifications, we replenish to keep the
-    // in-flight count at `bleWindow`. This is self-clocking: we only grant
-    // more credits as fast as we can actually consume them.
+
+    // Receive-driven credit replenishment
     const inFlight = bleCreditsGranted - bleNotifsReceived;
     const replenish = bleWindow - inFlight;
     if (replenish > 0) {
       bleSendCmd({cmd: 'credit', n: replenish});
       bleCreditsGranted += replenish;
     }
-    
-    const pct = (bleBenchReceived / bleBenchBytes) * 100;
+
+    // Progress based on elapsed time
+    const elapsed = performance.now() - bleBenchStart;
+    const pct = Math.min(100, (elapsed / (bleBenchSecs * 1000)) * 100);
     setProgress('ble', pct);
-    
+
     if (bleBenchReceived % 10240 < chunk.length) {
-      const elapsed = performance.now() - bleBenchStart;
       const kBps = (bleBenchReceived / 1024) / (elapsed / 1000);
-      document.getElementById('ble-status').textContent = 
-        `Bench: ${formatBytes(bleBenchReceived)}/${formatBytes(bleBenchBytes)} (${kBps.toFixed(0)} kB/s) inflight:${inFlight}`;
+      document.getElementById('ble-status').textContent =
+        `Bench: ${formatBytes(bleBenchReceived)} (${kBps.toFixed(0)} kB/s) inflight:${inFlight}`;
     }
-    
     return;
   }
-  
-  // Control / response message (not in bench mode)
-  const text = new TextDecoder().decode(value.buffer);
+
+  // Control message outside bench
   try {
-    const msg = JSON.parse(text);
+    const msg = JSON.parse(new TextDecoder().decode(value.buffer));
     handleBleControlMsg(msg);
   } catch(e) {
-    log(`BLE raw: ${text}`, 'log-ble');
+    log(`BLE raw: ${new TextDecoder().decode(value.buffer)}`, 'log-ble');
   }
 }
 
@@ -621,221 +515,122 @@ function handleBleControlMsg(msg) {
   if (msg.resp === 'pong') {
     const rtt = window._blePingStart ? (performance.now() - window._blePingStart).toFixed(1) : '?';
     log(`BLE pong (RTT: ${rtt}ms, uptime: ${msg.uptime_ms}ms)`, 'log-ble');
-    
   } else if (msg.resp === 'info') {
     log(`BLE info: MTU=${msg.ble_mtu}, payload=${msg.ble_payload}, heap=${msg.free_heap}`, 'log-ble');
-    document.getElementById('ble-status').textContent = 
+    document.getElementById('ble-status').textContent =
       `Connected | MTU: ${msg.ble_mtu} | Payload: ${msg.ble_payload}B`;
-    
   } else if (msg.resp === 'bench_start') {
-    log(`BLE bench starting: ${msg.bytes}B, payload=${msg.payload_size}B`, 'log-ble');
+    log(`BLE bench starting: payload=${msg.payload_size}B, ${msg.secs}s`, 'log-ble');
     bleBenchActive = true;
-    bleBenchBytes = msg.bytes;
     bleBenchReceived = 0;
     bleBenchStart = performance.now();
     bleBenchVerifyErrors = 0;
     bleNotifsReceived = 0;
     bleCreditsGranted = 0;
-    
-    // Grant initial credit window — device starts sending immediately
+    bleBenchSecs = msg.secs || 5;
     bleWindow = parseInt(document.getElementById('ble-window').value);
     bleSendCmd({cmd: 'credit', n: bleWindow});
     bleCreditsGranted = bleWindow;
-    log(`BLE credits: initial window = ${bleWindow}`, 'log-ble');
-    
   } else if (msg.resp === 'bench_done') {
     bleBenchActive = false;
-    
     const clientElapsed = performance.now() - bleBenchStart;
     const kBps = (bleBenchReceived / 1024) / (clientElapsed / 1000);
-    const detail = `${formatBytes(bleBenchReceived)} in ${(clientElapsed/1000).toFixed(2)}s | ` +
-                   `Device: ${msg.kBps} kB/s | Credits granted: ${bleCreditsGranted} | Errors: ${bleBenchVerifyErrors}`;
-    
+    const detail = `${formatBytes(bleBenchReceived)} in ${(clientElapsed/1000).toFixed(2)}s | Device: ${msg.kBps} kB/s | Errors: ${bleBenchVerifyErrors}`;
     showResult('ble', kBps, detail, bleBenchVerifyErrors === 0);
     setProgress('ble', 100);
     addHistory('ble', bleBenchReceived, clientElapsed, kBps, bleBenchVerifyErrors === 0);
-    
-    log(`BLE bench done: ${kBps.toFixed(1)} kB/s (device: ${msg.kBps} kB/s), ${bleBenchVerifyErrors} verify errors`, 'log-ble');
+    log(`BLE done: ${kBps.toFixed(1)} kB/s, ${bleBenchVerifyErrors} errors`, 'log-ble');
     document.getElementById('ble-status').textContent = `Connected: ${bleDevice.name}`;
-    
   } else if (msg.resp === 'error') {
     log(`BLE error: ${msg.msg}`, 'log-err');
   }
 }
 
 async function bleBench() {
-  const bytes = parseInt(document.getElementById('ble-size').value);
+  const secs = parseInt(document.getElementById('ble-secs').value);
   setProgress('ble', 0);
-  log(`Starting BLE benchmark: ${formatBytes(bytes)}, window=${document.getElementById('ble-window').value}...`, 'log-ble');
-  await bleSendCmd({cmd: 'bench', bytes: bytes});
+  log(`Starting BLE benchmark: ${secs}s, window=${document.getElementById('ble-window').value}`, 'log-ble');
+  await bleSendCmd({cmd: 'bench', bytes: 0, secs: secs});
 }
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// USB Serial
+// USB — shared send/receive, two connect modes
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function usbConnect() {
-  if (!navigator.serial) {
-    log('Web Serial not available. Need HTTPS and Chrome/Edge.', 'log-err');
-    return;
-  }
-  try {
-    log('Requesting USB serial port...', 'log-usb');
-    usbPort = await navigator.serial.requestPort({
-      // ESP32-S3 native USB CDC
-      filters: [
-        { usbVendorId: 0x303A }, // Espressif
-      ]
-    });
-    
-    await usbPort.open({ baudRate: 921600 });
-    
-    usbWriter = usbPort.writable.getWriter();
-    usbReader = usbPort.readable.getReader();
-    
-    setConnected('usb', true);
-    document.getElementById('usb-status').textContent = 'Connected (USB CDC)';
-    log('USB serial connected', 'log-usb');
-    
-    // Start read loop
-    usbReadLoop();
-    
-  } catch (e) {
-    log(`USB connect error: ${e.message}`, 'log-err');
+// ── Shared USB send ──────────────────────────────────────────────────────────
+async function usbSend(text) {
+  const data = new TextEncoder().encode(text);
+  if (usbMode === 'webusb' && webusbDevice && webusbDevice.opened) {
+    await webusbDevice.transferOut(webusbEpOut.endpointNumber, data);
+  } else if (usbMode === 'serial' && serialWriter) {
+    await serialWriter.write(data);
   }
 }
 
-async function usbDisconnect() {
-  try {
-    if (usbReader) { await usbReader.cancel(); usbReader = null; }
-    if (usbWriter) { usbWriter.releaseLock(); usbWriter = null; }
-    if (usbPort) { await usbPort.close(); usbPort = null; }
-  } catch(e) { /* ignore */ }
-  
-  setConnected('usb', false);
-  document.getElementById('usb-status').textContent = 'Disconnected';
-  log('USB disconnected', 'log-usb');
-  usbBenchActive = false;
+async function usbSendCmd(obj) { await usbSend(JSON.stringify(obj) + '\n'); }
+async function usbSendAck() { await usbSend('{"cmd":"ack"}\n'); }
+
+function usbPing() { window._usbPingStart = performance.now(); usbSendCmd({cmd: 'ping'}); }
+function usbInfo() { usbSendCmd({cmd: 'info'}); }
+
+async function usbBench() {
+  const secs = parseInt(document.getElementById('usb-secs').value);
+  setProgress('usb', 0);
+  usbBenchSecs = secs;
+  log(`Starting USB benchmark: ${secs}s (${usbMode})`, 'log-usb');
+  await usbSendCmd({cmd: 'bench', bytes: 0, secs: secs});
 }
 
-async function usbSendCmd(obj) {
-  if (!usbWriter) return;
-  const data = new TextEncoder().encode(JSON.stringify(obj) + '\n');
-  await usbWriter.write(data);
-}
+// ── Shared USB data handler (fed by both WebUSB and Web Serial read loops) ──
+function handleUsbRawData(incoming) {
+  // Append to buffer
+  const newBuf = new Uint8Array(usbReadBuffer.length + incoming.length);
+  newBuf.set(usbReadBuffer);
+  newBuf.set(incoming, usbReadBuffer.length);
+  usbReadBuffer = newBuf;
 
-async function usbSendAck() {
-  if (!usbWriter) return;
-  await usbWriter.write(new TextEncoder().encode('{"cmd":"ack"}\n'));
-}
-
-async function usbPing() {
-  window._usbPingStart = performance.now();
-  usbSendCmd({cmd: 'ping'});
-}
-
-async function usbInfo() {
-  usbSendCmd({cmd: 'info'});
-}
-
-async function usbReadLoop() {
-  const decoder = new TextDecoder();
-  let lineBuffer = '';
-  
-  try {
-    while (true) {
-      const {value, done} = await usbReader.read();
-      if (done) break;
-      
-      if (usbBenchActive) {
-        // In benchmark mode: parse binary framing
-        // Append to buffer
-        const newBuf = new Uint8Array(usbReadBuffer.length + value.length);
-        newBuf.set(usbReadBuffer);
-        newBuf.set(value, usbReadBuffer.length);
-        usbReadBuffer = newBuf;
-        
-        processUsbBenchBuffer();
-      } else {
-        // In command mode: line-based JSON
-        lineBuffer += decoder.decode(value, {stream: true});
-        const lines = lineBuffer.split('\n');
-        lineBuffer = lines.pop(); // Keep incomplete line
-        
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const msg = JSON.parse(trimmed);
-            handleUsbControlMsg(msg);
-          } catch(e) {
-            log(`USB raw: ${trimmed}`, 'log-usb');
-          }
-        }
-      }
-    }
-  } catch(e) {
-    if (e.name !== 'AbortError') {
-      log(`USB read error: ${e.message}`, 'log-err');
-    }
-  }
-}
-
-function processUsbBenchBuffer() {
-  // Frame format: 'D' + 3 bytes big-endian length + payload
-  // OR: JSON line (starts with '{')
-  
   while (usbReadBuffer.length > 0) {
-    // Check for JSON control message
+    // JSON control message?
     if (usbReadBuffer[0] === 0x7B) { // '{'
-      // Find newline
-      const nlIdx = usbReadBuffer.indexOf(0x0A); // '\n'
-      if (nlIdx === -1) {
-        // Also check for '}' without newline (sometimes no newline in mixed mode)
-        // Wait for more data
-        break;
-      }
+      const nlIdx = usbReadBuffer.indexOf(0x0A);
+      if (nlIdx === -1) break; // Wait for newline
       const jsonBytes = usbReadBuffer.slice(0, nlIdx);
       usbReadBuffer = usbReadBuffer.slice(nlIdx + 1);
-      
       try {
-        const msg = JSON.parse(new TextDecoder().decode(jsonBytes));
-        handleUsbControlMsg(msg);
+        handleUsbControlMsg(JSON.parse(new TextDecoder().decode(jsonBytes)));
       } catch(e) { /* skip */ }
       continue;
     }
-    
-    // Binary data frame
-    if (usbReadBuffer[0] !== 0x44) { // 'D'
-      // Unexpected byte, skip it
-      usbReadBuffer = usbReadBuffer.slice(1);
+
+    // Binary data frame: 'D' + 3-byte length + payload
+    if (usbReadBuffer[0] !== 0x44) { // Not 'D'
+      usbReadBuffer = usbReadBuffer.slice(1); // Skip garbage byte
       continue;
     }
-    
-    if (usbReadBuffer.length < 4) break; // Need header
-    
+    if (usbReadBuffer.length < 4) break;
     const len = (usbReadBuffer[1] << 16) | (usbReadBuffer[2] << 8) | usbReadBuffer[3];
-    if (usbReadBuffer.length < 4 + len) break; // Need full payload
-    
+    if (usbReadBuffer.length < 4 + len) break;
+
     const payload = usbReadBuffer.slice(4, 4 + len);
     usbReadBuffer = usbReadBuffer.slice(4 + len);
-    
-    // Verify and count
-    usbBenchVerifyErrors += verifyChunk(payload, usbBenchReceived);
-    usbBenchReceived += payload.length;
-    
-    const pct = (usbBenchReceived / usbBenchBytes) * 100;
-    setProgress('usb', pct);
-    
-    if (usbBenchReceived % 51200 < payload.length) {
+
+    if (usbBenchActive) {
+      usbBenchVerifyErrors += verifyChunk(payload, usbBenchReceived);
+      usbBenchReceived += payload.length;
+
       const elapsed = performance.now() - usbBenchStart;
-      const kBps = (usbBenchReceived / 1024) / (elapsed / 1000);
-      document.getElementById('usb-status').textContent = 
-        `Benchmark: ${formatBytes(usbBenchReceived)}/${formatBytes(usbBenchBytes)} (${kBps.toFixed(0)} kB/s)`;
+      const pct = Math.min(100, (elapsed / (usbBenchSecs * 1000)) * 100);
+      setProgress('usb', pct);
+
+      if (usbBenchReceived % 51200 < payload.length) {
+        const kBps = (usbBenchReceived / 1024) / (elapsed / 1000);
+        document.getElementById('usb-status').textContent =
+          `Bench: ${formatBytes(usbBenchReceived)} (${kBps.toFixed(0)} kB/s)`;
+      }
     }
-    
-    // Send ACK to release next chunk
+
+    // ACK to release next chunk
     usbSendAck();
   }
 }
@@ -843,54 +638,167 @@ function processUsbBenchBuffer() {
 function handleUsbControlMsg(msg) {
   if (msg.resp === 'pong') {
     const rtt = window._usbPingStart ? (performance.now() - window._usbPingStart).toFixed(1) : '?';
-    log(`USB pong (RTT: ${rtt}ms, uptime: ${msg.uptime_ms}ms)`, 'log-usb');
-    
+    log(`USB pong (RTT: ${rtt}ms, uptime: ${msg.uptime_ms}ms, transport: ${msg.transport})`, 'log-usb');
   } else if (msg.resp === 'info') {
-    log(`USB info: chunk=${msg.usb_chunk_size}, heap=${msg.free_heap}`, 'log-usb');
-    document.getElementById('usb-status').textContent = 
-      `Connected | Chunk: ${msg.usb_chunk_size}B`;
-    
+    log(`USB info: transport=${msg.transport}, webusb=${msg.webusb}, heap=${msg.free_heap}`, 'log-usb');
+    document.getElementById('usb-status').textContent =
+      `Connected (${usbMode}) | ${msg.transport}`;
   } else if (msg.resp === 'bench_start') {
-    log(`USB bench starting: ${msg.bytes}B, chunk=${msg.chunk_size}B`, 'log-usb');
+    log(`USB bench starting: chunk=${msg.chunk_size}B, ${msg.secs}s`, 'log-usb');
     usbBenchActive = true;
-    usbBenchBytes = msg.bytes;
     usbBenchReceived = 0;
     usbBenchStart = performance.now();
     usbBenchVerifyErrors = 0;
+    usbBenchSecs = msg.secs || 5;
     usbReadBuffer = new Uint8Array(0);
-    
   } else if (msg.resp === 'bench_done') {
     usbBenchActive = false;
-    
     const clientElapsed = performance.now() - usbBenchStart;
     const kBps = (usbBenchReceived / 1024) / (clientElapsed / 1000);
-    const detail = `${formatBytes(usbBenchReceived)} in ${(clientElapsed/1000).toFixed(2)}s | ` +
-                   `Device reported: ${msg.kBps} kB/s | Errors: ${usbBenchVerifyErrors}`;
-    
+    const detail = `${formatBytes(usbBenchReceived)} in ${(clientElapsed/1000).toFixed(2)}s | Device: ${msg.kBps} kB/s | Errors: ${usbBenchVerifyErrors}`;
     showResult('usb', kBps, detail, usbBenchVerifyErrors === 0);
     setProgress('usb', 100);
     addHistory('usb', usbBenchReceived, clientElapsed, kBps, usbBenchVerifyErrors === 0);
-    
-    log(`USB bench done: ${kBps.toFixed(1)} kB/s (device: ${msg.kBps} kB/s), ${usbBenchVerifyErrors} errors`, 'log-usb');
-    document.getElementById('usb-status').textContent = 'Connected (USB CDC)';
-    
+    log(`USB done: ${kBps.toFixed(1)} kB/s (${usbMode}), ${usbBenchVerifyErrors} errors`, 'log-usb');
+    document.getElementById('usb-status').textContent = `Connected (${usbMode})`;
   } else if (msg.resp === 'error') {
     log(`USB error: ${msg.msg}`, 'log-err');
   }
 }
 
-async function usbBench() {
-  const bytes = parseInt(document.getElementById('usb-size').value);
-  setProgress('usb', 0);
-  log(`Starting USB benchmark: ${formatBytes(bytes)}...`, 'log-usb');
-  await usbSendCmd({cmd: 'bench', bytes: bytes});
+
+// ── WebUSB Connect (Android Chrome) ──────────────────────────────────────────
+async function webusbConnect() {
+  if (!navigator.usb) { log('WebUSB not available', 'log-err'); return; }
+  try {
+    log('Requesting WebUSB device...', 'log-usb');
+    webusbDevice = await navigator.usb.requestDevice({
+      filters: [{ vendorId: 0x303A }] // Espressif
+    });
+    await webusbDevice.open();
+    if (!webusbDevice.configuration) await webusbDevice.selectConfiguration(1);
+
+    // Find vendor-class interface (0xFF)
+    let vendorIface = null;
+    for (const iface of webusbDevice.configuration.interfaces) {
+      for (const alt of iface.alternates) {
+        if (alt.interfaceClass === 0xFF) { vendorIface = iface; break; }
+      }
+      if (vendorIface) break;
+    }
+    if (!vendorIface) {
+      log('No vendor interface. Firmware needs USB-OTG (TinyUSB) mode with USBVendor.', 'log-err');
+      await webusbDevice.close();
+      return;
+    }
+
+    await webusbDevice.claimInterface(vendorIface.interfaceNumber);
+    webusbIfaceNum = vendorIface.interfaceNumber;
+
+    const alt = vendorIface.alternates[0];
+    webusbEpIn = null; webusbEpOut = null;
+    for (const ep of alt.endpoints) {
+      if (ep.direction === 'in') webusbEpIn = ep;
+      if (ep.direction === 'out') webusbEpOut = ep;
+    }
+    if (!webusbEpIn || !webusbEpOut) {
+      log('Missing bulk endpoints on vendor interface', 'log-err');
+      await webusbDevice.close();
+      return;
+    }
+
+    usbMode = 'webusb';
+    setConnected('usb', true);
+    document.getElementById('usb-status').textContent = `Connected (WebUSB)`;
+    log(`WebUSB connected: ${webusbDevice.productName || 'ESP32-S3'}`, 'log-usb');
+    webusbReadLoop();
+  } catch (e) {
+    log(`WebUSB error: ${e.message}`, 'log-err');
+  }
 }
 
+async function webusbReadLoop() {
+  try {
+    while (webusbDevice && webusbDevice.opened) {
+      const result = await webusbDevice.transferIn(webusbEpIn.endpointNumber, 16384);
+      if (result.status === 'ok' && result.data.byteLength > 0) {
+        handleUsbRawData(new Uint8Array(result.data.buffer));
+      }
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError' && e.name !== 'NetworkError') {
+      log(`WebUSB read error: ${e.message}`, 'log-err');
+    }
+  }
+}
+
+
+// ── Web Serial Connect (Desktop Chrome) ──────────────────────────────────────
+async function usbSerialConnect() {
+  if (!navigator.serial) { log('Web Serial not available (desktop Chrome only)', 'log-err'); return; }
+  try {
+    log('Requesting serial port...', 'log-usb');
+    serialPort = await navigator.serial.requestPort({
+      filters: [{ usbVendorId: 0x303A }]
+    });
+    await serialPort.open({ baudRate: 921600 });
+    serialWriter = serialPort.writable.getWriter();
+    serialReader = serialPort.readable.getReader();
+
+    usbMode = 'serial';
+    setConnected('usb', true);
+    document.getElementById('usb-status').textContent = 'Connected (Web Serial)';
+    log('Web Serial connected', 'log-usb');
+    serialReadLoop();
+  } catch (e) {
+    log(`Serial error: ${e.message}`, 'log-err');
+  }
+}
+
+async function serialReadLoop() {
+  try {
+    while (true) {
+      const {value, done} = await serialReader.read();
+      if (done) break;
+      handleUsbRawData(value);
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError') log(`Serial read error: ${e.message}`, 'log-err');
+  }
+}
+
+
+// ── USB Disconnect (both modes) ──────────────────────────────────────────────
+async function usbDisconnect() {
+  usbBenchActive = false;
+  try {
+    if (usbMode === 'serial') {
+      if (serialReader) { await serialReader.cancel(); serialReader = null; }
+      if (serialWriter) { serialWriter.releaseLock(); serialWriter = null; }
+      if (serialPort) { await serialPort.close(); serialPort = null; }
+    } else if (usbMode === 'webusb') {
+      if (webusbDevice && webusbDevice.opened) {
+        if (webusbIfaceNum >= 0) {
+          try { await webusbDevice.releaseInterface(webusbIfaceNum); } catch(e) {}
+        }
+        await webusbDevice.close();
+      }
+      webusbDevice = null; webusbEpIn = null; webusbEpOut = null; webusbIfaceNum = -1;
+    }
+  } catch(e) { /* ignore */ }
+
+  const prev = usbMode;
+  usbMode = null;
+  setConnected('usb', false);
+  document.getElementById('usb-status').textContent = 'Disconnected';
+  log(`USB disconnected (was: ${prev})`, 'log-usb');
+}
+
+
 // ── Init ─────────────────────────────────────────────────────────────────────
-log('RocketLink Transport Test ready');
-log(`Secure context: ${window.isSecureContext ? 'yes' : 'NO - need HTTPS!'}`);
-log(`Web Bluetooth: ${navigator.bluetooth ? 'available' : 'NOT available'}`);
-log(`Web Serial: ${navigator.serial ? 'available' : 'NOT available'}`);
+log('Moonshot Transport Test ready');
+log(`Secure context: ${window.isSecureContext ? 'yes' : 'NO - need HTTPS'}`);
+log(`Bluetooth: ${navigator.bluetooth ? 'yes' : 'no'} | WebUSB: ${navigator.usb ? 'yes' : 'no'} | Web Serial: ${navigator.serial ? 'yes' : 'no'}`);
 </script>
 </body>
 </html>
