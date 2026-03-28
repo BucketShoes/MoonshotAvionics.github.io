@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RocketLink Transport Test</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg: #0a0c10;
+    --surface: #12151c;
+    --surface2: #1a1e28;
+    --border: #2a2f3d;
+    --text: #e0e4ed;
+    --text-dim: #6b7280;
+    --accent-ble: #3b82f6;
+    --accent-ble-dim: #1e3a5f;
+    --accent-usb: #10b981;
+    --accent-usb-dim: #064e3b;
+    --accent-warn: #f59e0b;
+    --accent-err: #ef4444;
+    --radius: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 1rem;
+  }
+
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  header {
+    text-align: center;
+    padding: 1.5rem 0 1rem;
+  }
+  header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  header h1 span.ble { color: var(--accent-ble); }
+  header h1 span.usb { color: var(--accent-usb); }
+  header p {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+  }
+  .card.ble { border-top: 3px solid var(--accent-ble); }
+  .card.usb { border-top: 3px solid var(--accent-usb); }
+
+  .card h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .card h2 .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .card h2 .dot.connected { background: var(--accent-usb); box-shadow: 0 0 6px var(--accent-usb); }
+
+  .status-line {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 1.2em;
+  }
+
+  button {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    border: none;
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn-ble {
+    background: var(--accent-ble);
+    color: white;
+  }
+  .btn-ble:hover:not(:disabled) { background: #2563eb; }
+
+  .btn-usb {
+    background: var(--accent-usb);
+    color: white;
+  }
+  .btn-usb:hover:not(:disabled) { background: #059669; }
+
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn-outline:hover:not(:disabled) { background: var(--surface2); }
+
+  .btn-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+
+  .bench-config {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .bench-config label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  .bench-config select, .bench-config input {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 0.3rem 0.5rem;
+  }
+
+  .result-box {
+    background: var(--surface2);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-top: 0.75rem;
+    min-height: 60px;
+  }
+  .result-box .big-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .result-box .big-number.ble { color: var(--accent-ble); }
+  .result-box .big-number.usb { color: var(--accent-usb); }
+  .result-box .unit {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-left: 0.25rem;
+  }
+  .result-box .detail {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 0.5rem;
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    margin-top: 0.5rem;
+    overflow: hidden;
+  }
+  .progress-bar .fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.1s;
+    width: 0%;
+  }
+  .progress-bar .fill.ble { background: var(--accent-ble); }
+  .progress-bar .fill.usb { background: var(--accent-usb); }
+
+  /* Log panel */
+  .log-panel {
+    max-width: 960px;
+    margin: 1rem auto 0;
+  }
+  .log-panel h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #log {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+    color: var(--text-dim);
+  }
+  #log .log-ble { color: var(--accent-ble); }
+  #log .log-usb { color: var(--accent-usb); }
+  #log .log-err { color: var(--accent-err); }
+  #log .log-warn { color: var(--accent-warn); }
+
+  /* API support badges */
+  .api-badges {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    margin: 0.5rem 0 1rem;
+    flex-wrap: wrap;
+  }
+  .badge {
+    font-size: 0.7rem;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  .badge.ok { border-color: var(--accent-usb); color: var(--accent-usb); }
+  .badge.no { border-color: var(--accent-err); color: var(--accent-err); }
+  .badge.na { border-color: var(--text-dim); color: var(--text-dim); }
+
+  .results-history {
+    max-width: 960px;
+    margin: 1rem auto 0;
+  }
+  .results-history h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+  .history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .history-table th, .history-table td {
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-table th {
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RocketLink <span class="ble">BLE</span> + <span class="usb">USB</span> Test</h1>
+  <p>Transport throughput benchmarking for rocket avionics</p>
+  <div class="api-badges" id="badges"></div>
+</header>
+
+<div class="grid">
+  <!-- BLE Card -->
+  <div class="card ble">
+    <h2><span class="dot" id="ble-dot"></span> Bluetooth LE</h2>
+    <div class="status-line" id="ble-status">Not connected</div>
+    <div class="btn-row">
+      <button class="btn-ble" id="ble-connect" onclick="bleConnect()">Connect</button>
+      <button class="btn-outline" id="ble-disconnect" onclick="bleDisconnect()" disabled>Disconnect</button>
+      <button class="btn-outline" id="ble-ping" onclick="blePing()" disabled>Ping</button>
+      <button class="btn-outline" id="ble-info" onclick="bleInfo()" disabled>Info</button>
+    </div>
+    <div class="bench-config">
+      <label>Size:</label>
+      <select id="ble-size">
+        <option value="1024">1 KB</option>
+        <option value="10240">10 KB</option>
+        <option value="51200">50 KB</option>
+        <option value="102400" selected>100 KB</option>
+        <option value="512000">500 KB</option>
+        <option value="1048576">1 MB</option>
+      </select>
+      <label>Credits:</label>
+      <select id="ble-credits">
+        <option value="2">2</option>
+        <option value="5">5</option>
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+        <option value="50">50</option>
+      </select>
+      <button class="btn-ble" id="ble-bench" onclick="bleBench()" disabled>Benchmark</button>
+    </div>
+    <div class="progress-bar"><div class="fill ble" id="ble-progress"></div></div>
+    <div class="result-box" id="ble-result">
+      <div style="color: var(--text-dim); font-size: 0.8rem;">Connect and run benchmark</div>
+    </div>
+  </div>
+
+  <!-- USB Card -->
+  <div class="card usb">
+    <h2><span class="dot" id="usb-dot"></span> USB Serial</h2>
+    <div class="status-line" id="usb-status">Not connected</div>
+    <div class="btn-row">
+      <button class="btn-usb" id="usb-connect" onclick="usbConnect()">Connect</button>
+      <button class="btn-outline" id="usb-disconnect" onclick="usbDisconnect()" disabled>Disconnect</button>
+      <button class="btn-outline" id="usb-ping" onclick="usbPing()" disabled>Ping</button>
+      <button class="btn-outline" id="usb-info" onclick="usbInfo()" disabled>Info</button>
+    </div>
+    <div class="bench-config">
+      <label>Size:</label>
+      <select id="usb-size">
+        <option value="10240">10 KB</option>
+        <option value="102400">100 KB</option>
+        <option value="512000">500 KB</option>
+        <option value="1048576" selected>1 MB</option>
+        <option value="5242880">5 MB</option>
+        <option value="10485760">10 MB</option>
+      </select>
+      <button class="btn-usb" id="usb-bench" onclick="usbBench()" disabled>Benchmark</button>
+    </div>
+    <div class="progress-bar"><div class="fill usb" id="usb-progress"></div></div>
+    <div class="result-box" id="usb-result">
+      <div style="color: var(--text-dim); font-size: 0.8rem;">Connect and run benchmark</div>
+    </div>
+  </div>
+</div>
+
+<!-- Results History -->
+<div class="results-history" id="history-section" style="display:none">
+  <h3>Results History</h3>
+  <table class="history-table">
+    <thead><tr><th>Transport</th><th>Size</th><th>Time</th><th>Speed</th><th>Verified</th></tr></thead>
+    <tbody id="history-body"></tbody>
+  </table>
+</div>
+
+<!-- Log -->
+<div class="log-panel">
+  <h3>Log <button class="btn-outline" onclick="clearLog()" style="font-size:0.7rem;padding:0.15rem 0.5rem;">Clear</button></h3>
+  <div id="log"></div>
+</div>
+
+<script>
+// ── Constants ────────────────────────────────────────────────────────────────
+const SERVICE_UUID        = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f6';
+const TX_CHAR_UUID        = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f7';
+const RX_CHAR_UUID        = 'a0e1f2d3-4b5c-6d7e-8f90-a1b2c3d4e5f8';
+
+// ── State ────────────────────────────────────────────────────────────────────
+let bleDevice = null, bleServer = null, bleTxChar = null, bleRxChar = null;
+let usbPort = null, usbReader = null, usbWriter = null;
+
+// BLE bench state
+let bleBenchActive = false;
+let bleBenchBytes = 0;
+let bleBenchReceived = 0;
+let bleBenchStart = 0;
+let bleBenchVerifyErrors = 0;
+let bleCreditInterval = null;
+
+// USB bench state  
+let usbBenchActive = false;
+let usbBenchBytes = 0;
+let usbBenchReceived = 0;
+let usbBenchStart = 0;
+let usbBenchVerifyErrors = 0;
+
+// USB read buffer for framing
+let usbReadBuffer = new Uint8Array(0);
+
+// Results history
+const results = [];
+
+// ── Logging ──────────────────────────────────────────────────────────────────
+function log(msg, cls = '') {
+  const el = document.getElementById('log');
+  const ts = new Date().toLocaleTimeString('en-AU', {hour12: false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = `[${ts}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+
+// ── Pattern verification ─────────────────────────────────────────────────────
+function benchPattern(offset) { return ((offset * 7 + 13) & 0xFF); }
+
+function verifyChunk(data, globalOffset) {
+  let errors = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] !== benchPattern(globalOffset + i)) {
+      errors++;
+      if (errors <= 3) {
+        log(`  verify fail @ offset ${globalOffset+i}: got 0x${data[i].toString(16)}, expected 0x${benchPattern(globalOffset+i).toString(16)}`, 'log-warn');
+      }
+    }
+  }
+  return errors;
+}
+
+// ── API Support Detection ────────────────────────────────────────────────────
+function checkAPIs() {
+  const badges = document.getElementById('badges');
+  const apis = [
+    ['Web Bluetooth', !!navigator.bluetooth],
+    ['Web Serial', !!navigator.serial],
+    ['Secure Context', !!window.isSecureContext],
+  ];
+  badges.innerHTML = apis.map(([name, ok]) => 
+    `<span class="badge ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'} ${name}</span>`
+  ).join('');
+}
+checkAPIs();
+
+// ── UI Helpers ───────────────────────────────────────────────────────────────
+function setConnected(transport, connected) {
+  const dot = document.getElementById(`${transport}-dot`);
+  const connectBtn = document.getElementById(`${transport}-connect`);
+  const disconnectBtn = document.getElementById(`${transport}-disconnect`);
+  const pingBtn = document.getElementById(`${transport}-ping`);
+  const infoBtn = document.getElementById(`${transport}-info`);
+  const benchBtn = document.getElementById(`${transport}-bench`);
+  
+  dot.className = connected ? 'dot connected' : 'dot';
+  connectBtn.disabled = connected;
+  disconnectBtn.disabled = !connected;
+  pingBtn.disabled = !connected;
+  infoBtn.disabled = !connected;
+  benchBtn.disabled = !connected;
+}
+
+function showResult(transport, kBps, detail, verified) {
+  const box = document.getElementById(`${transport}-result`);
+  const colorClass = transport;
+  box.innerHTML = `
+    <div class="big-number ${colorClass}">${kBps.toFixed(1)}<span class="unit">kB/s</span></div>
+    <div class="detail">${detail}</div>
+    ${verified !== undefined ? `<div class="detail" style="color: ${verified ? 'var(--accent-usb)' : 'var(--accent-err)'}">
+      ${verified ? '✓ Data verified' : '✗ Verification errors'}</div>` : ''}
+  `;
+}
+
+function setProgress(transport, pct) {
+  document.getElementById(`${transport}-progress`).style.width = `${Math.min(100, pct)}%`;
+}
+
+function addHistory(transport, bytes, elapsed, kBps, verified) {
+  results.push({transport, bytes, elapsed, kBps, verified});
+  const section = document.getElementById('history-section');
+  section.style.display = '';
+  const tbody = document.getElementById('history-body');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td style="color: var(--accent-${transport})">${transport.toUpperCase()}</td>
+    <td>${formatBytes(bytes)}</td>
+    <td>${(elapsed/1000).toFixed(2)}s</td>
+    <td>${kBps.toFixed(1)} kB/s</td>
+    <td style="color: ${verified ? 'var(--accent-usb)' : 'var(--accent-err)'}">${verified ? '✓' : '✗'}</td>
+  `;
+  tbody.prepend(tr);
+}
+
+function formatBytes(b) {
+  if (b >= 1048576) return (b/1048576).toFixed(1) + ' MB';
+  if (b >= 1024) return (b/1024).toFixed(0) + ' KB';
+  return b + ' B';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function bleConnect() {
+  if (!navigator.bluetooth) {
+    log('Web Bluetooth not available. Need HTTPS (GitHub Pages) and Chrome/Edge.', 'log-err');
+    return;
+  }
+  try {
+    log('Requesting BLE device...', 'log-ble');
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }],
+      optionalServices: [SERVICE_UUID]
+    });
+    
+    bleDevice.addEventListener('gattserverdisconnected', () => {
+      log('BLE disconnected', 'log-ble');
+      setConnected('ble', false);
+      document.getElementById('ble-status').textContent = 'Disconnected';
+      bleBenchActive = false;
+      if (bleCreditInterval) { clearInterval(bleCreditInterval); bleCreditInterval = null; }
+    });
+    
+    log(`Connecting to ${bleDevice.name}...`, 'log-ble');
+    bleServer = await bleDevice.gatt.connect();
+    
+    const service = await bleServer.getPrimaryService(SERVICE_UUID);
+    bleTxChar = await service.getCharacteristic(TX_CHAR_UUID);
+    bleRxChar = await service.getCharacteristic(RX_CHAR_UUID);
+    
+    // Subscribe to notifications
+    await bleTxChar.startNotifications();
+    bleTxChar.addEventListener('characteristicvaluechanged', onBleNotification);
+    
+    setConnected('ble', true);
+    document.getElementById('ble-status').textContent = `Connected: ${bleDevice.name}`;
+    log(`BLE connected to ${bleDevice.name}`, 'log-ble');
+    
+  } catch (e) {
+    log(`BLE connect error: ${e.message}`, 'log-err');
+  }
+}
+
+async function bleDisconnect() {
+  if (bleCreditInterval) { clearInterval(bleCreditInterval); bleCreditInterval = null; }
+  if (bleDevice && bleDevice.gatt.connected) {
+    bleDevice.gatt.disconnect();
+  }
+}
+
+async function bleSendCmd(obj) {
+  if (!bleRxChar) return;
+  const data = new TextEncoder().encode(JSON.stringify(obj));
+  await bleRxChar.writeValueWithoutResponse(data);
+}
+
+async function blePing() {
+  const t0 = performance.now();
+  bleSendCmd({cmd: 'ping'});
+  // Response handled in notification handler
+  window._blePingStart = t0;
+}
+
+async function bleInfo() {
+  bleSendCmd({cmd: 'info'});
+}
+
+function onBleNotification(event) {
+  const value = event.target.value;
+  
+  if (bleBenchActive) {
+    // Binary benchmark data
+    const chunk = new Uint8Array(value.buffer);
+    
+    // Check if this is a JSON control message (starts with '{')
+    if (chunk[0] === 0x7B) { // '{'
+      const text = new TextDecoder().decode(chunk);
+      try {
+        const msg = JSON.parse(text);
+        handleBleControlMsg(msg);
+        return;
+      } catch(e) {
+        // Not JSON, treat as data
+      }
+    }
+    
+    // Benchmark data
+    bleBenchVerifyErrors += verifyChunk(chunk, bleBenchReceived);
+    bleBenchReceived += chunk.length;
+    
+    const pct = (bleBenchReceived / bleBenchBytes) * 100;
+    setProgress('ble', pct);
+    
+    if (bleBenchReceived % 10240 < chunk.length) {
+      const elapsed = performance.now() - bleBenchStart;
+      const kBps = (bleBenchReceived / 1024) / (elapsed / 1000);
+      document.getElementById('ble-status').textContent = 
+        `Benchmark: ${formatBytes(bleBenchReceived)}/${formatBytes(bleBenchBytes)} (${kBps.toFixed(0)} kB/s)`;
+    }
+    
+    return;
+  }
+  
+  // Control / response message
+  const text = new TextDecoder().decode(value.buffer);
+  try {
+    const msg = JSON.parse(text);
+    handleBleControlMsg(msg);
+  } catch(e) {
+    log(`BLE raw: ${text}`, 'log-ble');
+  }
+}
+
+function handleBleControlMsg(msg) {
+  if (msg.resp === 'pong') {
+    const rtt = window._blePingStart ? (performance.now() - window._blePingStart).toFixed(1) : '?';
+    log(`BLE pong (RTT: ${rtt}ms, uptime: ${msg.uptime_ms}ms)`, 'log-ble');
+    
+  } else if (msg.resp === 'info') {
+    log(`BLE info: MTU=${msg.ble_mtu}, payload=${msg.ble_payload}, heap=${msg.free_heap}`, 'log-ble');
+    document.getElementById('ble-status').textContent = 
+      `Connected | MTU: ${msg.ble_mtu} | Payload: ${msg.ble_payload}B`;
+    
+  } else if (msg.resp === 'bench_start') {
+    log(`BLE bench starting: ${msg.bytes}B, payload=${msg.payload_size}B`, 'log-ble');
+    bleBenchActive = true;
+    bleBenchBytes = msg.bytes;
+    bleBenchReceived = 0;
+    bleBenchStart = performance.now();
+    bleBenchVerifyErrors = 0;
+    
+    // Start sending credits periodically
+    const creditBatch = parseInt(document.getElementById('ble-credits').value);
+    bleSendCmd({cmd: 'credit', n: creditBatch});
+    bleCreditInterval = setInterval(() => {
+      if (bleBenchActive) {
+        bleSendCmd({cmd: 'credit', n: creditBatch});
+      }
+    }, 50); // Send credits every 50ms to keep the pipe full
+    
+  } else if (msg.resp === 'bench_done') {
+    bleBenchActive = false;
+    if (bleCreditInterval) { clearInterval(bleCreditInterval); bleCreditInterval = null; }
+    
+    const clientElapsed = performance.now() - bleBenchStart;
+    const kBps = (bleBenchReceived / 1024) / (clientElapsed / 1000);
+    const detail = `${formatBytes(bleBenchReceived)} in ${(clientElapsed/1000).toFixed(2)}s | ` +
+                   `Device reported: ${msg.kBps} kB/s | Errors: ${bleBenchVerifyErrors}`;
+    
+    showResult('ble', kBps, detail, bleBenchVerifyErrors === 0);
+    setProgress('ble', 100);
+    addHistory('ble', bleBenchReceived, clientElapsed, kBps, bleBenchVerifyErrors === 0);
+    
+    log(`BLE bench done: ${kBps.toFixed(1)} kB/s (device: ${msg.kBps} kB/s), ${bleBenchVerifyErrors} errors`, 'log-ble');
+    document.getElementById('ble-status').textContent = `Connected: ${bleDevice.name}`;
+    
+  } else if (msg.resp === 'error') {
+    log(`BLE error: ${msg.msg}`, 'log-err');
+  }
+}
+
+async function bleBench() {
+  const bytes = parseInt(document.getElementById('ble-size').value);
+  setProgress('ble', 0);
+  log(`Starting BLE benchmark: ${formatBytes(bytes)}...`, 'log-ble');
+  await bleSendCmd({cmd: 'bench', bytes: bytes});
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// USB Serial
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function usbConnect() {
+  if (!navigator.serial) {
+    log('Web Serial not available. Need HTTPS and Chrome/Edge.', 'log-err');
+    return;
+  }
+  try {
+    log('Requesting USB serial port...', 'log-usb');
+    usbPort = await navigator.serial.requestPort({
+      // ESP32-S3 native USB CDC
+      filters: [
+        { usbVendorId: 0x303A }, // Espressif
+      ]
+    });
+    
+    await usbPort.open({ baudRate: 921600 });
+    
+    usbWriter = usbPort.writable.getWriter();
+    usbReader = usbPort.readable.getReader();
+    
+    setConnected('usb', true);
+    document.getElementById('usb-status').textContent = 'Connected (USB CDC)';
+    log('USB serial connected', 'log-usb');
+    
+    // Start read loop
+    usbReadLoop();
+    
+  } catch (e) {
+    log(`USB connect error: ${e.message}`, 'log-err');
+  }
+}
+
+async function usbDisconnect() {
+  try {
+    if (usbReader) { await usbReader.cancel(); usbReader = null; }
+    if (usbWriter) { usbWriter.releaseLock(); usbWriter = null; }
+    if (usbPort) { await usbPort.close(); usbPort = null; }
+  } catch(e) { /* ignore */ }
+  
+  setConnected('usb', false);
+  document.getElementById('usb-status').textContent = 'Disconnected';
+  log('USB disconnected', 'log-usb');
+  usbBenchActive = false;
+}
+
+async function usbSendCmd(obj) {
+  if (!usbWriter) return;
+  const data = new TextEncoder().encode(JSON.stringify(obj) + '\n');
+  await usbWriter.write(data);
+}
+
+async function usbSendAck() {
+  if (!usbWriter) return;
+  await usbWriter.write(new TextEncoder().encode('{"cmd":"ack"}\n'));
+}
+
+async function usbPing() {
+  window._usbPingStart = performance.now();
+  usbSendCmd({cmd: 'ping'});
+}
+
+async function usbInfo() {
+  usbSendCmd({cmd: 'info'});
+}
+
+async function usbReadLoop() {
+  const decoder = new TextDecoder();
+  let lineBuffer = '';
+  
+  try {
+    while (true) {
+      const {value, done} = await usbReader.read();
+      if (done) break;
+      
+      if (usbBenchActive) {
+        // In benchmark mode: parse binary framing
+        // Append to buffer
+        const newBuf = new Uint8Array(usbReadBuffer.length + value.length);
+        newBuf.set(usbReadBuffer);
+        newBuf.set(value, usbReadBuffer.length);
+        usbReadBuffer = newBuf;
+        
+        processUsbBenchBuffer();
+      } else {
+        // In command mode: line-based JSON
+        lineBuffer += decoder.decode(value, {stream: true});
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop(); // Keep incomplete line
+        
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const msg = JSON.parse(trimmed);
+            handleUsbControlMsg(msg);
+          } catch(e) {
+            log(`USB raw: ${trimmed}`, 'log-usb');
+          }
+        }
+      }
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError') {
+      log(`USB read error: ${e.message}`, 'log-err');
+    }
+  }
+}
+
+function processUsbBenchBuffer() {
+  // Frame format: 'D' + 3 bytes big-endian length + payload
+  // OR: JSON line (starts with '{')
+  
+  while (usbReadBuffer.length > 0) {
+    // Check for JSON control message
+    if (usbReadBuffer[0] === 0x7B) { // '{'
+      // Find newline
+      const nlIdx = usbReadBuffer.indexOf(0x0A); // '\n'
+      if (nlIdx === -1) {
+        // Also check for '}' without newline (sometimes no newline in mixed mode)
+        // Wait for more data
+        break;
+      }
+      const jsonBytes = usbReadBuffer.slice(0, nlIdx);
+      usbReadBuffer = usbReadBuffer.slice(nlIdx + 1);
+      
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(jsonBytes));
+        handleUsbControlMsg(msg);
+      } catch(e) { /* skip */ }
+      continue;
+    }
+    
+    // Binary data frame
+    if (usbReadBuffer[0] !== 0x44) { // 'D'
+      // Unexpected byte, skip it
+      usbReadBuffer = usbReadBuffer.slice(1);
+      continue;
+    }
+    
+    if (usbReadBuffer.length < 4) break; // Need header
+    
+    const len = (usbReadBuffer[1] << 16) | (usbReadBuffer[2] << 8) | usbReadBuffer[3];
+    if (usbReadBuffer.length < 4 + len) break; // Need full payload
+    
+    const payload = usbReadBuffer.slice(4, 4 + len);
+    usbReadBuffer = usbReadBuffer.slice(4 + len);
+    
+    // Verify and count
+    usbBenchVerifyErrors += verifyChunk(payload, usbBenchReceived);
+    usbBenchReceived += payload.length;
+    
+    const pct = (usbBenchReceived / usbBenchBytes) * 100;
+    setProgress('usb', pct);
+    
+    if (usbBenchReceived % 51200 < payload.length) {
+      const elapsed = performance.now() - usbBenchStart;
+      const kBps = (usbBenchReceived / 1024) / (elapsed / 1000);
+      document.getElementById('usb-status').textContent = 
+        `Benchmark: ${formatBytes(usbBenchReceived)}/${formatBytes(usbBenchBytes)} (${kBps.toFixed(0)} kB/s)`;
+    }
+    
+    // Send ACK to release next chunk
+    usbSendAck();
+  }
+}
+
+function handleUsbControlMsg(msg) {
+  if (msg.resp === 'pong') {
+    const rtt = window._usbPingStart ? (performance.now() - window._usbPingStart).toFixed(1) : '?';
+    log(`USB pong (RTT: ${rtt}ms, uptime: ${msg.uptime_ms}ms)`, 'log-usb');
+    
+  } else if (msg.resp === 'info') {
+    log(`USB info: chunk=${msg.usb_chunk_size}, heap=${msg.free_heap}`, 'log-usb');
+    document.getElementById('usb-status').textContent = 
+      `Connected | Chunk: ${msg.usb_chunk_size}B`;
+    
+  } else if (msg.resp === 'bench_start') {
+    log(`USB bench starting: ${msg.bytes}B, chunk=${msg.chunk_size}B`, 'log-usb');
+    usbBenchActive = true;
+    usbBenchBytes = msg.bytes;
+    usbBenchReceived = 0;
+    usbBenchStart = performance.now();
+    usbBenchVerifyErrors = 0;
+    usbReadBuffer = new Uint8Array(0);
+    
+  } else if (msg.resp === 'bench_done') {
+    usbBenchActive = false;
+    
+    const clientElapsed = performance.now() - usbBenchStart;
+    const kBps = (usbBenchReceived / 1024) / (clientElapsed / 1000);
+    const detail = `${formatBytes(usbBenchReceived)} in ${(clientElapsed/1000).toFixed(2)}s | ` +
+                   `Device reported: ${msg.kBps} kB/s | Errors: ${usbBenchVerifyErrors}`;
+    
+    showResult('usb', kBps, detail, usbBenchVerifyErrors === 0);
+    setProgress('usb', 100);
+    addHistory('usb', usbBenchReceived, clientElapsed, kBps, usbBenchVerifyErrors === 0);
+    
+    log(`USB bench done: ${kBps.toFixed(1)} kB/s (device: ${msg.kBps} kB/s), ${usbBenchVerifyErrors} errors`, 'log-usb');
+    document.getElementById('usb-status').textContent = 'Connected (USB CDC)';
+    
+  } else if (msg.resp === 'error') {
+    log(`USB error: ${msg.msg}`, 'log-err');
+  }
+}
+
+async function usbBench() {
+  const bytes = parseInt(document.getElementById('usb-size').value);
+  setProgress('usb', 0);
+  log(`Starting USB benchmark: ${formatBytes(bytes)}...`, 'log-usb');
+  await usbSendCmd({cmd: 'bench', bytes: bytes});
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+log('RocketLink Transport Test ready');
+log(`Secure context: ${window.isSecureContext ? 'yes' : 'NO - need HTTPS!'}`);
+log(`Web Bluetooth: ${navigator.bluetooth ? 'available' : 'NOT available'}`);
+log(`Web Serial: ${navigator.serial ? 'available' : 'NOT available'}`);
+</script>
+</body>
+</html>
