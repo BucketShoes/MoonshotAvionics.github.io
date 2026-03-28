@@ -167,14 +167,17 @@
     <button class="primary" onclick="bleConnect()">Connect</button>
     <button onclick="bleDisconnect()" id="btn-ble-dc" disabled>Disconnect</button>
     <button onclick="blePing()" id="btn-ble-ping" disabled>Ping</button>
-    <button onclick="bleDownload(100)" id="btn-ble-dl100" disabled>Download 100</button>
-    <button onclick="bleDownload(500)" id="btn-ble-dl500" disabled>Download 500</button>
-    <button onclick="bleDownload(2000)" id="btn-ble-dl2000" disabled>Download 2000</button>
+    <button onclick="bleDownload(100)" id="btn-ble-dl100" disabled>DL 100</button>
+    <button onclick="bleDownload(2000)" id="btn-ble-dl2000" disabled>DL 2k</button>
+    <button onclick="bleDownload(10000)" id="btn-ble-dl10k" disabled>DL 10k</button>
+    <button onclick="bleDownload(100000)" id="btn-ble-dl100k" disabled>DL 100k</button>
   </div>
   <div id="ble-status-rows">
     <div class="row"><span class="label">State</span><span class="value" id="ble-state">Disconnected</span></div>
     <div class="row"><span class="label">MTU</span><span class="value" id="ble-mtu">—</span></div>
     <div class="row"><span class="label">Device</span><span class="value" id="ble-device">—</span></div>
+    <div class="row"><span class="label">Data mode</span><span class="value" id="ble-datamode">—</span></div>
+    <div class="row"><span class="label">Available records</span><span class="value" id="ble-totalrecs">—</span></div>
   </div>
   <div id="ble-dl-info" style="display:none">
     <div class="row"><span class="label">Records</span><span class="value" id="ble-dl-records">0</span></div>
@@ -416,8 +419,9 @@ function setBleButtons(connected) {
   document.getElementById('btn-ble-dc').disabled = !connected;
   document.getElementById('btn-ble-ping').disabled = !connected;
   document.getElementById('btn-ble-dl100').disabled = !connected;
-  document.getElementById('btn-ble-dl500').disabled = !connected;
   document.getElementById('btn-ble-dl2000').disabled = !connected;
+  document.getElementById('btn-ble-dl10k').disabled = !connected;
+  document.getElementById('btn-ble-dl100k').disabled = !connected;
 }
 
 async function bleDisconnect() {
@@ -449,16 +453,21 @@ async function bleDownload(count) {
     setVal('ble-throughput', '...');
     document.getElementById('ble-progress').style.width = '0%';
 
-    // Build command: 0x20 + uint32 start + uint16 count
-    const cmd = new ArrayBuffer(7);
+    // Build command: 0x20 + uint32 start + uint16 countLow [+ uint16 countHigh if >65535]
+    const needExtended = count > 65535;
+    const cmdLen = needExtended ? 9 : 7;
+    const cmd = new ArrayBuffer(cmdLen);
     const view = new DataView(cmd);
     view.setUint8(0, 0x20);
     view.setUint32(1, 0, true);  // start at record 0
-    view.setUint16(5, count, true);
+    view.setUint16(5, count & 0xFFFF, true);
+    if (needExtended) {
+      view.setUint16(7, (count >> 16) & 0xFFFF, true);
+    }
 
     bleDownloadStart = performance.now();
     await bleControlChar.writeValue(new Uint8Array(cmd));
-    log('ble-log', `Download requested: ${count} records`, 'log-data');
+    log('ble-log', `Download requested: ${count.toLocaleString()} records${needExtended ? ' (extended)' : ''}`, 'log-data');
 
   } catch (e) {
     log('ble-log', `Download error: ${e.message}`, 'log-fail');
@@ -481,7 +490,13 @@ function onBleData(event) {
     bleRawChunks.forEach(c => { if (c > maxChunk) maxChunk = c; });
     setVal('ble-mtu', `~${maxChunk + 3} (inferred)`);
     
-    log('ble-log', `Download complete: ${bleDownloadRecords} records, ${bleDownloadBytes} bytes, ${elapsed.toFixed(0)} ms, ${kbps.toFixed(1)} KB/s`, 'log-ok');
+    log('ble-log', `Download complete: ${bleDownloadRecords.toLocaleString()} records, ${(bleDownloadBytes/1024).toFixed(1)} KB, ${(elapsed/1000).toFixed(1)}s, ${kbps.toFixed(1)} KB/s`, 'log-ok');
+    
+    // Estimate full 6MB download time at this speed
+    if (kbps > 0) {
+      const est6mb = (6 * 1024) / kbps;
+      log('ble-log', `At this speed, 6MB would take ${est6mb.toFixed(0)}s (${(est6mb/60).toFixed(1)} min)`, 'log-data');
+    }
     
     // Try to parse first few records
     parseRecordSample();
@@ -531,9 +546,20 @@ function parseStatus(dataView) {
   const connected = dataView.getUint8(5);
   const mtu = dataView.getUint16(6, true);
   const uptime = dataView.getUint32(8, true);
+  
+  // v2 extended fields
+  let randomMode = '?';
+  let recSize = '?';
+  if (dataView.byteLength >= 14) {
+    randomMode = dataView.getUint8(12) ? 'RANDOM' : 'realistic';
+    recSize = dataView.getUint8(13);
+  }
 
   setVal('ble-mtu', mtu.toString());
-  log('ble-log', `Status: device=${deviceId}, records=${totalRecords}, mtu=${mtu}, uptime=${(uptime/1000).toFixed(1)}s`, 'log-data');
+  setVal('ble-totalrecs', totalRecords.toLocaleString());
+  setVal('ble-datamode', randomMode + (recSize !== '?' ? ` (~${recSize}B/rec)` : ''), 
+         randomMode === 'RANDOM' ? 'warn' : 'ok');
+  log('ble-log', `Status: dev=${deviceId} recs=${totalRecords.toLocaleString()} mtu=${mtu} mode=${randomMode} up=${(uptime/1000).toFixed(1)}s`, 'log-data');
 }
 
 let bleTelemCount = 0;
