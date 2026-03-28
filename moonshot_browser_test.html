@@ -170,6 +170,7 @@
     <button onclick="bleDownload(100)" id="btn-ble-dl100" disabled>Download 100</button>
     <button onclick="bleDownload(500)" id="btn-ble-dl500" disabled>Download 500</button>
     <button onclick="bleDownload(2000)" id="btn-ble-dl2000" disabled>Download 2000</button>
+    <button onclick="bleDownload(65535)" id="btn-ble-dl65k" disabled>Download 65k</button>
   </div>
   <div id="ble-status-rows">
     <div class="row"><span class="label">State</span><span class="value" id="ble-state">Disconnected</span></div>
@@ -353,6 +354,12 @@ let bleDownloadStart = 0;
 let bleDownloadExpected = 0;
 let bleRawChunks = [];
 
+// Flow control: credit-based ACK system
+let bleNotifCount = 0;
+const BLE_ACK_INTERVAL = 8;  // Send ACK every N notifications (matches CREDITS_PER_ACK)
+let bleDownloading = false;
+const BLE_CHUNK_SIZE = 10000; // Records per 0x20 request (under uint16 max)
+
 async function bleConnect() {
   try {
     log('ble-log', 'Requesting device...');
@@ -418,6 +425,7 @@ function setBleButtons(connected) {
   document.getElementById('btn-ble-dl100').disabled = !connected;
   document.getElementById('btn-ble-dl500').disabled = !connected;
   document.getElementById('btn-ble-dl2000').disabled = !connected;
+  document.getElementById('btn-ble-dl65k').disabled = !connected;
 }
 
 async function bleDisconnect() {
@@ -443,25 +451,47 @@ async function bleDownload(count) {
     bleDownloadRecords = 0;
     bleDownloadExpected = count;
     bleRawChunks = [];
+    bleNotifCount = 0;
+    bleDownloading = true;
     setVal('ble-dl-records', '0');
     setVal('ble-dl-bytes', '0');
     setVal('ble-dl-time', '...');
     setVal('ble-throughput', '...');
     document.getElementById('ble-progress').style.width = '0%';
 
-    // Build command: 0x20 + uint32 start + uint16 count
-    const cmd = new ArrayBuffer(7);
-    const view = new DataView(cmd);
-    view.setUint8(0, 0x20);
-    view.setUint32(1, 0, true);  // start at record 0
-    view.setUint16(5, count, true);
-
     bleDownloadStart = performance.now();
-    await bleControlChar.writeValue(new Uint8Array(cmd));
-    log('ble-log', `Download requested: ${count} records`, 'log-data');
+
+    // Send first chunk request (firmware handles uint16 count per request)
+    const firstChunk = Math.min(count, BLE_CHUNK_SIZE);
+    await sendBleDownloadRequest(0, firstChunk);
+    log('ble-log', `Download started: ${count} records (chunk=${firstChunk})`, 'log-data');
 
   } catch (e) {
+    bleDownloading = false;
     log('ble-log', `Download error: ${e.message}`, 'log-fail');
+  }
+}
+
+async function sendBleDownloadRequest(startRecord, count) {
+  const cmd = new ArrayBuffer(7);
+  const view = new DataView(cmd);
+  view.setUint8(0, 0x20);
+  view.setUint32(1, startRecord, true);
+  view.setUint16(5, Math.min(count, 65535), true);
+  await bleControlChar.writeValue(new Uint8Array(cmd));
+}
+
+async function sendBleAck() {
+  // Use writeWithoutResponse for speed — no GATT confirmation round-trip
+  try {
+    await bleControlChar.writeValueWithoutResponse(new Uint8Array([0x06]));
+  } catch (e) {
+    // Fallback to writeValue if writeWithoutResponse not supported
+    try {
+      await bleControlChar.writeValue(new Uint8Array([0x06]));
+    } catch (e2) {
+      // Ignore — firmware will stall but won't crash
+    }
   }
 }
 
@@ -470,20 +500,31 @@ function onBleData(event) {
 
   // Check for end marker: starts with 0xFF 0xFF 0xFF 0xFF
   if (data.length >= 5 && data[0] === 0xFF && data[1] === 0xFF && data[2] === 0xFF && data[3] === 0xFF) {
+    // Check if we need more chunks (multi-request download)
+    if (bleDownloading && bleDownloadRecords < bleDownloadExpected) {
+      // Request next chunk
+      const remaining = bleDownloadExpected - bleDownloadRecords;
+      const nextChunk = Math.min(remaining, BLE_CHUNK_SIZE);
+      bleNotifCount = 0;
+      sendBleDownloadRequest(bleDownloadRecords, nextChunk).then(() => {
+        log('ble-log', `Requesting next chunk: start=${bleDownloadRecords} count=${nextChunk}`, 'log-data');
+      });
+      return;
+    }
+
+    // All done
+    bleDownloading = false;
     const elapsed = performance.now() - bleDownloadStart;
     const kbps = (bleDownloadBytes / 1024) / (elapsed / 1000);
     setVal('ble-dl-time', `${elapsed.toFixed(0)} ms`);
     setVal('ble-throughput', kbps.toFixed(1));
     document.getElementById('ble-progress').style.width = '100%';
     
-    // Infer MTU from largest chunk received
     let maxChunk = 0;
     bleRawChunks.forEach(c => { if (c > maxChunk) maxChunk = c; });
     setVal('ble-mtu', `~${maxChunk + 3} (inferred)`);
     
-    log('ble-log', `Download complete: ${bleDownloadRecords} records, ${bleDownloadBytes} bytes, ${elapsed.toFixed(0)} ms, ${kbps.toFixed(1)} KB/s`, 'log-ok');
-    
-    // Try to parse first few records
+    log('ble-log', `Complete: ${bleDownloadRecords} records, ${bleDownloadBytes} bytes, ${elapsed.toFixed(0)} ms, ${kbps.toFixed(1)} KB/s`, 'log-ok');
     parseRecordSample();
     return;
   }
@@ -511,6 +552,13 @@ function onBleData(event) {
   if (elapsed > 100) {
     const kbps = (bleDownloadBytes / 1024) / (elapsed / 1000);
     setVal('ble-throughput', kbps.toFixed(1));
+  }
+
+  // Flow control: send ACK every N notifications to grant firmware more credits
+  bleNotifCount++;
+  if (bleNotifCount >= BLE_ACK_INTERVAL) {
+    bleNotifCount = 0;
+    sendBleAck();
   }
 }
 
