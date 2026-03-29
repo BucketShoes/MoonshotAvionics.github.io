@@ -58,9 +58,10 @@
 <body>
 
 <div class="sbar">
+  <div class="si"><span class="sl">Base:</span><input type="text" id="base-url" value="192.168.4.1" style="background:#222;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:11px;width:110px"><button id="btn-ws-reconnect" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;margin-left:2px">WS</button></div>
   <div class="si"><div class="dot dr" id="dot-ws"></div><span class="sl">WS:</span><span class="sv" id="val-ws">...</span></div>
   <div class="si"><div class="dot dd" id="dot-ble"></div><span class="sl">BLE:</span><span class="sv" id="val-ble">off</span></div>
-  <button id="btn-ble" style="background:#335;color:#8af;border:1px solid #558;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Connect BLE</button>
+  <button id="btn-ble" style="background:#335;color:#8af;border:1px solid #558;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">BLE</button>
   <div class="si"><div class="dot dd" id="dot-rkt"></div><span class="sl">Rocket:</span><span class="sv" id="val-rkt">no pkts</span></div>
   <div class="si"><span class="sl">SNR:</span><span class="sv" id="val-snr-top">&mdash;</span></div>
   <div class="si"><span class="sl">Live:</span><span class="sv" id="val-cnt">0</span></div>
@@ -212,6 +213,30 @@
 <script>
 (function() {
   "use strict";
+
+  // =============================================================
+  // BASE URL CONFIG
+  // =============================================================
+  // When the page is served from the base station WiFi AP, the URL is the AP IP.
+  // When loaded from a static file, GitHub Pages, or any other origin, the user
+  // can enter the base station IP manually. Default: 192.168.4.1
+  // All HTTP requests (status, logs, commands) and WebSocket connections use this.
+
+  function getBaseHost() {
+    var el = document.getElementById('base-url');
+    if (el && el.value) return el.value.trim();
+    return '192.168.4.1';
+  }
+
+  // HTTP base: always use http:// to talk to the ESP32 AP (no TLS on the device)
+  function getBaseHttp() {
+    return 'http://' + getBaseHost();
+  }
+
+  // WebSocket base
+  function getBaseWs() {
+    return 'ws://' + getBaseHost() + ':80/ws';
+  }
 
   // =============================================================
   // Pure JS SHA-256 (no crypto.subtle needed - works over HTTP)
@@ -599,7 +624,7 @@ function initCharts() {
       return;
     }
     // HTTP path (WiFi)
-    var x=new XMLHttpRequest();x.open('GET','/api/status');x.onload=function(){if(x.status===200){try{var s=JSON.parse(x.responseText);serverUptimeMs=s.uptimeMs;serverSyncClockMs=Date.now();document.getElementById('val-logrec').textContent=s.records;if(typeof s.baseBattMv==='number'){var be=document.getElementById('val-basebatt');be.textContent=s.baseBattMv+'mV';be.style.color=s.baseBattMv>3500?'#0f0':s.baseBattMv>3300?'#ff0':'#f44';if(charts&&charts.batt){var bootMs=serverUptimeMs;pushChart(charts.batt,bootMs,[null,s.baseBattMv])}}if(typeof s.nonce==='number'){var ne=document.getElementById('cmd-nonce');var srvNext=s.nonce+1;var cur=parseInt(ne.value)||0;if(srvNext>cur){ne.value=srvNext;try{localStorage.setItem('cmd-nonce',''+srvNext)}catch(e){}}}if(cb)cb(s)}catch(e){}}};x.send()
+    var x=new XMLHttpRequest();x.open('GET',getBaseHttp()+'/api/status');x.onload=function(){if(x.status===200){try{var s=JSON.parse(x.responseText);serverUptimeMs=s.uptimeMs;serverSyncClockMs=Date.now();document.getElementById('val-logrec').textContent=s.records;if(typeof s.baseBattMv==='number'){var be=document.getElementById('val-basebatt');be.textContent=s.baseBattMv+'mV';be.style.color=s.baseBattMv>3500?'#0f0':s.baseBattMv>3300?'#ff0':'#f44';if(charts&&charts.batt){var bootMs=serverUptimeMs;pushChart(charts.batt,bootMs,[null,s.baseBattMv])}}if(typeof s.nonce==='number'){var ne=document.getElementById('cmd-nonce');var srvNext=s.nonce+1;var cur=parseInt(ne.value)||0;if(srvNext>cur){ne.value=srvNext;try{localStorage.setItem('cmd-nonce',''+srvNext)}catch(e){}}}if(cb)cb(s)}catch(e){}}};x.send()
   }
 
   // Rebuild sessions from fetched base station logs + LoRa download session.
@@ -665,11 +690,11 @@ function initCharts() {
     }
 
     // HTTP path (WiFi)
-    fetchStatus(function(st){var oldest=st.oldest,newest=st.records;if(newest<=oldest){document.getElementById('fst').textContent='No logs';document.getElementById('btn-stop').style.display='none';return}var cursor=newest;function page(){if(fetchAbort||cursor<=oldest){done();return}var start=Math.max(cursor-200,oldest),count=cursor-start;if(start>=fetchedLowest&&cursor<=fetchedHighest){cursor=start;if(cursor>oldest)page();else done();return}document.getElementById('fst').textContent='#'+start+'..'+(start+count-1);var x=new XMLHttpRequest();x.open('GET','/api/logs?start='+start+'&count='+count);x.responseType='arraybuffer';x.onload=function(){if(x.status===200&&x.response&&x.response.byteLength>0){var buf=x.response,dv=new DataView(buf),off=0;while(off+10<=dv.byteLength){var rn=dv.getUint32(off,true);off+=4;var pl=dv.getUint8(off);off++;var sn=dv.getInt8(off);off++;var ts=dv.getUint32(off,true);off+=4;if(pl===0||off+pl>dv.byteLength)break;if(!allFetched[rn]){allFetched[rn]={recNum:rn,snr:sn/4,ts:ts,payload:buf.slice(off,off+pl)};if(rn<fetchedLowest)fetchedLowest=rn;if(rn>fetchedHighest)fetchedHighest=rn}off+=pl}}cursor=start;if(cursor>oldest&&!fetchAbort)page();else done()};x.onerror=function(){done()};x.send()}function done(){document.getElementById('btn-stop').style.display='none';rebuildSessions();var total=0;for(var k in allFetched)total++;document.getElementById('fst').textContent=total+'recs '+sessions.length+'sess';updateNav();if(sessions.length>0)showView(sessions.length-1)}page()})
+    fetchStatus(function(st){var oldest=st.oldest,newest=st.records;if(newest<=oldest){document.getElementById('fst').textContent='No logs';document.getElementById('btn-stop').style.display='none';return}var cursor=newest;function page(){if(fetchAbort||cursor<=oldest){done();return}var start=Math.max(cursor-200,oldest),count=cursor-start;if(start>=fetchedLowest&&cursor<=fetchedHighest){cursor=start;if(cursor>oldest)page();else done();return}document.getElementById('fst').textContent='#'+start+'..'+(start+count-1);var x=new XMLHttpRequest();x.open('GET',getBaseHttp()+'/api/logs?start='+start+'&count='+count);x.responseType='arraybuffer';x.onload=function(){if(x.status===200&&x.response&&x.response.byteLength>0){var buf=x.response,dv=new DataView(buf),off=0;while(off+10<=dv.byteLength){var rn=dv.getUint32(off,true);off+=4;var pl=dv.getUint8(off);off++;var sn=dv.getInt8(off);off++;var ts=dv.getUint32(off,true);off+=4;if(pl===0||off+pl>dv.byteLength)break;if(!allFetched[rn]){allFetched[rn]={recNum:rn,snr:sn/4,ts:ts,payload:buf.slice(off,off+pl)};if(rn<fetchedLowest)fetchedLowest=rn;if(rn>fetchedHighest)fetchedHighest=rn}off+=pl}}cursor=start;if(cursor>oldest&&!fetchAbort)page();else done()};x.onerror=function(){done()};x.send()}function done(){document.getElementById('btn-stop').style.display='none';rebuildSessions();var total=0;for(var k in allFetched)total++;document.getElementById('fst').textContent=total+'recs '+sessions.length+'sess';updateNav();if(sessions.length>0)showView(sessions.length-1)}page()})
   }
 
   var wsObj = null;
-  function connectWS(){try{var h=window.location.hostname||'192.168.4.1';wsObj=new WebSocket('ws://'+h+':'+(window.location.port||'80')+'/ws');wsObj.binaryType='arraybuffer'}catch(e){setTimeout(connectWS,3000);return}wsObj.onopen=function(){setWs(true);fetchStatus()};wsObj.onclose=function(){setWs(false);setTimeout(connectWS,2000)};wsObj.onmessage=function(ev){if(!(ev.data instanceof ArrayBuffer)||ev.data.byteLength<13)return;var dv=new DataView(ev.data);var pktBuf=ev.data.slice(12);var snr=dv.getFloat32(0,true);var rssi=dv.getFloat32(4,true);var recNum=dv.getInt32(8,true);var firstByte=new Uint8Array(pktBuf)[0];if(firstByte===0xCA){onLogChunk(pktBuf,snr,rssi,recNum)}else{onLivePkt(pktBuf,snr,rssi,recNum)}};wsObj.onerror=function(){wsObj.close()}}
+  function connectWS(){try{wsObj=new WebSocket(getBaseWs());wsObj.binaryType='arraybuffer'}catch(e){setTimeout(connectWS,3000);return}wsObj.onopen=function(){setWs(true);fetchStatus()};wsObj.onclose=function(){setWs(false);setTimeout(connectWS,2000)};wsObj.onmessage=function(ev){if(!(ev.data instanceof ArrayBuffer)||ev.data.byteLength<13)return;var dv=new DataView(ev.data);var pktBuf=ev.data.slice(12);var snr=dv.getFloat32(0,true);var rssi=dv.getFloat32(4,true);var recNum=dv.getInt32(8,true);var firstByte=new Uint8Array(pktBuf)[0];if(firstByte===0xCA){onLogChunk(pktBuf,snr,rssi,recNum)}else{onLivePkt(pktBuf,snr,rssi,recNum)}};wsObj.onerror=function(){wsObj.close()}}
 
   // =============================================================
   // BLE TRANSPORT (Web Bluetooth GATT)
@@ -721,7 +746,11 @@ function initCharts() {
 
     try {
       bleDevice = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [BLE_SERVICE_UUID] }]
+        filters: [
+          { services: [BLE_SERVICE_UUID] },
+          { namePrefix: 'Wifi' }
+        ],
+        optionalServices: [BLE_SERVICE_UUID]
       });
 
       bleDevice.addEventListener('gattserverdisconnected', function() {
@@ -1251,7 +1280,7 @@ function initCharts() {
       });
     } else {
       var xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/command');
+      xhr.open('POST', getBaseHttp() + '/api/command');
       xhr.setRequestHeader('Content-Type', 'application/octet-stream');
       xhr.onload = function() {
         if (xhr.status === 200) {
@@ -1298,6 +1327,30 @@ function initCharts() {
     document.getElementById('btn-next').addEventListener('click', function() { if(viewIdx>=0&&viewIdx<sessions.length-1)showView(viewIdx+1); });
     document.getElementById('btn-latest').addEventListener('click', function() { showView(-1); });
     document.getElementById('btn-ble').addEventListener('click', connectBLE);
+    document.getElementById('btn-ws-reconnect').addEventListener('click', function() {
+      // Save base URL to localStorage for next visit
+      var url = document.getElementById('base-url').value.trim();
+      try { localStorage.setItem('base-url', url); } catch(e) {}
+      // Close existing WS and reconnect to new URL
+      if (wsObj) { try { wsObj.close(); } catch(e) {} }
+      setTimeout(connectWS, 100);
+    });
+
+    // Restore base URL: if served from the device, use the device IP; otherwise use saved or default
+    (function() {
+      var h = window.location.hostname;
+      var urlEl = document.getElementById('base-url');
+      if (h && h !== 'localhost' && h !== '127.0.0.1' && !h.includes('github.io') && !h.includes('.')) {
+        // Probably served from the device itself
+        urlEl.value = h;
+      } else if (h && /^\d+\.\d+\.\d+\.\d+$/.test(h)) {
+        // Direct IP access — use it
+        urlEl.value = h;
+      } else {
+        // Static file or external host — restore saved or use default
+        try { var saved = localStorage.getItem('base-url'); if (saved) urlEl.value = saved; } catch(e) {}
+      }
+    })();
     updateNav();
 
     document.getElementById('cmd-select').addEventListener('change', onCmdChange);
