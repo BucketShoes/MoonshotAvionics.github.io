@@ -40,8 +40,9 @@
     overflow-y: auto;
     margin-bottom: 16px;
   }
-  .log-box .err { color: #f66; }
+  .log-box .err  { color: #f66; }
   .log-box .info { color: #6af; }
+  .log-box .warn { color: #fa8; }
 
   .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
   button {
@@ -51,7 +52,6 @@
     font-size: 0.9rem;
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s;
   }
   button:disabled { opacity: 0.35; cursor: default; }
   #btnConnect    { background: #2a7; color: #fff; }
@@ -96,8 +96,8 @@
     <div><span class="stat-value" id="s-gaps">0</span><span class="stat-unit">lost</span></div>
   </div>
   <div class="stat-box">
-    <div class="stat-label">MTU / Status</div>
-    <div><span class="stat-value" id="s-mtu">—</span>
+    <div class="stat-label">ESP reports</div>
+    <div><span class="stat-value" id="s-esp">—</span>
       <span class="pill pill-off" id="pill-status">idle</span>
     </div>
   </div>
@@ -115,46 +115,48 @@
   <button id="btnReset">Reset stats</button>
 </div>
 
-<!-- UUIDs must match the .ino -->
 <script>
+// ── UUIDs — must match firmware exactly ───────────────────────────────────────
 const SVC_UUID    = '12345678-1234-1234-1234-123456789abc';
 const DATA_UUID   = '12345678-1234-1234-1234-123456789ab0';
 const STATUS_UUID = '12345678-1234-1234-1234-123456789ab1';
-const PACKET_SIZE = 500; // expected; verify against seq numbers
 
+// Expected data packet size — used to filter out status notifications
+// if they somehow arrive on the wrong characteristic
+const DATA_PACKET_SIZE = 500;
+
+// ── BLE handles ───────────────────────────────────────────────────────────────
 let device, server, dataChar, statusChar;
 let connected = false;
 
-// ── Stats ──────────────────────────────────────────────────────────────────
-let totalBytes   = 0;
-let windowBytes  = 0;     // bytes in current 1s window
-let windowStart  = 0;
-let lastSeq      = null;
-let gapCount     = 0;
-let peakKbps     = 0;
-let pktCount     = 0;
-let windowPkts   = 0;
+// ── Stats ─────────────────────────────────────────────────────────────────────
+let totalBytes  = 0;
+let windowBytes = 0;
+let windowPkts  = 0;
+let windowStart = 0;
+let lastSeq     = null;   // null = not yet received, reset on each connect
+let gapCount    = 0;
+let peakKbps    = 0;
 
-// ── Chart ──────────────────────────────────────────────────────────────────
+// ── Chart ─────────────────────────────────────────────────────────────────────
 const HISTORY = 60;
 const history = new Array(HISTORY).fill(0);
 const canvas  = document.getElementById('chart');
 const ctx     = canvas.getContext('2d');
 
 function drawChart() {
-  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  const W = canvas.offsetWidth || 300;
+  const H = canvas.offsetHeight || 140;
   canvas.width  = W * devicePixelRatio;
   canvas.height = H * devicePixelRatio;
   ctx.scale(devicePixelRatio, devicePixelRatio);
-
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(0, 0, W, H);
 
-  const max = Math.max(...history, 10);
+  const max  = Math.max(...history, 10);
   const step = W / (HISTORY - 1);
 
-  // Grid lines
   ctx.strokeStyle = '#2a2a2a';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
@@ -162,15 +164,12 @@ function drawChart() {
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     ctx.fillStyle = '#444';
     ctx.font = '10px monospace';
-    ctx.fillText(((max * i / 4)|0) + ' KB/s', 4, y - 3);
+    ctx.fillText(((max * i / 4) | 0) + ' KB/s', 4, y - 3);
   }
 
-  // Filled area
   ctx.beginPath();
   ctx.moveTo(0, H);
-  history.forEach((v, i) => {
-    ctx.lineTo(i * step, H - (v / max) * H * 0.92);
-  });
+  history.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * H * 0.92));
   ctx.lineTo((HISTORY - 1) * step, H);
   ctx.closePath();
   const grad = ctx.createLinearGradient(0, 0, 0, H);
@@ -179,7 +178,6 @@ function drawChart() {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  // Line
   ctx.beginPath();
   ctx.strokeStyle = '#4fc';
   ctx.lineWidth = 2;
@@ -190,14 +188,14 @@ function drawChart() {
   ctx.stroke();
 }
 
-// ── Throughput ticker (every 1s) ───────────────────────────────────────────
+// ── Throughput ticker (1s) ────────────────────────────────────────────────────
 setInterval(() => {
   if (!connected) return;
-  const now     = performance.now();
-  const elapsed = (now - windowStart) / 1000;
-  const kbps    = elapsed > 0 ? (windowBytes / 1024) / elapsed : 0;
-  const pps     = elapsed > 0 ? windowPkts / elapsed : 0;
+  const elapsed = (performance.now() - windowStart) / 1000;
+  if (elapsed <= 0) return;
 
+  const kbps = (windowBytes / 1024) / elapsed;
+  const pps  = windowPkts / elapsed;
   if (kbps > peakKbps) peakKbps = kbps;
 
   history.push(kbps);
@@ -211,71 +209,105 @@ setInterval(() => {
 
   windowBytes = 0;
   windowPkts  = 0;
-  windowStart = now;
+  windowStart = performance.now();
   drawChart();
 }, 1000);
 
-// ── Packet handler ─────────────────────────────────────────────────────────
+// ── Data packet handler ───────────────────────────────────────────────────────
+// ONLY called for DATA_UUID notifications
 function handleData(event) {
-  const buf  = event.target.value.buffer;
-  const view = new DataView(buf);
-  const len  = buf.byteLength;
+  const buf = event.target.value.buffer;
+  const len = buf.byteLength;
+
+  // Sanity check: ignore anything that isn't the right size.
+  // Protects against accidentally receiving status JSON here.
+  if (len !== DATA_PACKET_SIZE) {
+    log(`Unexpected packet size ${len} on data char — ignored`, 'warn');
+    return;
+  }
 
   totalBytes  += len;
   windowBytes += len;
   windowPkts++;
-  pktCount++;
 
-  if (len >= 4) {
-    const seq = view.getUint32(0, true);   // little-endian
-    if (lastSeq !== null) {
-      const expected = (lastSeq + 1) >>> 0;
-      if (seq !== expected) {
-        const gap = ((seq - expected) >>> 0);
-        gapCount += gap;
-        log(`SEQ gap: expected ${expected}, got ${seq} (+${gap})`, 'err');
+  const view = new DataView(buf);
+  const seq  = view.getUint32(0, true);  // little-endian
+
+  if (lastSeq !== null) {
+    // Cast to unsigned 32-bit for correct wraparound math
+    const expected = (lastSeq + 1) >>> 0;
+    if (seq !== expected) {
+      // Compute signed delta to detect both forward gaps and backwards jumps
+      const delta = seq - expected;  // signed JS number
+      if (delta > 0) {
+        gapCount += delta;
+        log(`Gap +${delta}: expected ${expected}, got ${seq}`, 'err');
+      } else {
+        // Negative delta = seq went backwards = out-of-order or reset
+        log(`Out-of-order: expected ${expected}, got ${seq} (delta ${delta})`, 'warn');
       }
     }
-    lastSeq = seq;
+  }
+  lastSeq = seq;
+}
+
+// ── Status packet handler ─────────────────────────────────────────────────────
+// ONLY called for STATUS_UUID notifications
+function handleStatus(event) {
+  try {
+    const text = new TextDecoder().decode(event.target.value);
+    const j    = JSON.parse(text);
+    document.getElementById('s-esp').textContent =
+      (j.kbps != null ? j.kbps.toFixed(1) : '?');
+    log(`ESP: ${j.kbps?.toFixed(1)} KB/s  seq:${j.seq}  ${j.pps?.toFixed(0)} pkt/s`, 'info');
+  } catch (e) {
+    // Not valid JSON — ignore silently
   }
 }
 
-// ── Status characteristic handler (optional extra stats from ESP) ──────────
-function handleStatus(event) {
-  const text = new TextDecoder().decode(event.target.value);
-  try {
-    const j = JSON.parse(text);
-    log(`ESP reports: ${j.kbps?.toFixed(1)} KB/s, seq ${j.seq}`, 'info');
-  } catch { /* ignore */ }
-}
-
-// ── Logging ────────────────────────────────────────────────────────────────
+// ── Logging ───────────────────────────────────────────────────────────────────
 function log(msg, cls = '') {
-  const box = document.getElementById('log');
+  const box  = document.getElementById('log');
   const line = document.createElement('div');
   if (cls) line.className = cls;
   const t = new Date().toLocaleTimeString('en-AU', { hour12: false });
   line.textContent = `[${t}] ${msg}`;
   box.appendChild(line);
-  // Keep last 200 lines
-  while (box.children.length > 200) box.removeChild(box.firstChild);
+  while (box.children.length > 300) box.removeChild(box.firstChild);
   box.scrollTop = box.scrollHeight;
 }
 
 function setPill(text, cls) {
   const el = document.getElementById('pill-status');
   el.textContent = text;
-  el.className = 'pill ' + cls;
+  el.className   = 'pill ' + cls;
 }
 
-// ── Connect flow ───────────────────────────────────────────────────────────
+// ── Reset stats ───────────────────────────────────────────────────────────────
+function resetStats() {
+  totalBytes = windowBytes = windowPkts = gapCount = 0;
+  peakKbps   = 0;
+  lastSeq    = null;
+  windowStart = performance.now();
+  history.fill(0);
+  document.getElementById('s-kbps').textContent  = '—';
+  document.getElementById('s-peak').textContent  = '—';
+  document.getElementById('s-pps').textContent   = '—';
+  document.getElementById('s-total').textContent = '—';
+  document.getElementById('s-gaps').textContent  = '0';
+  document.getElementById('s-esp').textContent   = '—';
+  drawChart();
+  log('Stats reset.', 'info');
+}
+
+// ── Connect ───────────────────────────────────────────────────────────────────
 document.getElementById('btnConnect').addEventListener('click', async () => {
   if (!navigator.bluetooth) {
-    log('Web Bluetooth not available. Use Chrome on Android or desktop Chrome with flag enabled.', 'err');
+    log('Web Bluetooth not supported. Use Chrome on Android or desktop Chrome.', 'err');
     return;
   }
   try {
-    log('Scanning for ' + SVC_UUID + '...');
+    log('Requesting BLE device...');
     device = await navigator.bluetooth.requestDevice({
       filters: [{ services: [SVC_UUID] }],
       optionalServices: [SVC_UUID]
@@ -294,61 +326,50 @@ document.getElementById('btnConnect').addEventListener('click', async () => {
     log('Getting status characteristic...');
     statusChar = await svc.getCharacteristic(STATUS_UUID).catch(() => null);
 
-    // Start notifications
+    // Subscribe data char — handler only for this UUID
     await dataChar.startNotifications();
     dataChar.addEventListener('characteristicvaluechanged', handleData);
 
+    // Subscribe status char — completely separate handler
     if (statusChar) {
-      await statusChar.startNotifications().catch(() => {});
+      await statusChar.startNotifications().catch(e => {
+        log('Status char subscribe failed (non-fatal): ' + e.message, 'warn');
+      });
       statusChar.addEventListener('characteristicvaluechanged', handleStatus);
     }
 
-    connected   = true;
-    windowStart = performance.now();
+    connected = true;
+
+    // Full reset on every new connection — lastSeq=null so first packet
+    // sets the baseline without triggering a false gap
     resetStats();
 
-    // Try to read negotiated MTU (Chrome doesn't expose it directly — infer from first packet)
-    document.getElementById('s-mtu').textContent = '517?';
-    log(`Connected to ${device.name || device.id}`, 'info');
+    log(`Connected to: ${device.name || device.id}`, 'info');
     setPill('streaming', 'pill-ok');
-
     document.getElementById('btnConnect').disabled    = true;
     document.getElementById('btnDisconnect').disabled = false;
 
   } catch (e) {
-    log('Error: ' + e.message, 'err');
+    log('Connect error: ' + e.message, 'err');
   }
 });
 
+// ── Disconnect ────────────────────────────────────────────────────────────────
 document.getElementById('btnDisconnect').addEventListener('click', () => {
   if (device && device.gatt.connected) device.gatt.disconnect();
 });
 
 document.getElementById('btnReset').addEventListener('click', resetStats);
 
-function resetStats() {
-  totalBytes = windowBytes = gapCount = pktCount = windowPkts = 0;
-  peakKbps = 0;
-  lastSeq = null;
-  windowStart = performance.now();
-  history.fill(0);
-  document.getElementById('s-kbps').textContent  = '—';
-  document.getElementById('s-peak').textContent  = '—';
-  document.getElementById('s-pps').textContent   = '—';
-  document.getElementById('s-total').textContent = '—';
-  document.getElementById('s-gaps').textContent  = '0';
-  log('Stats reset.', 'info');
-}
-
 function onDisconnected() {
   connected = false;
   setPill('disconnected', 'pill-warn');
-  log('Disconnected.', 'err');
+  log('Disconnected.', 'warn');
   document.getElementById('btnConnect').disabled    = false;
   document.getElementById('btnDisconnect').disabled = true;
 }
 
-// Initial chart draw
+// ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('resize', drawChart);
 drawChart();
 </script>
