@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLE Speed Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #111; color: #eee; padding: 16px; }
+  h1 { font-size: 1.2rem; color: #aaa; margin-bottom: 16px; letter-spacing: 0.05em; }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .stat-box {
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .stat-label { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .stat-value { font-size: 1.6rem; font-weight: 600; color: #4fc; font-variant-numeric: tabular-nums; }
+  .stat-unit  { font-size: 0.75rem; color: #555; margin-left: 2px; }
+
+  #chart-wrap { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; margin-bottom: 16px; }
+  canvas { display: block; width: 100%; height: 140px; }
+
+  .log-box {
+    background: #161616;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: #7a7;
+    height: 130px;
+    overflow-y: auto;
+    margin-bottom: 16px;
+  }
+  .log-box .err { color: #f66; }
+  .log-box .info { color: #6af; }
+
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    padding: 10px 22px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:disabled { opacity: 0.35; cursor: default; }
+  #btnConnect    { background: #2a7; color: #fff; }
+  #btnDisconnect { background: #622; color: #fff; }
+  #btnReset      { background: #334; color: #ccc; }
+
+  .pill {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .pill-ok   { background: #1a3; color: #afa; }
+  .pill-warn { background: #630; color: #fa8; }
+  .pill-off  { background: #333; color: #666; }
+</style>
+</head>
+<body>
+<h1>BLE Download Speed Test</h1>
+
+<div class="stats-grid">
+  <div class="stat-box">
+    <div class="stat-label">Speed</div>
+    <div><span class="stat-value" id="s-kbps">—</span><span class="stat-unit">KB/s</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Peak</div>
+    <div><span class="stat-value" id="s-peak">—</span><span class="stat-unit">KB/s</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Packets/s</div>
+    <div><span class="stat-value" id="s-pps">—</span><span class="stat-unit">pkt/s</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Total received</div>
+    <div><span class="stat-value" id="s-total">—</span><span class="stat-unit">KB</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Seq gaps</div>
+    <div><span class="stat-value" id="s-gaps">0</span><span class="stat-unit">lost</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">MTU / Status</div>
+    <div><span class="stat-value" id="s-mtu">—</span>
+      <span class="pill pill-off" id="pill-status">idle</span>
+    </div>
+  </div>
+</div>
+
+<div id="chart-wrap">
+  <canvas id="chart"></canvas>
+</div>
+
+<div class="log-box" id="log"></div>
+
+<div class="btn-row">
+  <button id="btnConnect">Connect</button>
+  <button id="btnDisconnect" disabled>Disconnect</button>
+  <button id="btnReset">Reset stats</button>
+</div>
+
+<!-- UUIDs must match the .ino -->
+<script>
+const SVC_UUID    = '12345678-1234-1234-1234-123456789abc';
+const DATA_UUID   = '12345678-1234-1234-1234-123456789ab0';
+const STATUS_UUID = '12345678-1234-1234-1234-123456789ab1';
+const PACKET_SIZE = 500; // expected; verify against seq numbers
+
+let device, server, dataChar, statusChar;
+let connected = false;
+
+// ── Stats ──────────────────────────────────────────────────────────────────
+let totalBytes   = 0;
+let windowBytes  = 0;     // bytes in current 1s window
+let windowStart  = 0;
+let lastSeq      = null;
+let gapCount     = 0;
+let peakKbps     = 0;
+let pktCount     = 0;
+let windowPkts   = 0;
+
+// ── Chart ──────────────────────────────────────────────────────────────────
+const HISTORY = 60;
+const history = new Array(HISTORY).fill(0);
+const canvas  = document.getElementById('chart');
+const ctx     = canvas.getContext('2d');
+
+function drawChart() {
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  canvas.width  = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, W, H);
+
+  const max = Math.max(...history, 10);
+  const step = W / (HISTORY - 1);
+
+  // Grid lines
+  ctx.strokeStyle = '#2a2a2a';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = H - (i / 4) * H;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.fillStyle = '#444';
+    ctx.font = '10px monospace';
+    ctx.fillText(((max * i / 4)|0) + ' KB/s', 4, y - 3);
+  }
+
+  // Filled area
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  history.forEach((v, i) => {
+    ctx.lineTo(i * step, H - (v / max) * H * 0.92);
+  });
+  ctx.lineTo((HISTORY - 1) * step, H);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#4fc8');
+  grad.addColorStop(1, '#4fc1');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.strokeStyle = '#4fc';
+  ctx.lineWidth = 2;
+  history.forEach((v, i) => {
+    const x = i * step, y = H - (v / max) * H * 0.92;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+// ── Throughput ticker (every 1s) ───────────────────────────────────────────
+setInterval(() => {
+  if (!connected) return;
+  const now     = performance.now();
+  const elapsed = (now - windowStart) / 1000;
+  const kbps    = elapsed > 0 ? (windowBytes / 1024) / elapsed : 0;
+  const pps     = elapsed > 0 ? windowPkts / elapsed : 0;
+
+  if (kbps > peakKbps) peakKbps = kbps;
+
+  history.push(kbps);
+  if (history.length > HISTORY) history.shift();
+
+  document.getElementById('s-kbps').textContent  = kbps.toFixed(1);
+  document.getElementById('s-peak').textContent  = peakKbps.toFixed(1);
+  document.getElementById('s-pps').textContent   = pps.toFixed(0);
+  document.getElementById('s-total').textContent = (totalBytes / 1024).toFixed(1);
+  document.getElementById('s-gaps').textContent  = gapCount;
+
+  windowBytes = 0;
+  windowPkts  = 0;
+  windowStart = now;
+  drawChart();
+}, 1000);
+
+// ── Packet handler ─────────────────────────────────────────────────────────
+function handleData(event) {
+  const buf  = event.target.value.buffer;
+  const view = new DataView(buf);
+  const len  = buf.byteLength;
+
+  totalBytes  += len;
+  windowBytes += len;
+  windowPkts++;
+  pktCount++;
+
+  if (len >= 4) {
+    const seq = view.getUint32(0, true);   // little-endian
+    if (lastSeq !== null) {
+      const expected = (lastSeq + 1) >>> 0;
+      if (seq !== expected) {
+        const gap = ((seq - expected) >>> 0);
+        gapCount += gap;
+        log(`SEQ gap: expected ${expected}, got ${seq} (+${gap})`, 'err');
+      }
+    }
+    lastSeq = seq;
+  }
+}
+
+// ── Status characteristic handler (optional extra stats from ESP) ──────────
+function handleStatus(event) {
+  const text = new TextDecoder().decode(event.target.value);
+  try {
+    const j = JSON.parse(text);
+    log(`ESP reports: ${j.kbps?.toFixed(1)} KB/s, seq ${j.seq}`, 'info');
+  } catch { /* ignore */ }
+}
+
+// ── Logging ────────────────────────────────────────────────────────────────
+function log(msg, cls = '') {
+  const box = document.getElementById('log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  const t = new Date().toLocaleTimeString('en-AU', { hour12: false });
+  line.textContent = `[${t}] ${msg}`;
+  box.appendChild(line);
+  // Keep last 200 lines
+  while (box.children.length > 200) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setPill(text, cls) {
+  const el = document.getElementById('pill-status');
+  el.textContent = text;
+  el.className = 'pill ' + cls;
+}
+
+// ── Connect flow ───────────────────────────────────────────────────────────
+document.getElementById('btnConnect').addEventListener('click', async () => {
+  if (!navigator.bluetooth) {
+    log('Web Bluetooth not available. Use Chrome on Android or desktop Chrome with flag enabled.', 'err');
+    return;
+  }
+  try {
+    log('Scanning for ' + SVC_UUID + '...');
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SVC_UUID] }],
+      optionalServices: [SVC_UUID]
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    log('Connecting GATT...');
+    server = await device.gatt.connect();
+
+    log('Getting service...');
+    const svc = await server.getPrimaryService(SVC_UUID);
+
+    log('Getting data characteristic...');
+    dataChar = await svc.getCharacteristic(DATA_UUID);
+
+    log('Getting status characteristic...');
+    statusChar = await svc.getCharacteristic(STATUS_UUID).catch(() => null);
+
+    // Start notifications
+    await dataChar.startNotifications();
+    dataChar.addEventListener('characteristicvaluechanged', handleData);
+
+    if (statusChar) {
+      await statusChar.startNotifications().catch(() => {});
+      statusChar.addEventListener('characteristicvaluechanged', handleStatus);
+    }
+
+    connected   = true;
+    windowStart = performance.now();
+    resetStats();
+
+    // Try to read negotiated MTU (Chrome doesn't expose it directly — infer from first packet)
+    document.getElementById('s-mtu').textContent = '517?';
+    log(`Connected to ${device.name || device.id}`, 'info');
+    setPill('streaming', 'pill-ok');
+
+    document.getElementById('btnConnect').disabled    = true;
+    document.getElementById('btnDisconnect').disabled = false;
+
+  } catch (e) {
+    log('Error: ' + e.message, 'err');
+  }
+});
+
+document.getElementById('btnDisconnect').addEventListener('click', () => {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+});
+
+document.getElementById('btnReset').addEventListener('click', resetStats);
+
+function resetStats() {
+  totalBytes = windowBytes = gapCount = pktCount = windowPkts = 0;
+  peakKbps = 0;
+  lastSeq = null;
+  windowStart = performance.now();
+  history.fill(0);
+  document.getElementById('s-kbps').textContent  = '—';
+  document.getElementById('s-peak').textContent  = '—';
+  document.getElementById('s-pps').textContent   = '—';
+  document.getElementById('s-total').textContent = '—';
+  document.getElementById('s-gaps').textContent  = '0';
+  log('Stats reset.', 'info');
+}
+
+function onDisconnected() {
+  connected = false;
+  setPill('disconnected', 'pill-warn');
+  log('Disconnected.', 'err');
+  document.getElementById('btnConnect').disabled    = false;
+  document.getElementById('btnDisconnect').disabled = true;
+}
+
+// Initial chart draw
+window.addEventListener('resize', drawChart);
+drawChart();
+</script>
+</body>
+</html>
