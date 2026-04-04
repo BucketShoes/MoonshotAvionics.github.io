@@ -195,6 +195,7 @@
     <div class="cmd-row">
       <label>Start rec:</label><input type="number" id="p20-start" value="0">
       <label>Count:</label><input type="number" id="p20-count" value="100" min="1" max="65535">
+      <label style="white-space:nowrap"><input type="checkbox" id="p20-dir-down"> Start↓ each send</label>
     </div>
     <div class="cmd-row">
       <label>DL Ch:</label><input type="number" id="p20-ch" value="65" min="0" max="255">
@@ -363,6 +364,9 @@
   var sessions = [], viewIdx = -1, liveRecs = [], fetchAbort = false;
   var allFetched = {}, fetchedLowest = Infinity, fetchedHighest = -1;
   var dlSession = []; // LoRa download session — all 0xCA records accumulate here
+  var fetchSpeedRecs = 0, fetchSpeedBytes = 0, fetchSpeedStartMs = 0;
+  var fetchAutoNav = true; // auto-navigate to latest session after each batch
+  var dlSpeedRecs = 0, dlSpeedBytes = 0, dlSpeedStartMs = 0;
   var PHASES = ['idle','armed','boost','coast','apogee','drogue','main_deploy','descent','landed','9','10','11','12','13','14','error'];
 
   function pad2(n){return n<10?'0'+n:''+n}
@@ -553,6 +557,18 @@ function initCharts() {
       added++;
     }
 
+    // Track LoRa DL speed
+    if (added > 0) {
+      if (dlSpeedStartMs === 0) dlSpeedStartMs = Date.now();
+      dlSpeedRecs += added;
+      dlSpeedBytes += buf.byteLength;
+      var dlElapsed = (Date.now() - dlSpeedStartMs) / 1000;
+      if (dlElapsed > 0.1) {
+        var dlRps = (dlSpeedRecs / dlElapsed).toFixed(0);
+        var dlKbps = (dlSpeedBytes / 1024 / dlElapsed).toFixed(1);
+        document.getElementById('fst').textContent = 'DL: '+dlSession.length+'recs '+dlRps+'r/s '+dlKbps+'kB/s';
+      }
+    }
     // Log to packet log
     var el = document.getElementById('log');
     var e = document.createElement('div');
@@ -650,29 +666,50 @@ function initCharts() {
     // Append LoRa download session if non-empty
     if (dlSession.length > 0) sessions.push(dlSession);
   }
+  function updateFetchProgress(cursor) {
+    var elapsed = (Date.now() - fetchSpeedStartMs) / 1000;
+    if (elapsed < 0.1) return;
+    var rps = (fetchSpeedRecs / elapsed).toFixed(0);
+    var kbps = (fetchSpeedBytes / 1024 / elapsed).toFixed(1);
+    var total = 0; for (var k in allFetched) total++;
+    var progress = (cursor > 0) ? ' #'+cursor+'↓' : '';
+    document.getElementById('fst').textContent = total+'recs '+rps+'r/s '+kbps+'kB/s'+progress;
+  }
+  function fetchIntermediateUpdate(cursor) {
+    rebuildSessions();
+    updateNav();
+    if (fetchAutoNav && sessions.length > 0) showView(sessions.length - 1);
+    updateFetchProgress(cursor);
+  }
   function loadHistory(){
     fetchAbort=false;
+    fetchAutoNav=true;
+    fetchSpeedStartMs=Date.now();
+    fetchSpeedRecs=0;
+    fetchSpeedBytes=0;
     document.getElementById('btn-stop').style.display='inline';
 
     // BLE path: fetch logs via BLE log fetch characteristic
     if (bleConnected && bleLogFetchChar_) {
       bleReadStatus().then(function() {
-        var oldest = 0, newest = 0;
-        // We need records/oldest from status — re-read from DOM
-        // (bleReadStatus already updated it)
         var recEl = document.getElementById('val-logrec');
-        newest = parseInt(recEl.textContent) || 0;
+        var newest = parseInt(recEl.textContent) || 0;
         if (newest === 0) { document.getElementById('btn-stop').style.display='none'; return; }
-        // BLE sliding window fetch: request 200 at a time, starting from newest going back
+        // Fetch newest-first, skip already-fetched ranges, so re-clicking extends downward
         var cursor = newest;
         var batchSize = 200;
         function blePage() {
           if (fetchAbort || cursor <= 0) { bleDone(); return; }
           var start = Math.max(cursor - batchSize, 0);
           var count = cursor - start;
-          document.getElementById('fst').textContent = '#' + start + '..' + (start + count - 1);
-          bleFetchLogs(start, count).then(function(ok) {
+          // Skip ranges already in memory (allows re-click to continue where we left off)
+          if (start >= fetchedLowest && cursor <= fetchedHighest) {
+            cursor = start; blePage(); return;
+          }
+          document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
+          bleFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
             cursor = start;
+            fetchIntermediateUpdate(cursor);
             if (cursor > 0 && !fetchAbort) blePage(); else bleDone();
           });
         }
@@ -680,7 +717,10 @@ function initCharts() {
           document.getElementById('btn-stop').style.display='none';
           rebuildSessions();
           var total=0; for(var k in allFetched) total++;
-          document.getElementById('fst').textContent=total+'recs '+sessions.length+'sess';
+          var elapsed=(Date.now()-fetchSpeedStartMs)/1000;
+          var rps=elapsed>0.1?(fetchSpeedRecs/elapsed).toFixed(0):'0';
+          var kbps=elapsed>0.1?(fetchSpeedBytes/1024/elapsed).toFixed(1):'0';
+          document.getElementById('fst').textContent=total+'recs '+sessions.length+'sess | '+rps+'r/s '+kbps+'kB/s';
           updateNav();
           if(sessions.length>0) showView(sessions.length-1);
         }
@@ -689,8 +729,52 @@ function initCharts() {
       return;
     }
 
-    // HTTP path (WiFi)
-    fetchStatus(function(st){var oldest=st.oldest,newest=st.records;if(newest<=oldest){document.getElementById('fst').textContent='No logs';document.getElementById('btn-stop').style.display='none';return}var cursor=newest;function page(){if(fetchAbort||cursor<=oldest){done();return}var start=Math.max(cursor-200,oldest),count=cursor-start;if(start>=fetchedLowest&&cursor<=fetchedHighest){cursor=start;if(cursor>oldest)page();else done();return}document.getElementById('fst').textContent='#'+start+'..'+(start+count-1);var x=new XMLHttpRequest();x.open('GET',getBaseHttp()+'/api/logs?start='+start+'&count='+count);x.responseType='arraybuffer';x.onload=function(){if(x.status===200&&x.response&&x.response.byteLength>0){var buf=x.response,dv=new DataView(buf),off=0;while(off+10<=dv.byteLength){var rn=dv.getUint32(off,true);off+=4;var pl=dv.getUint8(off);off++;var sn=dv.getInt8(off);off++;var ts=dv.getUint32(off,true);off+=4;if(pl===0||off+pl>dv.byteLength)break;if(!allFetched[rn]){allFetched[rn]={recNum:rn,snr:sn/4,ts:ts,payload:buf.slice(off,off+pl)};if(rn<fetchedLowest)fetchedLowest=rn;if(rn>fetchedHighest)fetchedHighest=rn}off+=pl}}cursor=start;if(cursor>oldest&&!fetchAbort)page();else done()};x.onerror=function(){done()};x.send()}function done(){document.getElementById('btn-stop').style.display='none';rebuildSessions();var total=0;for(var k in allFetched)total++;document.getElementById('fst').textContent=total+'recs '+sessions.length+'sess';updateNav();if(sessions.length>0)showView(sessions.length-1)}page()})
+    // HTTP path (WiFi) — fetches newest-first; re-clicking continues from oldest unvisited record
+    fetchStatus(function(st){
+      var oldest=st?(st.oldest||0):0, newest=st?(st.records||0):0;
+      if(newest<=oldest){document.getElementById('fst').textContent='No logs';document.getElementById('btn-stop').style.display='none';return;}
+      var cursor=newest;
+      function page(){
+        if(fetchAbort||cursor<=oldest){done();return;}
+        var start=Math.max(cursor-200,oldest),count=cursor-start;
+        if(start>=fetchedLowest&&cursor<=fetchedHighest){cursor=start;if(cursor>oldest)page();else done();return;}
+        document.getElementById('fst').textContent='#'+start+'..'+(start+count-1)+'…';
+        var x=new XMLHttpRequest();
+        x.open('GET',getBaseHttp()+'/api/logs?start='+start+'&count='+count);
+        x.responseType='arraybuffer';
+        x.onload=function(){
+          if(x.status===200&&x.response&&x.response.byteLength>0){
+            fetchSpeedBytes+=x.response.byteLength;
+            var buf=x.response,dv=new DataView(buf),off=0;
+            while(off+10<=dv.byteLength){
+              var rn=dv.getUint32(off,true);off+=4;
+              var pl=dv.getUint8(off);off++;
+              var sn=dv.getInt8(off);off++;
+              var ts=dv.getUint32(off,true);off+=4;
+              if(pl===0||off+pl>dv.byteLength)break;
+              if(!allFetched[rn]){allFetched[rn]={recNum:rn,snr:sn/4,ts:ts,payload:buf.slice(off,off+pl)};if(rn<fetchedLowest)fetchedLowest=rn;if(rn>fetchedHighest)fetchedHighest=rn;fetchSpeedRecs++;}
+              off+=pl;
+            }
+          }
+          cursor=start;
+          fetchIntermediateUpdate(cursor);
+          if(cursor>oldest&&!fetchAbort)page();else done();
+        };
+        x.onerror=function(){done();};
+        x.send();
+      }
+      function done(){
+        document.getElementById('btn-stop').style.display='none';
+        rebuildSessions();
+        var total=0;for(var k in allFetched)total++;
+        var elapsed=(Date.now()-fetchSpeedStartMs)/1000;
+        var rps=elapsed>0.1?(fetchSpeedRecs/elapsed).toFixed(0):'0';
+        var kbps=elapsed>0.1?(fetchSpeedBytes/1024/elapsed).toFixed(1):'0';
+        document.getElementById('fst').textContent=total+'recs '+sessions.length+'sess | '+rps+'r/s '+kbps+'kB/s';
+        updateNav();if(sessions.length>0)showView(sessions.length-1);
+      }
+      page();
+    });
   }
 
   var wsObj = null;
@@ -799,6 +883,8 @@ function initCharts() {
           bleFetchDone = true;
           return;
         }
+        // Track bytes for speed display
+        fetchSpeedBytes += buf.byteLength;
         // Parse records — same format as /api/logs response
         var dv = new DataView(buf);
         var off = 0;
@@ -814,6 +900,7 @@ function initCharts() {
             allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload };
             if (rn < fetchedLowest) fetchedLowest = rn;
             if (rn > fetchedHighest) fetchedHighest = rn;
+            fetchSpeedRecs++;
           }
         }
       });
@@ -877,7 +964,8 @@ function initCharts() {
 
   // Fetch logs via BLE (equivalent to GET /api/logs)
   // Uses sliding window: request a batch, wait for notifications, request more.
-  async function bleFetchLogs(startRec, count) {
+  // onProgress (optional): called every ~400ms during wait so the UI can update mid-batch.
+  async function bleFetchLogs(startRec, count, onProgress) {
     if (!bleConnected || !bleLogFetchChar_) return false;
     bleFetchDone = false;
     var req = new Uint8Array(6);
@@ -886,11 +974,16 @@ function initCharts() {
     rdv.setUint16(4, count, true);
     try {
       await bleLogFetchChar_.writeValueWithResponse(req);
-      // Wait for end marker (empty notification)
+      // Wait for end marker (empty notification), calling onProgress periodically
       var timeout = 10000;
       var start = Date.now();
+      var lastProg = Date.now();
       while (!bleFetchDone && (Date.now() - start) < timeout) {
         await new Promise(function(r) { setTimeout(r, 50); });
+        if (onProgress && Date.now() - lastProg > 400) {
+          lastProg = Date.now();
+          onProgress();
+        }
       }
       return bleFetchDone;
     } catch (e) {
@@ -1305,7 +1398,10 @@ function initCharts() {
     if (cmdId === 0x20) {
       var dlStart = parseInt(document.getElementById('p20-start').value) || 0;
       var dlCount = parseInt(document.getElementById('p20-count').value) || 100;
-      document.getElementById('p20-start').value = dlStart + dlCount;
+      var dirDown = document.getElementById('p20-dir-down').checked;
+      document.getElementById('p20-start').value = dirDown ? Math.max(0, dlStart - dlCount) : dlStart + dlCount;
+      // Reset DL speed counters so rate shown reflects this download batch
+      dlSpeedStartMs = 0; dlSpeedRecs = 0; dlSpeedBytes = 0;
     }
   }
 
@@ -1323,8 +1419,8 @@ function initCharts() {
     document.getElementById('btn-cdn').addEventListener('click', loadCDN);
     document.getElementById('btn-fetch').addEventListener('click', loadHistory);
     document.getElementById('btn-stop').addEventListener('click', function() { fetchAbort = true; });
-    document.getElementById('btn-prev').addEventListener('click', function() { if(viewIdx>0)showView(viewIdx-1);else if(viewIdx===-1&&sessions.length)showView(sessions.length-1); });
-    document.getElementById('btn-next').addEventListener('click', function() { if(viewIdx>=0&&viewIdx<sessions.length-1)showView(viewIdx+1); });
+    document.getElementById('btn-prev').addEventListener('click', function() { fetchAutoNav=false; if(viewIdx>0)showView(viewIdx-1);else if(viewIdx===-1&&sessions.length)showView(sessions.length-1); });
+    document.getElementById('btn-next').addEventListener('click', function() { fetchAutoNav=false; if(viewIdx>=0&&viewIdx<sessions.length-1)showView(viewIdx+1); });
     document.getElementById('btn-latest').addEventListener('click', function() { showView(-1); });
     document.getElementById('btn-ble').addEventListener('click', connectBLE);
     document.getElementById('btn-ws-reconnect').addEventListener('click', function() {
