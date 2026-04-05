@@ -110,9 +110,10 @@
     <button id="map-ack-btn" class="mbtn act">CmdAck</button>
     <button id="map-fit-btn" class="mbtn">Fit</button>
     <span id="map-gps-st" style="font-size:10px;color:#555;margin-left:auto">GPS: --</span>
+    <button id="map-cmp-btn" class="mbtn" style="display:none">Compass</button>
   </div>
   <div style="position:relative">
-    <canvas id="map-canvas" style="display:block;width:100%;height:400px;background:#0d0d0d;touch-action:none;cursor:crosshair"></canvas>
+    <canvas id="map-canvas" style="display:block;width:100%;height:400px;background:#0d0d0d;touch-action:pan-y;cursor:crosshair"></canvas>
     <div id="map-tip" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.88);border:1px solid #555;border-radius:3px;padding:5px 7px;font-size:10px;color:#ccc;max-width:240px;display:none;pointer-events:none;line-height:1.5;word-break:break-word"></div>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 8px;border-top:1px solid #222;font-size:10px;color:#666">
@@ -1465,7 +1466,9 @@ function initCharts() {
   var mapVisible = false;
   var mapHits = [];          // [{x,y,pt}] hit-test targets rebuilt each draw
   var mapDragMoved = false;
-  var mapPointers = {}, mapPinchD0 = 0, mapPinchS0 = 0;
+  var mapPointers = {}, mapPinchD0 = 0, mapPinchCx = 0, mapPinchCy = 0;
+  var mapDevHeading = null;  // degrees clockwise from north (null = no fix)
+  var mapAnimInt = null;
   var mapIDB = null;
   var mapRafPend = false;
 
@@ -1493,6 +1496,29 @@ function initCharts() {
     if (mapGpsWid !== null && navigator.geolocation) { navigator.geolocation.clearWatch(mapGpsWid); mapGpsWid = null; }
   }
   function mapGpsStatus(s) { var e = document.getElementById('map-gps-st'); if (e) e.textContent = 'GPS: ' + s; }
+  function mapStartCompass() {
+    if (!window.DeviceOrientationEvent) return;
+    var listen = function() {
+      window.addEventListener('deviceorientationabsolute', mapOnDevOrientation, true);
+      window.addEventListener('deviceorientation', mapOnDevOrientation, true);
+    };
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(function(s) {
+        if (s === 'granted') listen();
+        else { var b = document.getElementById('map-cmp-btn'); if (b) b.style.display = ''; }
+      }).catch(function() { var b = document.getElementById('map-cmp-btn'); if (b) b.style.display = ''; });
+    } else { listen(); }
+  }
+  function mapStopCompass() {
+    window.removeEventListener('deviceorientationabsolute', mapOnDevOrientation, true);
+    window.removeEventListener('deviceorientation', mapOnDevOrientation, true);
+    mapDevHeading = null;
+  }
+  function mapOnDevOrientation(e) {
+    if (e.absolute && e.alpha !== null) { mapDevHeading = (360 - e.alpha + 360) % 360; return; }
+    if (typeof e.webkitCompassHeading === 'number') { mapDevHeading = e.webkitCompassHeading; return; }
+    if (e.alpha !== null) mapDevHeading = (360 - e.alpha + 360) % 360;
+  }
 
   // Color helpers
   function mapSigColor(snr, rssi) {
@@ -1552,8 +1578,8 @@ function initCharts() {
     if (!mapLastWall || !mapUserGps) return;
     var rateEl = document.getElementById('p10-rate');
     var rate = rateEl ? (parseInt(rateEl.value)|0) : 0;
-    if (rate >= -1) return; // only periods >= 2s (< 0.5 Hz)
-    var period = -rate; // seconds
+    if (rate === 0) return; // TX stopped — no markers
+    var period = rate > 0 ? 1 : Math.max(1, -rate); // fast rates use 1s period
     if ((Date.now() - mapLastWall) / 1000 < period + 0.9) return;
     // Don't spam: skip if we just added a missed marker within this period
     for (var i = mapPts.length - 1; i >= 0; i--) {
@@ -1576,7 +1602,7 @@ function initCharts() {
       if (p.uLat !== null) { lats.push(p.uLat); lons.push(p.uLon); }
       if (p.rLat !== null) { lats.push(p.rLat); lons.push(p.rLon); }
     });
-    if (!lats.length) { mapVScale = 200; return; }
+    if (!lats.length) return;
     var la0 = Math.min.apply(null,lats), la1 = Math.max.apply(null,lats);
     var lo0 = Math.min.apply(null,lons), lo1 = Math.max.apply(null,lons);
     mapRefLat = (la0+la1)/2; mapRefLon = (lo0+lo1)/2;
@@ -1636,7 +1662,16 @@ function initCharts() {
       mapDrawScale(ctx, cw, ch); mapDrawLegend(ctx, cw, ch, null, null);
       mapUpdateTimeLbls(); return;
     }
-    if (mapVScale <= 0) mapFitView(cw, ch);
+    if (mapVScale <= 0) {
+      mapFitView(cw, ch);
+      if (mapVScale <= 0) {
+        ctx.fillStyle = '#444'; ctx.font = '12px Courier New'; ctx.textAlign = 'center';
+        ctx.fillText('No GPS fix \u2014 waiting\u2026', cw/2, ch/2 + 20);
+        ctx.textAlign = 'left';
+        mapDrawScale(ctx, cw, ch); mapDrawLegend(ctx, cw, ch, null, null);
+        mapUpdateTimeLbls(); return;
+      }
+    }
 
     // Altitude range for rocket color gradient
     var altVals = pts.filter(function(p){return p.rLat!==null&&p.alt!==null;}).map(function(p){return p.alt;});
@@ -1712,6 +1747,29 @@ function initCharts() {
     mapDrawScale(ctx, cw, ch);
     mapDrawLegend(ctx, cw, ch, minAlt, maxAlt);
     if (altVals.length > 1 && mapShowRkt) mapDrawAltBar(ctx, cw, ch, minAlt, maxAlt);
+
+    // Current user position marker — always on top
+    if (mapUserGps) {
+      var cp = mapW2C(mapUserGps.lat, mapUserGps.lon, cw, ch);
+      if (mapUserGps.acc > 0) {
+        var accPx = mapUserGps.acc / 111319 * mapVScale;
+        ctx.beginPath(); ctx.arc(cp.x, cp.y, accPx, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.stroke();
+      }
+      if (mapDevHeading !== null) {
+        var rad = mapDevHeading * Math.PI / 180;
+        ctx.beginPath();
+        ctx.moveTo(cp.x + Math.sin(rad)*7, cp.y - Math.cos(rad)*7);
+        ctx.lineTo(cp.x + Math.sin(rad)*22, cp.y - Math.cos(rad)*22);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+      ctx.beginPath(); ctx.arc(cp.x, cp.y, 6, 0, Math.PI*2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+
     mapUpdateTimeLbls();
   }
 
@@ -1792,31 +1850,54 @@ function initCharts() {
   }
 
   // Canvas pointer/touch/wheel handlers
+  // Single touch scrolls the page (touch-action:pan-y); 2 touch fingers control map.
+  // Mouse drag always pans.
   function mapOnPDown(e) {
-    e.preventDefault(); this.setPointerCapture(e.pointerId);
     mapPointers[e.pointerId] = {x: e.clientX, y: e.clientY};
     var ids = Object.keys(mapPointers);
-    if (ids.length === 2) {
+    if (e.pointerType !== 'touch' || ids.length >= 2) {
+      e.preventDefault();
+      this.setPointerCapture(e.pointerId);
+    }
+    if (ids.length >= 2) {
+      // Capture the first touch now that a second has joined
+      var first = ids[0] == e.pointerId ? ids[1] : ids[0];
+      try { this.setPointerCapture(parseInt(first)); } catch(ex) {}
       var p0 = mapPointers[ids[0]], p1 = mapPointers[ids[1]];
       mapPinchD0 = Math.hypot(p1.x-p0.x, p1.y-p0.y);
-      mapPinchS0 = mapVScale;
+      mapPinchCx = (p0.x+p1.x)/2; mapPinchCy = (p0.y+p1.y)/2;
+      mapDragMoved = true;
+    } else {
+      mapDragMoved = false;
     }
-    mapDragMoved = false;
   }
   function mapOnPMove(e) {
     if (!mapPointers[e.pointerId]) return;
     var prev = mapPointers[e.pointerId];
-    if (!mapDragMoved && Math.hypot(e.clientX-prev.x, e.clientY-prev.y) > 4) mapDragMoved = true;
     mapPointers[e.pointerId] = {x: e.clientX, y: e.clientY};
     var ids = Object.keys(mapPointers);
-    if (ids.length === 1) {
+    if (ids.length === 1 && e.pointerType !== 'touch') {
+      if (!mapDragMoved && Math.hypot(e.clientX-prev.x, e.clientY-prev.y) > 4) mapDragMoved = true;
       mapVOx += e.clientX - prev.x; mapVOy += e.clientY - prev.y;
+      mapScheduleDraw();
     } else if (ids.length === 2) {
       var p0 = mapPointers[ids[0]], p1 = mapPointers[ids[1]];
       var nd = Math.hypot(p1.x-p0.x, p1.y-p0.y);
-      if (mapPinchD0 > 0) mapVScale = Math.max(10, mapPinchS0 * nd / mapPinchD0);
+      var nmx = (p0.x+p1.x)/2, nmy = (p0.y+p1.y)/2;
+      if (mapPinchD0 > 0 && nd > 0) {
+        var rect = document.getElementById('map-canvas').getBoundingClientRect();
+        var f = nd / mapPinchD0;
+        var ox0 = mapPinchCx - rect.left - rect.width/2;
+        var oy0 = mapPinchCy - rect.top  - rect.height/2;
+        var ox1 = nmx - rect.left - rect.width/2;
+        var oy1 = nmy - rect.top  - rect.height/2;
+        mapVOx = ox1 - (ox0 - mapVOx) * f;
+        mapVOy = oy1 - (oy0 - mapVOy) * f;
+        mapVScale = Math.max(10, mapVScale * f);
+      }
+      mapPinchD0 = nd; mapPinchCx = nmx; mapPinchCy = nmy;
+      mapScheduleDraw();
     }
-    mapScheduleDraw();
   }
   function mapOnPUp(e) {
     delete mapPointers[e.pointerId];
@@ -1854,8 +1935,14 @@ function initCharts() {
     mapVisible = !mapVisible;
     document.getElementById('map-panel').style.display = mapVisible ? 'block' : 'none';
     document.getElementById('btn-map').className = mapVisible ? 'act' : '';
-    if (mapVisible) { mapStartGps(); mapScheduleDraw(); }
-    else mapStopGps();
+    if (mapVisible) {
+      mapStartGps(); mapStartCompass();
+      if (!mapAnimInt) mapAnimInt = setInterval(function() { if (mapUserGps && mapVisible) mapScheduleDraw(); }, 100);
+      mapScheduleDraw();
+    } else {
+      mapStopGps(); mapStopCompass();
+      if (mapAnimInt) { clearInterval(mapAnimInt); mapAnimInt = null; }
+    }
   }
 
   // IndexedDB session persistence
@@ -2020,6 +2107,17 @@ function initCharts() {
       document.getElementById('map-t0').value=0; document.getElementById('map-t1').value=100;
       mapUpdateTimeLbls(); mapScheduleDraw();
       var st=document.getElementById('map-idb-st'); if(st) st.textContent='live';
+    });
+    document.getElementById('map-cmp-btn').addEventListener('click', function() {
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(function(s) {
+          if (s === 'granted') {
+            window.addEventListener('deviceorientationabsolute', mapOnDevOrientation, true);
+            window.addEventListener('deviceorientation', mapOnDevOrientation, true);
+            document.getElementById('map-cmp-btn').style.display = 'none';
+          }
+        }).catch(function() {});
+      }
     });
   });
 
