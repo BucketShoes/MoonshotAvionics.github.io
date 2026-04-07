@@ -34,17 +34,17 @@
   .ok   { color: #4fc; }
 
   .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
-  button { padding: 10px 22px; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+  button { padding: 10px 22px; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: 0.35; cursor: default; }
   #btnConnect    { background: #2a7; color: #fff; }
   #btnDisconnect { background: #622; color: #fff; }
   #btnReset      { background: #334; color: #ccc; }
 
   .pill { display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
-  .pill-ok   { background: #1a3; color: #afa; }
-  .pill-warn { background: #630; color: #fa8; }
-  .pill-off  { background: #333; color: #666; }
-  .pill-coded { background: #214; color: #9af; }
+  .pill-ok     { background: #1a3; color: #afa; }
+  .pill-coded  { background: #214; color: #9af; }
+  .pill-warn   { background: #630; color: #fa8; }
+  .pill-off    { background: #333; color: #666; }
 
   /* Mode selector modal */
   #modeOverlay {
@@ -66,8 +66,8 @@
   }
   .mode-btn .mode-title { display: block; color: #fff; font-size: 1rem; }
   .mode-btn .mode-sub   { display: block; font-size: 0.75rem; opacity: 0.7; margin-top: 2px; }
-  #btnMode1M     { background: #194; }
-  #btnModeCoded  { background: #214; }
+  #btnMode1M    { background: #194; }
+  #btnModeCoded { background: #214; }
   #btnModeCoded .mode-title { color: #9af; }
 </style>
 </head>
@@ -110,11 +110,10 @@
   <button id="btnReset">Reset stats</button>
 </div>
 
-<!-- Mode selector — shown after GATT connect, before streaming starts -->
 <div id="modeOverlay">
   <div id="modeDialog">
     <h2>Select PHY mode</h2>
-    <p>Choose the link layer PHY.<br>This cannot be changed without reconnecting.</p>
+    <p>Choose the link layer PHY for this session.<br>Cannot be changed without reconnecting.</p>
     <button class="mode-btn" id="btnMode1M">
       <span class="mode-title">⚡ 1M PHY — Max throughput</span>
       <span class="mode-sub">~90 KB/s · standard range</span>
@@ -127,9 +126,9 @@
 </div>
 
 <script>
-const SVC_UUID   = '12345678-1234-1234-1234-123456789abc';
-const DATA_UUID  = '12345678-1234-1234-1234-123456789ab0';
-const MODE_UUID  = '12345678-1234-1234-1234-123456789ab1';
+const SVC_UUID  = '12345678-1234-1234-1234-123456789abc';
+const DATA_UUID = '12345678-1234-1234-1234-123456789ab0';
+const MODE_UUID = '12345678-1234-1234-1234-123456789ab1';
 const EXPECTED_SIZE = 500;
 
 let device, server, dataChar, modeChar;
@@ -151,8 +150,9 @@ const history = new Array(HISTORY).fill(0);
 const canvas  = document.getElementById('chart');
 const ctx     = canvas.getContext('2d');
 
-function chartColor() {
-  return currentMode === 'coded' ? '#9af' : '#4fc';
+// rgba strings for chart fill/line based on mode
+function chartRgb() {
+  return currentMode === 'coded' ? '100,170,255' : '68,255,196';
 }
 
 function drawChart() {
@@ -165,7 +165,8 @@ function drawChart() {
   ctx.fillRect(0, 0, W, H);
   const max  = Math.max(...history, 10);
   const step = W / (HISTORY - 1);
-  const col  = chartColor();
+  const rgb  = chartRgb();
+
   ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = H - (i / 4) * H;
@@ -173,13 +174,20 @@ function drawChart() {
     ctx.fillStyle = '#444'; ctx.font = '10px monospace';
     ctx.fillText(((max * i / 4) | 0) + ' KB/s', 4, y - 3);
   }
+
+  // filled area
   ctx.beginPath(); ctx.moveTo(0, H);
   history.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * H * 0.92));
   ctx.lineTo((HISTORY - 1) * step, H); ctx.closePath();
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, col + '88'); g.addColorStop(1, col + '11');
+  g.addColorStop(0, `rgba(${rgb},0.55)`);
+  g.addColorStop(1, `rgba(${rgb},0.05)`);
   ctx.fillStyle = g; ctx.fill();
-  ctx.beginPath(); ctx.strokeStyle = col; ctx.lineWidth = 2;
+
+  // line
+  ctx.beginPath();
+  ctx.strokeStyle = `rgba(${rgb},1)`;
+  ctx.lineWidth = 2;
   history.forEach((v, i) => {
     const x = i * step, y = H - (v / max) * H * 0.92;
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
@@ -218,9 +226,8 @@ function handleData(event) {
   if (lastSeq !== null) {
     const expected = (lastSeq + 1) >>> 0;
     if (seq > expected) {
-      const gap = seq - expected;
-      gapCount += gap;
-      log(`Gap +${gap}: expected ${expected}, got ${seq}`, 'err');
+      gapCount += seq - expected;
+      log(`Gap +${seq - expected}: expected ${expected}, got ${seq}`, 'err');
     } else if (seq < expected) {
       oooCount++;
       log(`OOO: expected ${expected}, got ${seq}`, 'warn');
@@ -242,10 +249,10 @@ function flushLog() {
   const batch = logQueue.splice(0);
   const show  = batch.slice(-20);
   if (batch.length > show.length) {
-    const skip = document.createElement('div');
-    skip.className = 'warn';
-    skip.textContent = `... ${batch.length - show.length} messages suppressed`;
-    frag.appendChild(skip);
+    const el = document.createElement('div');
+    el.className = 'warn';
+    el.textContent = `... ${batch.length - show.length} messages suppressed`;
+    frag.appendChild(el);
   }
   show.forEach(({ msg, cls }) => {
     const el = document.createElement('div');
@@ -277,7 +284,7 @@ function resetStats() {
   log('Stats reset.', 'info');
 }
 
-// ── Mode selection ─────────────────────────────────────────────────────────────
+// ── Mode selection ────────────────────────────────────────────────────────────
 function showModeDialog() {
   document.getElementById('modeOverlay').classList.add('active');
 }
@@ -288,18 +295,16 @@ function hideModeDialog() {
 async function selectMode(mode) {
   hideModeDialog();
   currentMode = mode;
-  const byte = new Uint8Array([mode === 'coded' ? 0x01 : 0x00]);
   try {
-    await modeChar.writeValue(byte);
+    await modeChar.writeValue(new Uint8Array([mode === 'coded' ? 0x01 : 0x00]));
     if (mode === 'coded') {
-      log('Coded PHY S=8 selected — link switching to long-range mode', 'ok');
+      log('Coded PHY S=8 selected — firmware switching link to long-range mode', 'ok');
       setPill('coded PHY', 'pill-coded');
     } else {
-      log('1M PHY selected — streaming at max throughput', 'ok');
+      log('1M PHY selected — max throughput mode', 'ok');
       setPill('streaming 1M', 'pill-ok');
     }
     resetStats();
-    log('Streaming started.', 'info');
   } catch(e) {
     log('Mode write failed: ' + e.message, 'err');
   }
@@ -337,7 +342,6 @@ document.getElementById('btnConnect').addEventListener('click', async () => {
     document.getElementById('btnConnect').disabled    = true;
     document.getElementById('btnDisconnect').disabled = false;
 
-    // Show mode picker — streaming won't start until user chooses
     showModeDialog();
 
   } catch(e) {
