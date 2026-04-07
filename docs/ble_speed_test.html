@@ -31,9 +31,10 @@
   .err  { color: #f66; }
   .info { color: #6af; }
   .warn { color: #fa8; }
+  .ok   { color: #4fc; }
 
   .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
-  button { padding: 10px 22px; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+  button { padding: 10px 22px; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
   button:disabled { opacity: 0.35; cursor: default; }
   #btnConnect    { background: #2a7; color: #fff; }
   #btnDisconnect { background: #622; color: #fff; }
@@ -43,6 +44,31 @@
   .pill-ok   { background: #1a3; color: #afa; }
   .pill-warn { background: #630; color: #fa8; }
   .pill-off  { background: #333; color: #666; }
+  .pill-coded { background: #214; color: #9af; }
+
+  /* Mode selector modal */
+  #modeOverlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  #modeOverlay.active { display: flex; }
+  #modeDialog {
+    background: #1e1e1e; border: 1px solid #444; border-radius: 12px;
+    padding: 24px; max-width: 340px; width: 90%; text-align: center;
+  }
+  #modeDialog h2 { font-size: 1rem; color: #ccc; margin-bottom: 6px; }
+  #modeDialog p  { font-size: 0.8rem; color: #666; margin-bottom: 20px; line-height: 1.5; }
+  .mode-btn {
+    display: block; width: 100%; padding: 14px 16px; border: none;
+    border-radius: 8px; font-size: 0.9rem; font-weight: 600;
+    cursor: pointer; margin-bottom: 10px; text-align: left;
+  }
+  .mode-btn .mode-title { display: block; color: #fff; font-size: 1rem; }
+  .mode-btn .mode-sub   { display: block; font-size: 0.75rem; opacity: 0.7; margin-top: 2px; }
+  #btnMode1M     { background: #194; }
+  #btnModeCoded  { background: #214; }
+  #btnModeCoded .mode-title { color: #9af; }
 </style>
 </head>
 <body>
@@ -84,13 +110,31 @@
   <button id="btnReset">Reset stats</button>
 </div>
 
+<!-- Mode selector — shown after GATT connect, before streaming starts -->
+<div id="modeOverlay">
+  <div id="modeDialog">
+    <h2>Select PHY mode</h2>
+    <p>Choose the link layer PHY.<br>This cannot be changed without reconnecting.</p>
+    <button class="mode-btn" id="btnMode1M">
+      <span class="mode-title">⚡ 1M PHY — Max throughput</span>
+      <span class="mode-sub">~90 KB/s · standard range</span>
+    </button>
+    <button class="mode-btn" id="btnModeCoded">
+      <span class="mode-title">📡 Coded PHY S=8 — Long range</span>
+      <span class="mode-sub">~10 KB/s · up to 4× link budget</span>
+    </button>
+  </div>
+</div>
+
 <script>
-const SVC_UUID  = '12345678-1234-1234-1234-123456789abc';
-const DATA_UUID = '12345678-1234-1234-1234-123456789ab0';
+const SVC_UUID   = '12345678-1234-1234-1234-123456789abc';
+const DATA_UUID  = '12345678-1234-1234-1234-123456789ab0';
+const MODE_UUID  = '12345678-1234-1234-1234-123456789ab1';
 const EXPECTED_SIZE = 500;
 
-let device, server, dataChar;
+let device, server, dataChar, modeChar;
 let connected = false;
+let currentMode = null;  // '1m' | 'coded'
 
 let totalBytes  = 0;
 let windowBytes = 0;
@@ -107,6 +151,10 @@ const history = new Array(HISTORY).fill(0);
 const canvas  = document.getElementById('chart');
 const ctx     = canvas.getContext('2d');
 
+function chartColor() {
+  return currentMode === 'coded' ? '#9af' : '#4fc';
+}
+
 function drawChart() {
   const W = canvas.offsetWidth || 300;
   const H = canvas.offsetHeight || 140;
@@ -117,6 +165,7 @@ function drawChart() {
   ctx.fillRect(0, 0, W, H);
   const max  = Math.max(...history, 10);
   const step = W / (HISTORY - 1);
+  const col  = chartColor();
   ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = H - (i / 4) * H;
@@ -128,9 +177,9 @@ function drawChart() {
   history.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * H * 0.92));
   ctx.lineTo((HISTORY - 1) * step, H); ctx.closePath();
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#4fc8'); g.addColorStop(1, '#4fc1');
+  g.addColorStop(0, col + '88'); g.addColorStop(1, col + '11');
   ctx.fillStyle = g; ctx.fill();
-  ctx.beginPath(); ctx.strokeStyle = '#4fc'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.strokeStyle = col; ctx.lineWidth = 2;
   history.forEach((v, i) => {
     const x = i * step, y = H - (v / max) * H * 0.92;
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
@@ -161,28 +210,18 @@ setInterval(() => {
 function handleData(event) {
   const buf = event.target.value.buffer;
   const len = buf.byteLength;
-
-  if (len !== EXPECTED_SIZE) {
-    log(`Unexpected size ${len} — ignored`, 'warn');
-    return;
-  }
-
+  if (len !== EXPECTED_SIZE) { log(`Unexpected size ${len}`, 'warn'); return; }
   totalBytes  += len;
   windowBytes += len;
   windowPkts++;
-
   const seq = new DataView(buf).getUint32(0, true);
-
   if (lastSeq !== null) {
     const expected = (lastSeq + 1) >>> 0;
-    if (seq === expected) {
-      // perfect — no log
-    } else if (seq > expected) {
+    if (seq > expected) {
       const gap = seq - expected;
       gapCount += gap;
       log(`Gap +${gap}: expected ${expected}, got ${seq}`, 'err');
-    } else {
-      // seq < expected: out of order
+    } else if (seq < expected) {
       oooCount++;
       log(`OOO: expected ${expected}, got ${seq}`, 'warn');
     }
@@ -191,21 +230,15 @@ function handleData(event) {
 }
 
 // ── Logging ───────────────────────────────────────────────────────────────────
-// Rate-limit log output so it doesn't consume all CPU
-let logQueue = [];
-let logFlushScheduled = false;
+let logQueue = [], logFlushScheduled = false;
 function log(msg, cls = '') {
   logQueue.push({ msg, cls });
-  if (!logFlushScheduled) {
-    logFlushScheduled = true;
-    setTimeout(flushLog, 200);
-  }
+  if (!logFlushScheduled) { logFlushScheduled = true; setTimeout(flushLog, 200); }
 }
 function flushLog() {
   logFlushScheduled = false;
   const box = document.getElementById('log');
   const frag = document.createDocumentFragment();
-  // Only show last 20 queued to avoid flooding
   const batch = logQueue.splice(0);
   const show  = batch.slice(-20);
   if (batch.length > show.length) {
@@ -244,11 +277,40 @@ function resetStats() {
   log('Stats reset.', 'info');
 }
 
+// ── Mode selection ─────────────────────────────────────────────────────────────
+function showModeDialog() {
+  document.getElementById('modeOverlay').classList.add('active');
+}
+function hideModeDialog() {
+  document.getElementById('modeOverlay').classList.remove('active');
+}
+
+async function selectMode(mode) {
+  hideModeDialog();
+  currentMode = mode;
+  const byte = new Uint8Array([mode === 'coded' ? 0x01 : 0x00]);
+  try {
+    await modeChar.writeValue(byte);
+    if (mode === 'coded') {
+      log('Coded PHY S=8 selected — link switching to long-range mode', 'ok');
+      setPill('coded PHY', 'pill-coded');
+    } else {
+      log('1M PHY selected — streaming at max throughput', 'ok');
+      setPill('streaming 1M', 'pill-ok');
+    }
+    resetStats();
+    log('Streaming started.', 'info');
+  } catch(e) {
+    log('Mode write failed: ' + e.message, 'err');
+  }
+}
+
+document.getElementById('btnMode1M').addEventListener('click',    () => selectMode('1m'));
+document.getElementById('btnModeCoded').addEventListener('click', () => selectMode('coded'));
+
 // ── Connect ───────────────────────────────────────────────────────────────────
 document.getElementById('btnConnect').addEventListener('click', async () => {
-  if (!navigator.bluetooth) {
-    log('Web Bluetooth not available.', 'err'); return;
-  }
+  if (!navigator.bluetooth) { log('Web Bluetooth not available.', 'err'); return; }
   try {
     log('Scanning...');
     device = await navigator.bluetooth.requestDevice({
@@ -262,18 +324,21 @@ document.getElementById('btnConnect').addEventListener('click', async () => {
     log('Getting service...');
     const svc = await server.getPrimaryService(SVC_UUID);
 
-    log('Getting data characteristic...');
+    log('Getting characteristics...');
     dataChar = await svc.getCharacteristic(DATA_UUID);
+    modeChar = await svc.getCharacteristic(MODE_UUID);
 
     await dataChar.startNotifications();
     dataChar.addEventListener('characteristicvaluechanged', handleData);
 
     connected = true;
-    resetStats();
     log(`Connected: ${device.name || device.id}`, 'info');
-    setPill('streaming', 'pill-ok');
+    setPill('connected', 'pill-warn');
     document.getElementById('btnConnect').disabled    = true;
     document.getElementById('btnDisconnect').disabled = false;
+
+    // Show mode picker — streaming won't start until user chooses
+    showModeDialog();
 
   } catch(e) {
     log('Error: ' + e.message, 'err');
@@ -283,11 +348,11 @@ document.getElementById('btnConnect').addEventListener('click', async () => {
 document.getElementById('btnDisconnect').addEventListener('click', () => {
   if (device?.gatt.connected) device.gatt.disconnect();
 });
-
 document.getElementById('btnReset').addEventListener('click', resetStats);
 
 function onDisconnected() {
-  connected = false;
+  connected = false; currentMode = null;
+  hideModeDialog();
   setPill('disconnected', 'pill-warn');
   log('Disconnected.', 'warn');
   document.getElementById('btnConnect').disabled    = false;
