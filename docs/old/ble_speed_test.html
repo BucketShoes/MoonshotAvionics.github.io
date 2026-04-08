@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BLE Speed Test</title>
+<script src="ble_adapter.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #111; color: #eee; padding: 16px; }
+  h1 { font-size: 1.2rem; color: #aaa; margin-bottom: 16px; }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .stat-box { background: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 12px 14px; }
+  .stat-label { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .stat-value { font-size: 1.6rem; font-weight: 600; color: #4fc; font-variant-numeric: tabular-nums; }
+  .stat-unit  { font-size: 0.75rem; color: #555; margin-left: 2px; }
+
+  #chart-wrap { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; margin-bottom: 16px; }
+  canvas { display: block; width: 100%; height: 140px; }
+
+  .log-box {
+    background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+    padding: 10px 12px; font-family: monospace; font-size: 0.78rem;
+    color: #7a7; height: 130px; overflow-y: auto; margin-bottom: 16px;
+  }
+  .err  { color: #f66; }
+  .info { color: #6af; }
+  .warn { color: #fa8; }
+  .ok   { color: #4fc; }
+
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  button { padding: 10px 22px; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+  button:disabled { opacity: 0.35; cursor: default; }
+  #btnConnect    { background: #2a7; color: #fff; }
+  #btnDisconnect { background: #622; color: #fff; }
+  #btnReset      { background: #334; color: #ccc; }
+
+  .pill { display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+  .pill-ok     { background: #1a3; color: #afa; }
+  .pill-coded  { background: #214; color: #9af; }
+  .pill-warn   { background: #630; color: #fa8; }
+  .pill-off    { background: #333; color: #666; }
+
+  #modeOverlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  #modeOverlay.active { display: flex; }
+  #modeDialog {
+    background: #1e1e1e; border: 1px solid #444; border-radius: 12px;
+    padding: 24px; max-width: 340px; width: 90%; text-align: center;
+  }
+  #modeDialog h2 { font-size: 1rem; color: #ccc; margin-bottom: 6px; }
+  #modeDialog p  { font-size: 0.8rem; color: #666; margin-bottom: 20px; line-height: 1.5; }
+  .mode-btn {
+    display: block; width: 100%; padding: 14px 16px; border: none;
+    border-radius: 8px; font-size: 0.9rem; font-weight: 600;
+    cursor: pointer; margin-bottom: 10px; text-align: left;
+  }
+  .mode-btn .mode-title { display: block; color: #fff; font-size: 1rem; }
+  .mode-btn .mode-sub   { display: block; font-size: 0.75rem; opacity: 0.7; margin-top: 2px; }
+  #btnMode1M    { background: #194; }
+  #btnModeCoded { background: #214; }
+  #btnModeCoded .mode-title { color: #9af; }
+</style>
+</head>
+<body>
+<h1>BLE Speed Test <span class="pill pill-off" id="pill">idle</span></h1>
+
+<div class="stats-grid">
+  <div class="stat-box">
+    <div class="stat-label">Speed</div>
+    <div><span class="stat-value" id="s-kbps">—</span><span class="stat-unit">KB/s</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Peak</div>
+    <div><span class="stat-value" id="s-peak">—</span><span class="stat-unit">KB/s</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Packets/s</div>
+    <div><span class="stat-value" id="s-pps">—</span><span class="stat-unit">pkt/s</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Total received</div>
+    <div><span class="stat-value" id="s-total">—</span><span class="stat-unit">KB</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Seq gaps</div>
+    <div><span class="stat-value" id="s-gaps">0</span></div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Out-of-order</div>
+    <div><span class="stat-value" id="s-ooo">0</span></div>
+  </div>
+</div>
+
+<div id="chart-wrap"><canvas id="chart"></canvas></div>
+<div class="log-box" id="log"></div>
+
+<div class="btn-row">
+  <button id="btnConnect">Connect</button>
+  <button id="btnDisconnect" disabled>Disconnect</button>
+  <button id="btnReset">Reset stats</button>
+</div>
+
+<div id="modeOverlay">
+  <div id="modeDialog">
+    <h2>Select PHY mode</h2>
+    <p>Choose the link layer PHY for this session.<br>Cannot be changed without reconnecting.</p>
+    <button class="mode-btn" id="btnMode1M">
+      <span class="mode-title">⚡ 2M PHY — Max throughput</span>
+      <span class="mode-sub">~120 KB/s · short range · log download</span>
+    </button>
+    <button class="mode-btn" id="btnModeCoded">
+      <span class="mode-title">📡 Coded PHY S=8 — Long range</span>
+      <span class="mode-sub">~10 KB/s · max range · telemetry</span>
+    </button>
+  </div>
+</div>
+
+<script>
+const SVC_UUID  = '12345678-1234-1234-1234-123456789abc';
+const DATA_UUID = '12345678-1234-1234-1234-123456789ab0';
+const MODE_UUID = '12345678-1234-1234-1234-123456789ab1';
+const EXPECTED_SIZE = 500;
+
+let connected    = false;
+let currentMode  = null;
+
+let totalBytes  = 0;
+let windowBytes = 0;
+let windowPkts  = 0;
+let windowStart = 0;
+let lastSeq     = null;
+let gapCount    = 0;
+let oooCount    = 0;
+let peakKbps    = 0;
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+const HISTORY = 60;
+const history = new Array(HISTORY).fill(0);
+const canvas  = document.getElementById('chart');
+const ctx     = canvas.getContext('2d');
+
+function chartRgb() {
+  return currentMode === 'coded' ? '100,170,255' : '68,255,196';
+}
+
+function drawChart() {
+  const W = canvas.offsetWidth || 300;
+  const H = canvas.offsetHeight || 140;
+  canvas.width  = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, W, H);
+  const max  = Math.max(...history, 10);
+  const step = W / (HISTORY - 1);
+  const rgb  = chartRgb();
+  ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = H - (i / 4) * H;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.fillStyle = '#444'; ctx.font = '10px monospace';
+    ctx.fillText(((max * i / 4) | 0) + ' KB/s', 4, y - 3);
+  }
+  ctx.beginPath(); ctx.moveTo(0, H);
+  history.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * H * 0.92));
+  ctx.lineTo((HISTORY - 1) * step, H); ctx.closePath();
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, `rgba(${rgb},0.55)`);
+  g.addColorStop(1, `rgba(${rgb},0.05)`);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.beginPath();
+  ctx.strokeStyle = `rgba(${rgb},1)`;
+  ctx.lineWidth = 2;
+  history.forEach((v, i) => {
+    const x = i * step, y = H - (v / max) * H * 0.92;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+setInterval(() => {
+  if (!connected) return;
+  const elapsed = (performance.now() - windowStart) / 1000;
+  if (elapsed <= 0) return;
+  const kbps = (windowBytes / 1024) / elapsed;
+  const pps  = windowPkts / elapsed;
+  if (kbps > peakKbps) peakKbps = kbps;
+  history.push(kbps); if (history.length > HISTORY) history.shift();
+  document.getElementById('s-kbps').textContent  = kbps.toFixed(1);
+  document.getElementById('s-peak').textContent  = peakKbps.toFixed(1);
+  document.getElementById('s-pps').textContent   = pps.toFixed(0);
+  document.getElementById('s-total').textContent = (totalBytes / 1024).toFixed(1);
+  document.getElementById('s-gaps').textContent  = gapCount;
+  document.getElementById('s-ooo').textContent   = oooCount;
+  windowBytes = windowPkts = 0;
+  windowStart = performance.now();
+  drawChart();
+}, 1000);
+
+// ── Data handler ──────────────────────────────────────────────────────────────
+function handleData(event) {
+    const buf = event.target.value.buffer;
+    totalBytes  += buf.byteLength;
+    windowBytes += buf.byteLength;
+    windowPkts++;
+    // defer seq checking to the stats interval, not per-packet
+}
+
+function handleData2(buffer) {
+  const len = buffer.byteLength;
+  if (len !== EXPECTED_SIZE) { log(`Unexpected size ${len}`, 'warn'); return; }
+  totalBytes  += len;
+  windowBytes += len;
+  windowPkts++;
+  const seq = new DataView(buffer).getUint32(0, true);
+  if (lastSeq !== null) {
+    const expected = (lastSeq + 1) >>> 0;
+    if (seq > expected) {
+      gapCount += seq - expected;
+      log(`Gap +${seq - expected}: expected ${expected}, got ${seq}`, 'err');
+    } else if (seq < expected) {
+      oooCount++;
+      log(`OOO: expected ${expected}, got ${seq}`, 'warn');
+    }
+  }
+  lastSeq = seq;
+}
+
+// ── Logging ───────────────────────────────────────────────────────────────────
+let logQueue = [], logFlushScheduled = false;
+function log(msg, cls = '') {
+  logQueue.push({ msg, cls });
+  if (!logFlushScheduled) { logFlushScheduled = true; setTimeout(flushLog, 200); }
+}
+function flushLog() {
+  logFlushScheduled = false;
+  const box = document.getElementById('log');
+  const frag = document.createDocumentFragment();
+  const batch = logQueue.splice(0);
+  const show  = batch.slice(-20);
+  if (batch.length > show.length) {
+    const el = document.createElement('div');
+    el.className = 'warn';
+    el.textContent = `... ${batch.length - show.length} messages suppressed`;
+    frag.appendChild(el);
+  }
+  show.forEach(({ msg, cls }) => {
+    const el = document.createElement('div');
+    if (cls) el.className = cls;
+    const t = new Date().toLocaleTimeString('en-AU', { hour12: false });
+    el.textContent = `[${t}] ${msg}`;
+    frag.appendChild(el);
+  });
+  box.appendChild(frag);
+  while (box.children.length > 200) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setPill(text, cls) {
+  const el = document.getElementById('pill');
+  el.textContent = text; el.className = 'pill ' + cls;
+}
+
+function resetStats() {
+  totalBytes = windowBytes = windowPkts = gapCount = oooCount = 0;
+  peakKbps = 0; lastSeq = null;
+  windowStart = performance.now();
+  history.fill(0);
+  ['s-kbps','s-peak','s-pps','s-total'].forEach(id =>
+    document.getElementById(id).textContent = '—');
+  document.getElementById('s-gaps').textContent = '0';
+  document.getElementById('s-ooo').textContent  = '0';
+  drawChart();
+  log('Stats reset.', 'info');
+}
+
+// ── Mode selection ────────────────────────────────────────────────────────────
+function showModeDialog() {
+  document.getElementById('modeOverlay').classList.add('active');
+}
+function hideModeDialog() {
+  document.getElementById('modeOverlay').classList.remove('active');
+}
+
+function selectMode(mode) {
+  hideModeDialog();
+  currentMode = mode;
+  NativeBLE.writeMode(SVC_UUID, MODE_UUID, mode === 'coded' ? 0x01 : 0x00);
+  if (mode === 'coded') {
+    log('Coded PHY S=8 — long range mode', 'ok');
+    setPill('coded PHY', 'pill-coded');
+  } else {
+    log('2M PHY — max throughput mode', 'ok');
+    setPill('streaming 2M', 'pill-ok');
+  }
+  resetStats();
+}
+
+document.getElementById('btnMode1M').addEventListener('click',    () => selectMode('1m'));
+document.getElementById('btnModeCoded').addEventListener('click', () => selectMode('coded'));
+
+// ── BLE callbacks (called by NativeBLE adapter from either path) ──────────────
+window.onBLEDeviceFound = (id, name) => {
+  log(`Found: ${name} — connecting...`, 'info');
+  NativeBLE.connect(id, SVC_UUID, DATA_UUID, MODE_UUID);
+};
+
+window.onBLEConnected = () => {
+  // Subscribe to data characteristic
+  NativeBLE.subscribe(SVC_UUID, DATA_UUID);
+  connected = true;
+  log('Connected — select PHY mode', 'info');
+  setPill('connected', 'pill-warn');
+  document.getElementById('btnConnect').disabled    = true;
+  document.getElementById('btnDisconnect').disabled = false;
+  showModeDialog();
+};
+
+window.onBLEDisconnected = () => {
+  connected = false; currentMode = null;
+  hideModeDialog();
+  setPill('disconnected', 'pill-warn');
+  log('Disconnected.', 'warn');
+  document.getElementById('btnConnect').disabled    = false;
+  document.getElementById('btnDisconnect').disabled = true;
+};
+
+// Data arrives as an ArrayBuffer from both paths
+window.onBLEData = (buffer) => handleData(buffer);
+
+window.onBLEError = (msg) => log('BLE: ' + msg, 'err');
+
+// ── Connect button ────────────────────────────────────────────────────────────
+document.getElementById('btnConnect').addEventListener('click', async () => {
+  log('Scanning...');
+  try {
+    await NativeBLE.requestDevice(SVC_UUID, {
+      onDeviceFound:  window.onBLEDeviceFound,
+      onConnected:    window.onBLEConnected,
+      onDisconnected: window.onBLEDisconnected,
+      onData:         window.onBLEData,
+      onError:        window.onBLEError,
+    });
+  } catch(e) {
+    log('Error: ' + e.message, 'err');
+  }
+});
+
+document.getElementById('btnDisconnect').addEventListener('click', () => {
+  NativeBLE.disconnect();
+});
+
+document.getElementById('btnReset').addEventListener('click', resetStats);
+
+window.addEventListener('resize', drawChart);
+drawChart();
+
+log(NativeBLE.isNative ? 'Running in native app (Coded PHY available)' : 'Running in browser (Web Bluetooth)', 'info');
+</script>
+</body>
+</html>
