@@ -208,7 +208,15 @@ setInterval(() => {
 }, 1000);
 
 // ── Data handler ──────────────────────────────────────────────────────────────
-function handleData(buffer) {
+function handleData(event) {
+    const buf = event.target.value.buffer;
+    totalBytes  += buf.byteLength;
+    windowBytes += buf.byteLength;
+    windowPkts++;
+    // defer seq checking to the stats interval, not per-packet
+}
+
+function handleData2(buffer) {
   const len = buffer.byteLength;
   if (len !== EXPECTED_SIZE) { log(`Unexpected size ${len}`, 'warn'); return; }
   totalBytes  += len;
