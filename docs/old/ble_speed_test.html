@@ -3,75 +3,47 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BLE Speed Test — 8 streams</title>
+<title>BLE Speed Test</title>
 <script src="ble_adapter.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', system-ui, sans-serif; background: #111; color: #eee; padding: 16px; }
   h1 { font-size: 1.2rem; color: #aaa; margin-bottom: 16px; }
-
   .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 10px; margin-bottom: 16px;
   }
   .stat-box { background: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 12px 14px; }
   .stat-label { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
   .stat-value { font-size: 1.6rem; font-weight: 600; color: #4fc; font-variant-numeric: tabular-nums; }
   .stat-unit  { font-size: 0.75rem; color: #555; margin-left: 2px; }
-
-  /* Per-stream grid */
-  .stream-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px; margin-bottom: 16px;
-  }
-  .stream-box {
-    background: #181818; border: 1px solid #2a2a2a; border-radius: 6px;
-    padding: 8px 10px; font-size: 0.72rem;
-  }
+  .stream-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 16px; }
+  .stream-box { background: #181818; border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px 10px; font-size: 0.72rem; }
   .stream-box .s-label { color: #555; margin-bottom: 2px; }
-  .stream-box .s-val   { font-size: 1rem; font-weight: 600; color: #4fc;
-                          font-variant-numeric: tabular-nums; }
-  .stream-box.err { border-color: #622; }
-  .stream-box.err .s-val { color: #f66; }
-
-  #chart-wrap { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px;
-                padding: 8px; margin-bottom: 16px; }
+  .stream-box .s-val   { font-size: 1rem; font-weight: 600; color: #4fc; font-variant-numeric: tabular-nums; }
+  #chart-wrap { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; margin-bottom: 16px; }
   canvas { display: block; width: 100%; height: 140px; }
-
-  .log-box {
-    background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+  .log-box { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
     padding: 10px 12px; font-family: monospace; font-size: 0.78rem;
-    color: #7a7; height: 120px; overflow-y: auto; margin-bottom: 16px;
-  }
-  .err  { color: #f66; } .info { color: #6af; } .warn { color: #fa8; } .ok { color: #4fc; }
-
+    color: #7a7; height: 120px; overflow-y: auto; margin-bottom: 16px; }
+  .err { color: #f66; } .info { color: #6af; } .warn { color: #fa8; } .ok { color: #4fc; }
   .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
-  button { padding: 10px 22px; border: none; border-radius: 6px;
-           font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+  button { padding: 10px 22px; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: 0.35; cursor: default; }
   #btnConnect    { background: #2a7; color: #fff; }
   #btnDisconnect { background: #622; color: #fff; }
   #btnReset      { background: #334; color: #ccc; }
-
-  .pill { display:inline-block; font-size:0.7rem; padding:2px 8px;
-          border-radius:999px; margin-left:8px; vertical-align:middle; }
+  .pill { display:inline-block; font-size:0.7rem; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
   .pill-ok    { background:#1a3; color:#afa; }
   .pill-coded { background:#214; color:#9af; }
   .pill-warn  { background:#630; color:#fa8; }
   .pill-off   { background:#333; color:#666; }
-
-  #modeOverlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75);
-                 z-index:100; align-items:center; justify-content:center; }
+  #modeOverlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:100; align-items:center; justify-content:center; }
   #modeOverlay.active { display:flex; }
-  #modeDialog { background:#1e1e1e; border:1px solid #444; border-radius:12px;
-                padding:24px; max-width:340px; width:90%; text-align:center; }
+  #modeDialog { background:#1e1e1e; border:1px solid #444; border-radius:12px; padding:24px; max-width:340px; width:90%; text-align:center; }
   #modeDialog h2 { font-size:1rem; color:#ccc; margin-bottom:6px; }
   #modeDialog p  { font-size:0.8rem; color:#666; margin-bottom:20px; line-height:1.5; }
-  .mode-btn { display:block; width:100%; padding:14px 16px; border:none;
-              border-radius:8px; font-size:0.9rem; font-weight:600;
-              cursor:pointer; margin-bottom:10px; text-align:left; }
+  .mode-btn { display:block; width:100%; padding:14px 16px; border:none; border-radius:8px; font-size:0.9rem; font-weight:600; cursor:pointer; margin-bottom:10px; text-align:left; }
   .mode-btn .mode-title { display:block; color:#fff; font-size:1rem; }
   .mode-btn .mode-sub   { display:block; font-size:0.75rem; opacity:0.7; margin-top:2px; }
   #btnMode1M    { background:#194; }
@@ -83,35 +55,21 @@
 <h1>BLE Speed Test <span class="pill pill-off" id="pill">idle</span></h1>
 
 <div class="stats-grid">
-  <div class="stat-box">
-    <div class="stat-label">Total speed</div>
-    <div><span class="stat-value" id="s-kbps">—</span><span class="stat-unit">KB/s</span></div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-label">Peak</div>
-    <div><span class="stat-value" id="s-peak">—</span><span class="stat-unit">KB/s</span></div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-label">Packets/s</div>
-    <div><span class="stat-value" id="s-pps">—</span><span class="stat-unit">pkt/s</span></div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-label">Total received</div>
-    <div><span class="stat-value" id="s-total">—</span><span class="stat-unit">KB</span></div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-label">Seq gaps</div>
-    <div><span class="stat-value" id="s-gaps">0</span></div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-label">Cross-stream</div>
-    <div><span class="stat-value" id="s-cross">0</span></div>
-  </div>
+  <div class="stat-box"><div class="stat-label">Total speed</div>
+    <div><span class="stat-value" id="s-kbps">—</span><span class="stat-unit">KB/s</span></div></div>
+  <div class="stat-box"><div class="stat-label">Peak</div>
+    <div><span class="stat-value" id="s-peak">—</span><span class="stat-unit">KB/s</span></div></div>
+  <div class="stat-box"><div class="stat-label">Packets/s</div>
+    <div><span class="stat-value" id="s-pps">—</span><span class="stat-unit">pkt/s</span></div></div>
+  <div class="stat-box"><div class="stat-label">Total received</div>
+    <div><span class="stat-value" id="s-total">—</span><span class="stat-unit">KB</span></div></div>
+  <div class="stat-box"><div class="stat-label">Seq gaps</div>
+    <div><span class="stat-value" id="s-gaps">0</span></div></div>
+  <div class="stat-box"><div class="stat-label">Cross-stream</div>
+    <div><span class="stat-value" id="s-cross">0</span></div></div>
 </div>
 
-<!-- Per-stream boxes -->
 <div class="stream-grid" id="streamGrid"></div>
-
 <div id="chart-wrap"><canvas id="chart"></canvas></div>
 <div class="log-box" id="log"></div>
 
@@ -137,127 +95,111 @@
 </div>
 
 <script>
+// ── Config — must match firmware NUM_STREAMS ───────────────────────────────────
+const NUM_STREAMS = 8;
+
 const SVC_UUID  = '12345678-1234-1234-1234-123456789abc';
 const MODE_UUID = '12345678-1234-1234-1234-123456789ab8';
-const NUM_STREAMS = 8;
-const DATA_UUIDS = Array.from({length: NUM_STREAMS}, (_,i) =>
+const DATA_UUIDS = Array.from({length: NUM_STREAMS}, (_, i) =>
     `12345678-1234-1234-1234-123456789ab${i}`);
 const EXPECTED_SIZE = 500;
 
 let connected = false, currentMode = null;
+let modeCharRef = null;   // holds the Web Bluetooth mode characteristic
+let webDevice   = null;
 
-// Per-stream state
-const streamSeq     = new Int32Array(NUM_STREAMS).fill(-1); // -1 = not seen yet
-const streamBytes   = new Uint32Array(NUM_STREAMS);
-const streamPkts    = new Uint32Array(NUM_STREAMS);
-const streamGaps    = new Uint32Array(NUM_STREAMS);
+// Per-stream state (TypedArrays for speed)
+const streamSeq   = new Int32Array(NUM_STREAMS).fill(-1);
+const streamBytes = new Uint32Array(NUM_STREAMS);
+const streamGaps  = new Uint32Array(NUM_STREAMS);
+let totalBytes = 0, windowBytes = 0, windowPkts = 0;
+let windowStart = 0, peakKbps = 0, totalGaps = 0, crossStreamErrors = 0;
 
-let totalBytes  = 0, windowBytes = 0, windowPkts = 0;
-let windowStart = 0, peakKbps = 0;
-let crossStreamErrors = 0;  // packet arrived on wrong stream (streamId in header != char index)
-let totalGaps = 0;
-
-// ── Per-stream UI ──────────────────────────────────────────────────────────────
+// ── Build per-stream UI ────────────────────────────────────────────────────────
 const grid = document.getElementById('streamGrid');
-const streamBoxes = Array.from({length: NUM_STREAMS}, (_, i) => {
+Array.from({length: NUM_STREAMS}, (_, i) => {
     const d = document.createElement('div');
     d.className = 'stream-box';
     d.innerHTML = `<div class="s-label">Stream ${i}</div>
                    <div class="s-val" id="sv-${i}">—</div>
                    <div style="font-size:0.65rem;color:#444" id="sg-${i}">gaps:0</div>`;
     grid.appendChild(d);
-    return d;
 });
 
 // ── Chart ─────────────────────────────────────────────────────────────────────
 const HISTORY = 60;
 const history = new Array(HISTORY).fill(0);
-const canvas  = document.getElementById('chart');
-const ctx     = canvas.getContext('2d');
-
+const canvas = document.getElementById('chart');
+const ctx    = canvas.getContext('2d');
 function chartRgb() { return currentMode === 'coded' ? '100,170,255' : '68,255,196'; }
-
 function drawChart() {
-    const W = canvas.offsetWidth || 300, H = canvas.offsetHeight || 140;
-    canvas.width = W * devicePixelRatio; canvas.height = H * devicePixelRatio;
+    const W = canvas.offsetWidth||300, H = canvas.offsetHeight||140;
+    canvas.width = W*devicePixelRatio; canvas.height = H*devicePixelRatio;
     ctx.scale(devicePixelRatio, devicePixelRatio);
-    ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0, 0, W, H);
-    const max = Math.max(...history, 10), step = W / (HISTORY - 1), rgb = chartRgb();
+    ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0,0,W,H);
+    const max = Math.max(...history,10), step = W/(HISTORY-1), rgb = chartRgb();
     ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-        const y = H - (i / 4) * H;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-        ctx.fillStyle = '#444'; ctx.font = '10px monospace';
-        ctx.fillText(((max * i / 4) | 0) + ' KB/s', 4, y - 3);
+    for (let i=0;i<=4;i++) {
+        const y = H-(i/4)*H;
+        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+        ctx.fillStyle='#444'; ctx.font='10px monospace';
+        ctx.fillText(((max*i/4)|0)+' KB/s',4,y-3);
     }
-    ctx.beginPath(); ctx.moveTo(0, H);
-    history.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * H * 0.92));
-    ctx.lineTo((HISTORY-1)*step, H); ctx.closePath();
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, `rgba(${rgb},0.55)`); g.addColorStop(1, `rgba(${rgb},0.05)`);
-    ctx.fillStyle = g; ctx.fill();
-    ctx.beginPath(); ctx.strokeStyle = `rgba(${rgb},1)`; ctx.lineWidth = 2;
-    history.forEach((v, i) => {
-        const x = i*step, y = H - (v/max)*H*0.92;
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
+    ctx.beginPath(); ctx.moveTo(0,H);
+    history.forEach((v,i)=>ctx.lineTo(i*step,H-(v/max)*H*0.92));
+    ctx.lineTo((HISTORY-1)*step,H); ctx.closePath();
+    const g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,`rgba(${rgb},0.55)`); g.addColorStop(1,`rgba(${rgb},0.05)`);
+    ctx.fillStyle=g; ctx.fill();
+    ctx.beginPath(); ctx.strokeStyle=`rgba(${rgb},1)`; ctx.lineWidth=2;
+    history.forEach((v,i)=>{const x=i*step,y=H-(v/max)*H*0.92; i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
     ctx.stroke();
 }
 
-setInterval(() => {
+setInterval(()=>{
     if (!connected) return;
-    const elapsed = (performance.now() - windowStart) / 1000;
-    if (elapsed <= 0) return;
-    const kbps = (windowBytes / 1024) / elapsed;
-    const pps  = windowPkts / elapsed;
-    if (kbps > peakKbps) peakKbps = kbps;
-    history.push(kbps); if (history.length > HISTORY) history.shift();
+    const elapsed = (performance.now()-windowStart)/1000;
+    if (elapsed<=0) return;
+    const kbps = (windowBytes/1024)/elapsed, pps = windowPkts/elapsed;
+    if (kbps>peakKbps) peakKbps=kbps;
+    history.push(kbps); if (history.length>HISTORY) history.shift();
     document.getElementById('s-kbps').textContent  = kbps.toFixed(1);
     document.getElementById('s-peak').textContent  = peakKbps.toFixed(1);
     document.getElementById('s-pps').textContent   = pps.toFixed(0);
-    document.getElementById('s-total').textContent = (totalBytes / 1024).toFixed(1);
+    document.getElementById('s-total').textContent = (totalBytes/1024).toFixed(1);
     document.getElementById('s-gaps').textContent  = totalGaps;
     document.getElementById('s-cross').textContent = crossStreamErrors;
-    // Update per-stream boxes
-    for (let i = 0; i < NUM_STREAMS; i++) {
-        const kb = (streamBytes[i] / 1024 / elapsed).toFixed(1);
-        document.getElementById(`sv-${i}`).textContent = kb + ' KB/s';
+    for (let i=0;i<NUM_STREAMS;i++) {
+        const kb = (streamBytes[i]/1024/elapsed).toFixed(1);
+        document.getElementById(`sv-${i}`).textContent = kb+' KB/s';
         document.getElementById(`sg-${i}`).textContent = `gaps:${streamGaps[i]}`;
-        streamBytes[i] = 0;
+        streamBytes[i]=0;
     }
-    windowBytes = windowPkts = 0;
-    windowStart = performance.now();
+    windowBytes=windowPkts=0; windowStart=performance.now();
     drawChart();
-}, 1000);
+},1000);
 
-// ── Data handler ──────────────────────────────────────────────────────────────
+// ── Per-stream data handler ────────────────────────────────────────────────────
 function makeHandler(streamIdx) {
     return function(event) {
         const buf = event.target.value.buffer;
         if (buf.byteLength !== EXPECTED_SIZE) return;
-
         totalBytes       += EXPECTED_SIZE;
         windowBytes      += EXPECTED_SIZE;
         windowPkts++;
         streamBytes[streamIdx] += EXPECTED_SIZE;
-        streamPkts[streamIdx]++;
-
         const view = new DataView(buf);
-        const embeddedStream = view.getUint8(0);       // stream id in packet header
-        const seq            = view.getUint32(1, true); // per-stream seq
-
-        // Check packet arrived on the right characteristic
+        const embeddedStream = view.getUint8(0);
+        const seq            = view.getUint32(1, true);
         if (embeddedStream !== streamIdx) {
             crossStreamErrors++;
             log(`Cross-stream! char:${streamIdx} header:${embeddedStream}`, 'err');
         }
-
-        // Seq gap check per stream
         const prev = streamSeq[streamIdx];
         if (prev >= 0) {
-            const expected = (prev + 1) >>> 0;
+            const expected = (prev+1)>>>0;
             if (seq > expected) {
-                const gap = seq - expected;
+                const gap = seq-expected;
                 streamGaps[streamIdx] += gap;
                 totalGaps += gap;
                 log(`Stream ${streamIdx} gap +${gap}`, 'err');
@@ -268,51 +210,43 @@ function makeHandler(streamIdx) {
 }
 
 // ── Logging ───────────────────────────────────────────────────────────────────
-let logQueue = [], logFlushScheduled = false;
-function log(msg, cls = '') {
-    logQueue.push({ msg, cls });
-    if (!logFlushScheduled) { logFlushScheduled = true; setTimeout(flushLog, 200); }
+let logQueue=[], logFlushScheduled=false;
+function log(msg,cls='') {
+    logQueue.push({msg,cls});
+    if (!logFlushScheduled) { logFlushScheduled=true; setTimeout(flushLog,200); }
 }
 function flushLog() {
-    logFlushScheduled = false;
-    const box = document.getElementById('log');
-    const frag = document.createDocumentFragment();
-    const batch = logQueue.splice(0), show = batch.slice(-20);
-    if (batch.length > show.length) {
-        const el = document.createElement('div'); el.className = 'warn';
-        el.textContent = `... ${batch.length - show.length} suppressed`;
-        frag.appendChild(el);
+    logFlushScheduled=false;
+    const box=document.getElementById('log'), frag=document.createDocumentFragment();
+    const batch=logQueue.splice(0), show=batch.slice(-20);
+    if (batch.length>show.length) {
+        const el=document.createElement('div'); el.className='warn';
+        el.textContent=`... ${batch.length-show.length} suppressed`; frag.appendChild(el);
     }
-    show.forEach(({ msg, cls }) => {
-        const el = document.createElement('div'); if (cls) el.className = cls;
-        const t = new Date().toLocaleTimeString('en-AU', { hour12: false });
-        el.textContent = `[${t}] ${msg}`; frag.appendChild(el);
+    show.forEach(({msg,cls})=>{
+        const el=document.createElement('div'); if(cls) el.className=cls;
+        const t=new Date().toLocaleTimeString('en-AU',{hour12:false});
+        el.textContent=`[${t}] ${msg}`; frag.appendChild(el);
     });
     box.appendChild(frag);
-    while (box.children.length > 200) box.removeChild(box.firstChild);
-    box.scrollTop = box.scrollHeight;
+    while (box.children.length>200) box.removeChild(box.firstChild);
+    box.scrollTop=box.scrollHeight;
 }
 
-function setPill(text, cls) {
-    const el = document.getElementById('pill');
-    el.textContent = text; el.className = 'pill ' + cls;
-}
+function setPill(t,c) { const e=document.getElementById('pill'); e.textContent=t; e.className='pill '+c; }
 
 function resetStats() {
-    totalBytes = windowBytes = windowPkts = peakKbps = totalGaps = crossStreamErrors = 0;
-    streamSeq.fill(-1); streamBytes.fill(0); streamPkts.fill(0); streamGaps.fill(0);
-    windowStart = performance.now();
-    history.fill(0);
-    ['s-kbps','s-peak','s-pps','s-total'].forEach(id =>
-        document.getElementById(id).textContent = '—');
-    document.getElementById('s-gaps').textContent  = '0';
-    document.getElementById('s-cross').textContent = '0';
-    for (let i = 0; i < NUM_STREAMS; i++) {
-        document.getElementById(`sv-${i}`).textContent = '—';
-        document.getElementById(`sg-${i}`).textContent = 'gaps:0';
-        streamBoxes[i].classList.remove('err');
+    totalBytes=windowBytes=windowPkts=peakKbps=totalGaps=crossStreamErrors=0;
+    streamSeq.fill(-1); streamBytes.fill(0); streamGaps.fill(0);
+    windowStart=performance.now(); history.fill(0);
+    ['s-kbps','s-peak','s-pps','s-total'].forEach(id=>document.getElementById(id).textContent='—');
+    document.getElementById('s-gaps').textContent='0';
+    document.getElementById('s-cross').textContent='0';
+    for (let i=0;i<NUM_STREAMS;i++) {
+        document.getElementById(`sv-${i}`).textContent='—';
+        document.getElementById(`sg-${i}`).textContent='gaps:0';
     }
-    drawChart(); log('Stats reset.', 'info');
+    drawChart(); log('Stats reset.','info');
 }
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
@@ -320,123 +254,102 @@ function showModeDialog() { document.getElementById('modeOverlay').classList.add
 function hideModeDialog()  { document.getElementById('modeOverlay').classList.remove('active'); }
 
 function selectMode(mode) {
-    hideModeDialog(); currentMode = mode;
-    NativeBLE.writeMode(SVC_UUID, MODE_UUID, mode === 'coded' ? 0x01 : 0x00);
-    if (mode === 'coded') { log('Coded PHY S=8', 'ok'); setPill('coded PHY', 'pill-coded'); }
-    else                  { log('2M PHY', 'ok');        setPill('streaming 2M', 'pill-ok'); }
+    hideModeDialog(); currentMode=mode;
+    const val = mode==='coded' ? 0x01 : 0x00;
+    if (NativeBLE.isNative) {
+        NativeBLE.writeMode(SVC_UUID, MODE_UUID, val);
+    } else if (modeCharRef) {
+        modeCharRef.writeValue(new Uint8Array([val])).catch(e=>log('Mode write: '+e.message,'err'));
+    }
+    if (mode==='coded') { log('Coded PHY S=8','ok'); setPill('coded PHY','pill-coded'); }
+    else                { log('2M PHY','ok');        setPill('streaming 2M','pill-ok'); }
     resetStats();
 }
 
-document.getElementById('btnMode1M').addEventListener('click',    () => selectMode('1m'));
-document.getElementById('btnModeCoded').addEventListener('click', () => selectMode('coded'));
+document.getElementById('btnMode1M').addEventListener('click',    ()=>selectMode('1m'));
+document.getElementById('btnModeCoded').addEventListener('click', ()=>selectMode('coded'));
 
-// ── BLE callbacks ─────────────────────────────────────────────────────────────
-window.onBLEDeviceFound = (id, name) => {
-    log(`Found: ${name} — connecting...`, 'info');
-    NativeBLE.connect(id, SVC_UUID, DATA_UUIDS, MODE_UUID);
-};
+// ── Sequential GATT helper ────────────────────────────────────────────────────
+// Promise.all on GATT ops overflows Chrome's queue — do them one at a time
+async function sequentialMap(arr, asyncFn) {
+    const results = [];
+    for (const item of arr) results.push(await asyncFn(item));
+    return results;
+}
 
-let subsReady = 0;
-window.onBLEConnected = () => {
-    subsReady = 0;
-    connected = true;
-    log('Connected — subscribing to all streams...', 'info');
-    setPill('subscribing', 'pill-warn');
-    document.getElementById('btnConnect').disabled    = true;
-    document.getElementById('btnDisconnect').disabled = false;
-    // Subscribe to all 8 data characteristics
-    DATA_UUIDS.forEach((uuid, i) => NativeBLE.subscribe(SVC_UUID, uuid));
-    // Small delay to let all subscriptions complete before showing mode dialog
-    setTimeout(() => { showModeDialog(); }, 800);
-};
+// ── Web Bluetooth connect ─────────────────────────────────────────────────────
+async function webBluetoothConnect() {
+    if (!navigator.bluetooth) { log('Web Bluetooth not available.','err'); return; }
+    try {
+        log('Scanning...');
+        webDevice = await navigator.bluetooth.requestDevice({
+            filters: [{ services: [SVC_UUID] }]
+        });
+        webDevice.addEventListener('gattserverdisconnected', onDisconnected);
+        log(`Found: ${webDevice.name} — connecting...`,'info');
 
-window.onBLEDisconnected = () => {
-    connected = false; currentMode = null;
-    hideModeDialog(); setPill('disconnected', 'pill-warn');
-    log('Disconnected.', 'warn');
+        const server = await webDevice.gatt.connect();
+        const svc    = await server.getPrimaryService(SVC_UUID);
+
+        // Get mode characteristic
+        log('Getting mode characteristic...','info');
+        modeCharRef = await svc.getCharacteristic(MODE_UUID);
+
+        // Get and subscribe to data characteristics SEQUENTIALLY
+        // Chrome's GATT queue overflows with concurrent ops
+        log(`Subscribing to ${NUM_STREAMS} streams sequentially...`,'info');
+        const dataChars = await sequentialMap(DATA_UUIDS, uuid => svc.getCharacteristic(uuid));
+        await sequentialMap(dataChars, c => c.startNotifications());
+        dataChars.forEach((c, i) => {
+            c.addEventListener('characteristicvaluechanged', makeHandler(i));
+        });
+
+        connected = true;
+        log(`Connected: ${webDevice.name}`,'info');
+        setPill('connected','pill-warn');
+        document.getElementById('btnConnect').disabled    = true;
+        document.getElementById('btnDisconnect').disabled = false;
+        showModeDialog();
+
+    } catch(e) {
+        log('Error: '+e.message,'err');
+    }
+}
+
+// ── Disconnect ────────────────────────────────────────────────────────────────
+function onDisconnected() {
+    connected=false; currentMode=null; modeCharRef=null;
+    hideModeDialog(); setPill('disconnected','pill-warn');
+    log('Disconnected.','warn');
     document.getElementById('btnConnect').disabled    = false;
     document.getElementById('btnDisconnect').disabled = true;
-};
+}
 
-window.onBLEData = (buffer) => {};  // unused — each stream has its own handler
-window.onBLEError = (msg) => log('BLE: ' + msg, 'err');
-
-// ── Connect ───────────────────────────────────────────────────────────────────
+// ── Button handlers ───────────────────────────────────────────────────────────
 document.getElementById('btnConnect').addEventListener('click', async () => {
-    if (!navigator.bluetooth && !NativeBLE.isNative) {
-        log('Web Bluetooth not available.', 'err'); return;
+    if (NativeBLE.isNative) {
+        log('Scanning...','info');
+        await NativeBLE.requestDevice(SVC_UUID, {
+            onDeviceFound:  (id,name)=>{ log(`Found: ${name}`,'info'); NativeBLE.connect(id,SVC_UUID,DATA_UUIDS[0],MODE_UUID); },
+            onConnected:    ()=>{ connected=true; setPill('connected','pill-warn'); document.getElementById('btnConnect').disabled=true; document.getElementById('btnDisconnect').disabled=false; showModeDialog(); },
+            onDisconnected: onDisconnected,
+            onData:         ()=>{},
+            onError:        msg=>log('BLE: '+msg,'err'),
+        });
+    } else {
+        await webBluetoothConnect();
     }
-    log('Scanning...');
-
-    // For Web Bluetooth we need to connect and subscribe to all 8 characteristics manually
-    if (!NativeBLE.isNative) {
-        try {
-            const device = await navigator.bluetooth.requestDevice({
-                filters: [{ services: [SVC_UUID] }]
-            });
-            device.addEventListener('gattserverdisconnected', window.onBLEDisconnected);
-            log(`Found: ${device.name} — connecting...`, 'info');
-
-            const server = await device.gatt.connect();
-            const svc    = await server.getPrimaryService(SVC_UUID);
-
-            // Get mode char
-            const modeChar = await svc.getCharacteristic(MODE_UUID);
-
-            // Get all 8 data characteristics and subscribe in parallel
-            log('Subscribing to 8 streams...', 'info');
-            const dataChars = await Promise.all(
-                DATA_UUIDS.map(uuid => svc.getCharacteristic(uuid))
-            );
-            await Promise.all(dataChars.map(c => c.startNotifications()));
-            dataChars.forEach((c, i) => {
-                c.addEventListener('characteristicvaluechanged', makeHandler(i));
-            });
-
-            // Stash modeChar for writeMode
-            NativeBLE._webModeCharOverride = modeChar;
-
-            connected = true;
-            log(`Connected: ${device.name}`, 'info');
-            setPill('connected', 'pill-warn');
-            document.getElementById('btnConnect').disabled    = true;
-            document.getElementById('btnDisconnect').disabled = false;
-            showModeDialog();
-
-            // Patch writeMode for this session
-            NativeBLE._origWriteMode = NativeBLE.writeMode;
-            NativeBLE.writeMode = (svcU, charU, val) => {
-                modeChar.writeValue(new Uint8Array([val]));
-            };
-
-            window._bleDevice = device;
-        } catch(e) {
-            log('Error: ' + e.message, 'err');
-        }
-        return;
-    }
-
-    // Native app path
-    await NativeBLE.requestDevice(SVC_UUID, {
-        onDeviceFound:  window.onBLEDeviceFound,
-        onConnected:    window.onBLEConnected,
-        onDisconnected: window.onBLEDisconnected,
-        onData:         window.onBLEData,
-        onError:        window.onBLEError,
-    });
 });
 
-document.getElementById('btnDisconnect').addEventListener('click', () => {
-    if (NativeBLE.isNative) { NativeBLE.disconnect(); }
-    else if (window._bleDevice?.gatt?.connected) { window._bleDevice.gatt.disconnect(); }
+document.getElementById('btnDisconnect').addEventListener('click', ()=>{
+    if (NativeBLE.isNative) NativeBLE.disconnect();
+    else if (webDevice?.gatt?.connected) webDevice.gatt.disconnect();
 });
 
 document.getElementById('btnReset').addEventListener('click', resetStats);
 window.addEventListener('resize', drawChart);
 drawChart();
-log(NativeBLE.isNative
-    ? 'Native app — Coded PHY available'
-    : 'Browser — Web Bluetooth', 'info');
+log(NativeBLE.isNative ? 'Native app — Coded PHY available' : 'Browser — Web Bluetooth','info');
 </script>
 </body>
 </html>

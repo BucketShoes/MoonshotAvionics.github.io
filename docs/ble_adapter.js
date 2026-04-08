@@ -1,7 +1,15 @@
 /**
- * ble_adapter.js
- * Unified BLE abstraction: native Android bridge or Web Bluetooth fallback.
- * Include before your main script.
+ * ble_adapter.js — unified BLE abstraction
+ *
+ * Native (Android app):
+ *   - Scans Coded + 1M PHY
+ *   - Batches packets at 16ms intervals, calls onBLEBatch(streamIdx, ArrayBuffer[])
+ *   - JS handler receives an array of ArrayBuffers per stream per tick
+ *
+ * Browser (Web Bluetooth):
+ *   - Standard requestDevice / characteristic subscription
+ *   - onBLEBatch called with a single-element array per event
+ *     so the page handler always receives an array in both cases
  */
 
 const NativeBLE = (() => {
@@ -11,41 +19,62 @@ const NativeBLE = (() => {
   let _onDeviceFound  = null;
   let _onConnected    = null;
   let _onDisconnected = null;
-  let _onData         = null;
+  let _onBatch        = null;   // (streamIdx, ArrayBuffer[]) — always an array
   let _onError        = null;
 
-  // Web Bluetooth state
   let _webDevice   = null;
   let _webModeChar = null;
 
-  // ── Native callbacks (Kotlin calls these via evaluateJavascript) ──────────
+  // ── Native callbacks ───────────────────────────────────────────────────────
   window.onBLEDeviceFound  = (id, name) => _onDeviceFound?.(id, name);
   window.onBLEConnected    = ()         => _onConnected?.();
   window.onBLEDisconnected = ()         => _onDisconnected?.();
   window.onBLEError        = (msg)      => _onError?.(msg);
 
-  // Data arrives as base64 from native (avoids huge comma arrays for 500B packets)
-  window.onBLEDataB64 = (b64) => {
-    const binary = atob(b64);
-    const buf    = new ArrayBuffer(binary.length);
-    const view   = new Uint8Array(buf);
-    for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
-    _onData?.(buf);
+  // Batch: array of base64 strings → array of ArrayBuffers
+  window.onBLEBatch = (streamIdx, b64Array) => {
+    if (!_onBatch) return;
+    const buffers = b64Array.map(b64 => {
+      const bin = atob(b64);
+      const buf = new ArrayBuffer(bin.length);
+      const u8  = new Uint8Array(buf);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      return buf;
+    });
+    _onBatch(streamIdx, buffers);
   };
+
+  // ── Web Bluetooth single-packet wrapper ────────────────────────────────────
+  // Wraps single characteristicvaluechanged events as single-element arrays
+  // so the page handler is identical for both paths
+  function makeWebHandler(streamIdx) {
+    return (event) => {
+      _onBatch?.(streamIdx, [event.target.value.buffer]);
+    };
+  }
+
+  // Sequential GATT helper — Chrome queue overflows with concurrent ops
+  async function seqMap(arr, fn) {
+    const out = [];
+    for (const x of arr) out.push(await fn(x));
+    return out;
+  }
 
   return {
     isNative,
 
-    async requestDevice(serviceUUID, { onDeviceFound, onConnected, onDisconnected, onData, onError }) {
+    async requestDevice(serviceUUID, dataUUIDs, modeUUID, {
+      onDeviceFound, onConnected, onDisconnected, onBatch, onError
+    }) {
       _onDeviceFound  = onDeviceFound;
       _onConnected    = onConnected;
       _onDisconnected = onDisconnected;
-      _onData         = onData;
+      _onBatch        = onBatch;
       _onError        = onError;
 
       if (isNative) {
         native.scan(serviceUUID);
-        // onBLEDeviceFound fires → caller calls connect()
+        // onBLEDeviceFound → caller calls connect()
       } else {
         if (!navigator.bluetooth) { onError?.('Web Bluetooth not available'); return; }
         try {
@@ -54,13 +83,11 @@ const NativeBLE = (() => {
           });
           _webDevice.addEventListener('gattserverdisconnected', () => _onDisconnected?.());
           onDeviceFound?.(_webDevice.id, _webDevice.name ?? 'Unknown');
-        } catch(e) {
-          onError?.(e.message);
-        }
+        } catch(e) { onError?.(e.message); }
       }
     },
 
-    async connect(deviceIdOrAddress, serviceUUID, dataCharUUID, modeCharUUID) {
+    async connect(deviceIdOrAddress, serviceUUID, dataUUIDs, modeUUID) {
       if (isNative) {
         native.connect(deviceIdOrAddress);
         // onBLEConnected fires when GATT ready
@@ -68,40 +95,36 @@ const NativeBLE = (() => {
         try {
           const server = await _webDevice.gatt.connect();
           const svc    = await server.getPrimaryService(serviceUUID);
-          const dataChar = await svc.getCharacteristic(dataCharUUID);
-          _webModeChar   = await svc.getCharacteristic(modeCharUUID);
-          await dataChar.startNotifications();
-          dataChar.addEventListener('characteristicvaluechanged', e => {
-            _onData?.(e.target.value.buffer);
+          _webModeChar = await svc.getCharacteristic(modeUUID);
+          // Sequential subscription
+          const chars = await seqMap(dataUUIDs, u => svc.getCharacteristic(u));
+          await seqMap(chars, c => c.startNotifications());
+          chars.forEach((c, i) => {
+            c.addEventListener('characteristicvaluechanged', makeWebHandler(i));
           });
           _onConnected?.();
-        } catch(e) {
-          _onError?.(e.message);
-        }
+        } catch(e) { _onError?.(e.message); }
       }
     },
 
-    subscribe(serviceUUID, charUUID) {
-      if (isNative) native.subscribe(serviceUUID, charUUID);
-      // Web Bluetooth already subscribed in connect()
+    // Native: subscribe with stream index so Kotlin knows which queue to use
+    subscribe(serviceUUID, charUUID, streamIdx) {
+      if (isNative) native.subscribe(serviceUUID, charUUID, streamIdx);
+      // Web: already subscribed in connect()
     },
 
     writeMode(serviceUUID, charUUID, byteValue) {
       if (isNative) {
-        const hex = byteValue.toString(16).padStart(2, '0');
-        native.write(serviceUUID, charUUID, hex);
+        native.write(serviceUUID, charUUID, byteValue.toString(16).padStart(2, '0'));
       } else {
         _webModeChar?.writeValue(new Uint8Array([byteValue]));
       }
     },
 
     disconnect() {
-      if (isNative) {
-        native.disconnect();
-      } else {
-        if (_webDevice?.gatt?.connected) _webDevice.gatt.disconnect();
-      }
-      _onDeviceFound = _onConnected = _onDisconnected = _onData = _onError = null;
+      if (isNative) native.disconnect();
+      else if (_webDevice?.gatt?.connected) _webDevice.gatt.disconnect();
+      _onDeviceFound = _onConnected = _onDisconnected = _onBatch = _onError = null;
       _webDevice = _webModeChar = null;
     }
   };
