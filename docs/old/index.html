@@ -1125,7 +1125,7 @@ function initCharts() {
       var timeout = 10000;
       var start = Date.now();
       var lastProg = Date.now();
-      while (!bleFetchDone && (Date.now() - start) < timeout) {
+      while (!bleFetchDone && !fetchAbort && (Date.now() - start) < timeout) {
         await new Promise(function(r) { setTimeout(r, 50); });
         if (onProgress && Date.now() - lastProg > 400) {
           lastProg = Date.now();
@@ -1287,7 +1287,7 @@ function initCharts() {
       var timeout = 30000;
       var start = Date.now();
       var lastProg = Date.now();
-      while (!rktFetchDone && (Date.now() - start) < timeout) {
+      while (!rktFetchDone && !fetchAbort && (Date.now() - start) < timeout) {
         await new Promise(function(r) { setTimeout(r, 50); });
         if (onProgress && Date.now() - lastProg > 400) {
           lastProg = Date.now();
