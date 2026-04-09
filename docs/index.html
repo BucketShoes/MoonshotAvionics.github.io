@@ -756,24 +756,26 @@ function initCharts() {
     var x=new XMLHttpRequest();x.open('GET',getBaseHttp()+'/api/status');x.onload=function(){if(x.status===200){try{var s=JSON.parse(x.responseText);serverUptimeMs=s.uptimeMs;serverSyncClockMs=Date.now();document.getElementById('val-logrec').textContent=s.records;if(typeof s.baseBattMv==='number'){var be=document.getElementById('val-basebatt');be.textContent=s.baseBattMv+'mV';be.style.color=s.baseBattMv>3500?'#0f0':s.baseBattMv>3300?'#ff0':'#f44';if(charts&&charts.batt){var bootMs=serverUptimeMs;pushChart(charts.batt,bootMs,[null,s.baseBattMv])}}if(typeof s.nonce==='number'){var ne=document.getElementById('cmd-nonce');var srvNext=s.nonce+1;var cur=parseInt(ne.value)||0;if(srvNext>cur){ne.value=srvNext;try{localStorage.setItem('cmd-nonce',''+srvNext)}catch(e){}}}if(cb)cb(s)}catch(e){}}};x.send()
   }
 
-  // Rebuild sessions from fetched base station logs + LoRa download session.
-  // Fetched sessions split on timestamp discontinuities (reboot boundaries).
+  // Rebuild sessions from fetched logs + LoRa download session.
+  // Fetched sessions split on timestamp resets (reboot boundaries).
+  // All record types included (0xAF telem packets and raw data pages).
   // The LoRa download session is appended as a single session if non-empty.
   function rebuildSessions(){
     var recs=[];
     for(var k in allFetched)recs.push(allFetched[k]);
     recs.sort(function(a,b){return a.recNum-b.recNum});
-    // Filter to 0xAF telem packets for fetched sessions
-    var telem=[];
-    for(var i=0;i<recs.length;i++){
-      if(recs[i].payload.byteLength>=10&&new Uint8Array(recs[i].payload)[0]===0xAF)
-        telem.push(recs[i]);
-    }
     sessions=[];
     var cur=[];
-    for(var i=0;i<telem.length;i++){
-      if(cur.length>0&&telem[i].ts<cur[cur.length-1].ts){sessions.push(cur);cur=[]}
-      cur.push(telem[i]);
+    for(var i=0;i<recs.length;i++){
+      var r=recs[i];
+      // Assign type if not already set
+      if(!r.type){
+        var b0=r.payload.byteLength>0?new Uint8Array(r.payload)[0]:0;
+        r.type=(b0===0xAF)?'pkt':'logpage';
+      }
+      // New session on timestamp reset (reboot boundary)
+      if(cur.length>0&&r.ts<cur[cur.length-1].ts){sessions.push(cur);cur=[];}
+      cur.push(r);
     }
     if(cur.length>0)sessions.push(cur);
     // Append LoRa download session if non-empty
@@ -791,7 +793,8 @@ function initCharts() {
   function fetchIntermediateUpdate(cursor) {
     rebuildSessions();
     updateNav();
-    if (fetchAutoNav && sessions.length > 0) showView(sessions.length - 1);
+    // Don't re-render chart on every batch — too slow as allFetched grows.
+    // Final showView is called in the Done handler.
     updateFetchProgress(cursor);
   }
   function loadHistory(){
@@ -903,7 +906,7 @@ function initCharts() {
               var sn=dv.getInt8(off);off++;
               var ts=dv.getUint32(off,true);off+=4;
               if(pl===0||off+pl>dv.byteLength)break;
-              if(!allFetched[rn]){allFetched[rn]={recNum:rn,snr:sn/4,ts:ts,payload:buf.slice(off,off+pl)};if(rn<fetchedLowest)fetchedLowest=rn;if(rn>fetchedHighest)fetchedHighest=rn;fetchSpeedRecs++;}
+              if(!allFetched[rn]){var p=buf.slice(off,off+pl);var b0=pl>0?new Uint8Array(p)[0]:0;allFetched[rn]={recNum:rn,snr:sn/4,ts:ts,payload:p,type:b0===0xAF?'pkt':'logpage'};if(rn<fetchedLowest)fetchedLowest=rn;if(rn>fetchedHighest)fetchedHighest=rn;fetchSpeedRecs++;}
               off+=pl;
             }
           }
@@ -1048,7 +1051,8 @@ function initCharts() {
           var payload = buf.slice(off, off + pl);
           off += pl;
           if (!allFetched[rn]) {
-            allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload };
+            var b0 = payload.byteLength > 0 ? new Uint8Array(payload)[0] : 0;
+            allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload, type: b0 === 0xAF ? 'pkt' : 'logpage' };
             if (rn < fetchedLowest) fetchedLowest = rn;
             if (rn > fetchedHighest) fetchedHighest = rn;
             fetchSpeedRecs++;
@@ -1375,7 +1379,8 @@ function initCharts() {
           var payload = buf.slice(off, off + pl);
           off += pl;
           if (!allFetched[rn]) {
-            allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload };
+            var b0 = payload.byteLength > 0 ? new Uint8Array(payload)[0] : 0;
+            allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload, type: b0 === 0xAF ? 'pkt' : 'logpage' };
             if (rn < fetchedLowest) fetchedLowest = rn;
             if (rn > fetchedHighest) fetchedHighest = rn;
             fetchSpeedRecs++;
@@ -1385,6 +1390,10 @@ function initCharts() {
 
       rktBleConnected = true;
       setRocketBle(true);
+
+      // Auto-switch live view to rocket
+      liveSource = 'rkt';
+      showView(-1);
 
       // Read initial status
       rktReadStatus();
