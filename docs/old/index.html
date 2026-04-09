@@ -69,6 +69,10 @@
   <div class="si"><span class="sl">Live:</span><span class="sv" id="val-cnt">0</span></div>
   <div class="si"><span class="sl">Flash#:</span><span class="sv" id="val-logrec">?</span></div>
   <div class="si"><span class="sl">Battery:</span><span class="sv" id="val-basebatt">&mdash;</span></div>
+  <div class="si"><div class="dot dd" id="dot-rktble"></div><span class="sl">Rkt BLE:</span><span class="sv" id="val-rktble">off</span></div>
+  <button id="btn-rktble" style="background:#353;color:#8fa;border:1px solid #585;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Rkt BLE</button>
+  <div class="si"><span class="sl">Rkt Flash#:</span><span class="sv" id="val-rktlogrec">?</span></div>
+  <div class="si"><span class="sl">Rkt Batt:</span><span class="sv" id="val-rktbatt">&mdash;</span></div>
   <span id="phase" class="pb p-idle">IDLE</span>
 </div>
 
@@ -244,6 +248,15 @@
     </div>
   </div>
 
+  <div class="cmd-row">
+    <label>Via:</label>
+    <select id="cmd-transport" style="background:#222;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:11px">
+      <option value="auto">Auto (BLE &gt; HTTP)</option>
+      <option value="http">Base HTTP</option>
+      <option value="baseBle">Base BLE</option>
+      <option value="rktble">Rocket BLE</option>
+    </select>
+  </div>
   <div class="cmd-row">
     <button class="cmd-btn" id="cmd-send">SEND COMMAND</button>
   </div>
@@ -1031,6 +1044,238 @@ function initCharts() {
     }
   }
 
+  // =============================================================
+  // ROCKET DIRECT BLE (Web Bluetooth — connects directly to rocket)
+  // Different service UUIDs from base station. No SNR/RSSI wrapper.
+  // Telem packets are sequences of [len][data] records (data[0] = type).
+  // Type 0xAF = telemetry header record; other types = data pages.
+  // =============================================================
+
+  var RKT_SERVICE_UUID       = '524f434b-4554-5354-424c-000000000000';
+  var RKT_TELEM_CHAR_UUID    = '524f434b-4554-5354-424c-000000000001';
+  var RKT_CMD_CHAR_UUID      = '524f434b-4554-5354-424c-000000000002';
+  var RKT_STATUS_CHAR_UUID   = '524f434b-4554-5354-424c-000000000003';
+  var RKT_CONNSET_CHAR_UUID  = '524f434b-4554-5354-424c-000000000004';
+  var RKT_LOGFETCH_CHAR_UUID = '524f434b-4554-5354-424c-000000000005';
+
+  // ConnSet command type bytes
+  var RKT_CS_INTERVAL = 0x01;
+  var RKT_CS_PAGEMASK = 0x02;
+  var RKT_CS_PHY      = 0x03;
+
+  var rktDevice = null;
+  var rktServer_ = null;
+  var rktTelemChar_ = null;
+  var rktCmdChar_ = null;
+  var rktStatusChar_ = null;
+  var rktConnSetChar_ = null;
+  var rktFetchChar_ = null;
+  var rktBleConnected = false;
+  var rktFetchDone = false;
+  var rktFetchBuffer = [];
+
+  function setRocketBle(on) {
+    document.getElementById('dot-rktble').className = 'dot ' + (on ? 'dg' : 'dd');
+    document.getElementById('val-rktble').textContent = on ? 'connected' : 'off';
+    document.getElementById('btn-rktble').textContent = on ? 'Disconnect Rkt' : 'Rkt BLE';
+    document.getElementById('btn-rktble').style.background = on ? '#533' : '#353';
+    document.getElementById('btn-rktble').style.color = on ? '#faa' : '#8fa';
+  }
+
+  // Parse a BLE telem notification from the rocket.
+  // Format: sequence of [len u8][data: len bytes] records.
+  // data[0] = type byte. Types 0x00-0x7F = data pages; 0xAF = header record.
+  function onRktTelemNotify(buf) {
+    var dv = new DataView(buf);
+    var off = 0;
+    while (off + 1 < buf.byteLength) {
+      var recLen = dv.getUint8(off);
+      off++;
+      if (recLen === 0 || off + recLen > buf.byteLength) break;
+      var recData = buf.slice(off, off + recLen);
+      off += recLen;
+      var type = new Uint8Array(recData)[0];
+      if (type === 0xAF) {
+        // Header record: skip the type byte, pass the rest as a header-only packet
+        // so existing onLivePkt can decode the header fields.
+        // Build a minimal fake packet with just the header (no page data after it).
+        onLivePkt(recData, 0, 0, -1);  // snr=0,rssi=0,recNum=-1 (rocket direct, no LoRa)
+      } else {
+        // Data page record: wrap as a minimal packet for the existing decoder.
+        // onLivePkt expects a raw LoRa packet starting with 0xAF header.
+        // For individual page records from rocket BLE, decode the page inline.
+        // For now, wrap in a synthetic packet: use last known header + this page.
+        // Simpler: just pass the record data; the existing page decoder can handle it
+        // if we feed it as a page-only fragment.
+        // Build a synthetic LoRa-style packet: 10-byte zero header + page record
+        var synth = new Uint8Array(10 + recLen);
+        synth[0] = 0xAF;  // PKT_TELEMETRY type marker (header is all zeros = unknown)
+        synth.set(new Uint8Array(recData), 10);
+        onLivePkt(synth.buffer, 0, 0, -1);
+      }
+    }
+  }
+
+  async function rktReadStatus() {
+    if (!rktBleConnected || !rktStatusChar_) return;
+    try {
+      var val = await rktStatusChar_.readValue();
+      var dec = new TextDecoder();
+      var json = dec.decode(val.buffer);
+      var s = JSON.parse(json);
+      if (typeof s.logIdx === 'number') {
+        document.getElementById('val-rktlogrec').textContent = s.logIdx;
+      }
+      if (typeof s.batt === 'number') {
+        var be = document.getElementById('val-rktbatt');
+        be.textContent = s.batt + 'mV';
+        be.style.color = s.batt > 3500 ? '#0f0' : s.batt > 3300 ? '#ff0' : '#f44';
+      }
+    } catch (e) {
+      console.error('Rkt BLE status read failed:', e);
+    }
+  }
+
+  // Send command via rocket BLE
+  async function rktBleSendCommand(postBody) {
+    if (!rktBleConnected || !rktCmdChar_) return { ok: false, msg: 'Rocket BLE not connected' };
+    try {
+      await rktCmdChar_.writeValueWithResponse(postBody);
+      return { ok: true, msg: 'OK' };
+    } catch (e) {
+      return { ok: false, msg: e.message || 'Rkt BLE write failed' };
+    }
+  }
+
+  // Write ConnSet to rocket: set subscription interval in microseconds
+  async function rktSetInterval(intervalUs) {
+    if (!rktBleConnected || !rktConnSetChar_) return;
+    var buf = new Uint8Array(5);
+    buf[0] = RKT_CS_INTERVAL;
+    var dv = new DataView(buf.buffer);
+    dv.setUint32(1, intervalUs, true);
+    try { await rktConnSetChar_.writeValueWithoutResponse(buf); } catch (e) {}
+  }
+
+  // Write ConnSet to rocket: set PHY (0=1M, 1=2M, 2=Coded-S2, 3=Coded-S8)
+  async function rktSetPhy(phy) {
+    if (!rktBleConnected || !rktConnSetChar_) return;
+    var buf = new Uint8Array(2);
+    buf[0] = RKT_CS_PHY;
+    buf[1] = phy;
+    try { await rktConnSetChar_.writeValueWithoutResponse(buf); } catch (e) {}
+  }
+
+  // Fetch logs directly from rocket flash
+  async function rktFetchLogs(startRec, count, onProgress) {
+    if (!rktBleConnected || !rktFetchChar_) return false;
+    rktFetchDone = false;
+    var req = new Uint8Array(6);
+    var rdv = new DataView(req.buffer);
+    rdv.setUint32(0, startRec, true);
+    rdv.setUint16(4, count, true);
+    try {
+      await rktFetchChar_.writeValueWithResponse(req);
+      var timeout = 30000;
+      var start = Date.now();
+      var lastProg = Date.now();
+      while (!rktFetchDone && (Date.now() - start) < timeout) {
+        await new Promise(function(r) { setTimeout(r, 50); });
+        if (onProgress && Date.now() - lastProg > 400) {
+          lastProg = Date.now();
+          onProgress();
+        }
+      }
+      return rktFetchDone;
+    } catch (e) {
+      console.error('Rkt BLE fetch error:', e);
+      return false;
+    }
+  }
+
+  async function connectRocketBLE() {
+    if (rktBleConnected) {
+      if (rktDevice && rktDevice.gatt && rktDevice.gatt.connected) {
+        rktDevice.gatt.disconnect();
+      }
+      return;
+    }
+
+    if (!navigator.bluetooth) {
+      alert('Web Bluetooth not available. Use Chrome/Edge on HTTPS or localhost.');
+      return;
+    }
+
+    try {
+      rktDevice = await navigator.bluetooth.requestDevice({
+        filters: [
+          { services: [RKT_SERVICE_UUID] },
+          { namePrefix: 'Moonshot-Rocket' }
+        ],
+        optionalServices: [RKT_SERVICE_UUID]
+      });
+
+      rktDevice.addEventListener('gattserverdisconnected', function() {
+        rktBleConnected = false;
+        setRocketBle(false);
+        rktTelemChar_ = null; rktCmdChar_ = null;
+        rktStatusChar_ = null; rktConnSetChar_ = null; rktFetchChar_ = null;
+        console.log('Rocket BLE disconnected');
+      });
+
+      setRocketBle(false);
+      document.getElementById('val-rktble').textContent = 'connecting...';
+
+      rktServer_ = await rktDevice.gatt.connect();
+      var svc = await rktServer_.getPrimaryService(RKT_SERVICE_UUID);
+
+      rktTelemChar_   = await svc.getCharacteristic(RKT_TELEM_CHAR_UUID);
+      rktCmdChar_     = await svc.getCharacteristic(RKT_CMD_CHAR_UUID);
+      rktStatusChar_  = await svc.getCharacteristic(RKT_STATUS_CHAR_UUID);
+      rktConnSetChar_ = await svc.getCharacteristic(RKT_CONNSET_CHAR_UUID);
+      rktFetchChar_   = await svc.getCharacteristic(RKT_LOGFETCH_CHAR_UUID);
+
+      // Subscribe to telemetry notifications
+      await rktTelemChar_.startNotifications();
+      rktTelemChar_.addEventListener('characteristicvaluechanged', function(ev) {
+        onRktTelemNotify(ev.target.value.buffer);
+      });
+
+      // Subscribe to log fetch notifications
+      await rktFetchChar_.startNotifications();
+      rktFetchChar_.addEventListener('characteristicvaluechanged', function(ev) {
+        var buf = ev.target.value.buffer;
+        if (buf.byteLength === 0) {
+          rktFetchDone = true;
+          return;
+        }
+        // Parse [len][data] records from fetch stream
+        var dv = new DataView(buf);
+        var off = 0;
+        while (off + 1 < buf.byteLength) {
+          var recLen = dv.getUint8(off); off++;
+          if (recLen === 0 || off + recLen > buf.byteLength) break;
+          var payload = buf.slice(off, off + recLen);
+          off += recLen;
+          rktFetchBuffer.push(payload);
+        }
+      });
+
+      rktBleConnected = true;
+      setRocketBle(true);
+
+      // Read initial status
+      rktReadStatus();
+
+      console.log('Rocket BLE connected');
+
+    } catch (err) {
+      console.error('Rocket BLE connect failed:', err);
+      setRocketBle(false);
+      document.getElementById('val-rktble').textContent = err.message || 'failed';
+    }
+  }
+
   // NOTE: This WiFi AP has no internet. CDN scripts only work if the browser
   // has them cached from a previous session on a different network. Always
   // provide a fallback and a manual "load from cache" button.
@@ -1409,10 +1654,20 @@ function initCharts() {
     dv.setUint8(3, fullPkt.length);
     postBody.set(fullPkt, 4);
 
-    // Route: BLE if connected, else HTTP
-    if (bleConnected) {
+    // Route command based on selected transport
+    var transport = (document.getElementById('cmd-transport') || {}).value || 'auto';
+    var useRktBle   = (transport === 'rktble') && rktBleConnected;
+    var useBaseBle  = (transport === 'baseBle' || (transport === 'auto' && bleConnected)) && bleConnected;
+    var useHttp     = !useRktBle && !useBaseBle;
+
+    if (useRktBle) {
+      rktBleSendCommand(postBody).then(function(r) {
+        result.textContent += '\nRkt BLE: ' + (r.ok ? 'OK' : r.msg);
+        if (!r.ok) result.style.color = '#f80';
+      });
+    } else if (useBaseBle) {
       bleSendCommand(postBody).then(function(r) {
-        result.textContent += '\nBLE: ' + (r.ok ? 'OK' : r.msg);
+        result.textContent += '\nBase BLE: ' + (r.ok ? 'OK' : r.msg);
         if (!r.ok) result.style.color = '#f80';
       });
     } else {
@@ -2016,6 +2271,7 @@ function initCharts() {
     document.getElementById('btn-next').addEventListener('click', function() { fetchAutoNav=false; if(viewIdx>=0&&viewIdx<sessions.length-1)showView(viewIdx+1); });
     document.getElementById('btn-latest').addEventListener('click', function() { showView(-1); });
     document.getElementById('btn-ble').addEventListener('click', connectBLE);
+    document.getElementById('btn-rktble').addEventListener('click', connectRocketBLE);
     document.getElementById('btn-ws-reconnect').addEventListener('click', function() {
       // Save base URL to localStorage for next visit
       var url = document.getElementById('base-url').value.trim();

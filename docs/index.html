@@ -54,26 +54,75 @@
   .cmd-key-display{font-size:10px;color:#888;word-break:break-all;margin-top:2px}
   .mbtn{background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:2px 8px;font-size:10px;cursor:pointer}
   .mbtn.act{background:#063;color:#0f0;border-color:#0a0}
+  .sbar2{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:5px 8px;background:#111822;border:1px solid #234;border-radius:4px}
+  .rkt-section{background:#1a1a1a;border:1px solid #334;border-radius:4px;padding:6px 8px;margin-bottom:6px}
+  .rkt-section h3{font-size:11px;color:#4af;margin-bottom:4px}
+  .rkt-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px}
+  .rkt-row label{color:#888;font-size:11px}
+  .rkt-row select,.rkt-row input[type=checkbox]{background:#222;color:#eee;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:11px}
+  .mask-grid{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+  .mask-grid label{font-size:10px;color:#aaa;display:flex;align-items:center;gap:2px}
   @media(max-width:600px){.charts{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
 
+<!-- Base Station status row -->
 <div class="sbar">
   <div class="si"><span class="sl">Base:</span><input type="text" id="base-url" value="192.168.4.1" style="background:#222;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:11px;width:110px"><button id="btn-ws-reconnect" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;margin-left:2px">WS</button></div>
   <div class="si"><div class="dot dr" id="dot-ws"></div><span class="sl">WS:</span><span class="sv" id="val-ws">...</span></div>
   <div class="si"><div class="dot dd" id="dot-ble"></div><span class="sl">BLE:</span><span class="sv" id="val-ble">off</span></div>
   <button id="btn-ble" style="background:#335;color:#8af;border:1px solid #558;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">BLE</button>
-  <div class="si"><div class="dot dd" id="dot-rkt"></div><span class="sl">Rocket:</span><span class="sv" id="val-rkt">no pkts</span></div>
+  <div class="si"><div class="dot dd" id="dot-rkt"></div><span class="sl">Rocket via LoRa:</span><span class="sv" id="val-rkt">no pkts</span></div>
   <div class="si"><span class="sl">SNR:</span><span class="sv" id="val-snr-top">&mdash;</span></div>
   <div class="si"><span class="sl">Live:</span><span class="sv" id="val-cnt">0</span></div>
   <div class="si"><span class="sl">Flash#:</span><span class="sv" id="val-logrec">?</span></div>
-  <div class="si"><span class="sl">Battery:</span><span class="sv" id="val-basebatt">&mdash;</span></div>
-  <div class="si"><div class="dot dd" id="dot-rktble"></div><span class="sl">Rkt BLE:</span><span class="sv" id="val-rktble">off</span></div>
-  <button id="btn-rktble" style="background:#353;color:#8fa;border:1px solid #585;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Rkt BLE</button>
-  <div class="si"><span class="sl">Rkt Flash#:</span><span class="sv" id="val-rktlogrec">?</span></div>
-  <div class="si"><span class="sl">Rkt Batt:</span><span class="sv" id="val-rktbatt">&mdash;</span></div>
+  <div class="si"><span class="sl">Batt:</span><span class="sv" id="val-basebatt">&mdash;</span></div>
   <span id="phase" class="pb p-idle">IDLE</span>
+</div>
+<!-- Rocket Direct BLE status row -->
+<div class="sbar2">
+  <span style="font-size:11px;color:#4af;font-weight:bold">Rocket Direct:</span>
+  <div class="si"><div class="dot dd" id="dot-rktble"></div><span class="sl">BLE:</span><span class="sv" id="val-rktble">off</span></div>
+  <button id="btn-rktble" style="background:#353;color:#8fa;border:1px solid #585;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Rkt BLE</button>
+  <div class="si"><span class="sl">Flash#:</span><span class="sv" id="val-rktlogrec">?</span></div>
+  <div class="si"><span class="sl">Batt:</span><span class="sv" id="val-rktbatt">&mdash;</span></div>
+  <button id="btn-rkt-settings" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Settings &#9660;</button>
+</div>
+<!-- Rocket BLE ConnSet panel (hidden by default) -->
+<div id="rkt-settings-panel" class="rkt-section" style="display:none">
+  <h3>Rocket BLE Subscription Settings</h3>
+  <div class="rkt-row">
+    <label>Rate:</label>
+    <select id="rkt-rate">
+      <option value="0">Max (every loop)</option>
+      <option value="1000000">1 Hz</option>
+      <option value="500000">2 Hz</option>
+      <option value="200000">5 Hz</option>
+      <option value="100000" selected>10 Hz</option>
+      <option value="50000">20 Hz</option>
+      <option value="20000">50 Hz</option>
+      <option value="10000">100 Hz</option>
+      <option value="5000">200 Hz</option>
+      <option value="2000">500 Hz</option>
+      <option value="1000">1000 Hz</option>
+    </select>
+    <button id="btn-rkt-rate" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Set Rate</button>
+    <label style="margin-left:8px">PHY:</label>
+    <select id="rkt-phy">
+      <option value="0">1M</option>
+      <option value="1" selected>2M</option>
+      <option value="2">Coded-S2</option>
+      <option value="3">Coded-S8</option>
+    </select>
+    <button id="btn-rkt-phy" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Set PHY</button>
+  </div>
+  <div class="rkt-row"><label>Page mask:</label>
+    <button id="btn-rkt-mask-all" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer">All</button>
+    <button id="btn-rkt-mask-none" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer">None</button>
+    <button id="btn-rkt-mask-send" style="background:#333;color:#0f0;border:1px solid #555;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer">Send Mask</button>
+  </div>
+  <div class="mask-grid" id="rkt-mask-grid"></div>
 </div>
 
 <div class="grid" id="grid"></div>
@@ -84,7 +133,8 @@
   <button id="btn-prev" disabled>&lt;</button>
   <span id="sess-info">Live</span>
   <button id="btn-next" disabled>&gt;</button>
-  <button id="btn-latest" class="act">Live</button>
+  <button id="btn-live-base" class="act">Live Base</button>
+  <button id="btn-live-rkt">Live Rkt</button>
   <span style="font-size:10px;color:#666" id="fst"></span>
   <button id="btn-cdn">Charts</button>
   <button id="btn-detail">Detail</button>
@@ -412,8 +462,11 @@
 
   var MAX_PTS = 600;
   var livePktCount = 0, lastPktMs = 0, serverUptimeMs = 0, serverSyncClockMs = 0;
+  var rktUptimeMs = 0, rktSyncClockMs = 0;  // rocket's own boot clock (from status char)
   var fullGpsLat = null, fullGpsLon = null, pages = {};
-  var sessions = [], viewIdx = -1, liveRecs = [], fetchAbort = false;
+  // Two separate live session stores. viewIdx=-1 means live; liveSource='base' or 'rkt'.
+  var sessions = [], viewIdx = -1, liveSource = 'base';
+  var baseLiveRecs = [], rktLiveRecs = [], fetchAbort = false;
   var allFetched = {}, fetchedLowest = Infinity, fetchedHighest = -1;
   var dlSession = []; // LoRa download session — all 0xCA records accumulate here
   var fetchSpeedRecs = 0, fetchSpeedBytes = 0, fetchSpeedStartMs = 0;
@@ -544,14 +597,15 @@ function initCharts() {
   function tickDots(){var now=Date.now();for(var k in pageTimes){var age=(now-pageTimes[k])/1000;var dot=document.getElementById('d-'+k);if(!dot)continue;var c;if(age<2)c=lerpColor('#00ff00','#ffff00',(age)/2);else if(age<15)c=lerpColor('#ffff00','#ff4400',(age-2)/13);else if(age<60)c=lerpColor('#ff4400','#ff0000',(age-15)/45);else c='#444444';dot.style.background=c;dot.style.opacity=Math.max(0.3,Math.exp(-age/30))}var rd=document.getElementById('dot-rkt'),rv=document.getElementById('val-rkt');if(!livePktCount){rd.className='dot dd';rv.textContent='no pkts'}else{var a=(Date.now()-lastPktMs)/1000;if(a<3){rd.className='dot dg';rv.textContent=a.toFixed(1)+'s'}else if(a<15){rd.className='dot dy';rv.textContent=a.toFixed(0)+'s'}else{rd.className='dot dr';rv.textContent=a.toFixed(0)+'s'}}}
   setInterval(tickDots, 100);
   function setWs(on){document.getElementById('dot-ws').className='dot '+(on?'dg':'dr');document.getElementById('val-ws').textContent=on?'connected':'disconnected'}
-  function setSNR(s){var e=document.getElementById('val-snr-top');e.textContent=s.toFixed(1)+'dB';e.style.color=s>5?'#0f0':s>0?'#ff0':s>-5?'#f80':'#f44'}
+  function setSNR(s){var e=document.getElementById('val-snr-top');if(s===127){e.textContent='--';e.style.color='#555';return}e.textContent=s.toFixed(1)+'dB';e.style.color=s>5?'#0f0':s>0?'#ff0':s>-5?'#f80':'#f44'}
 
   function decodeTelem(buf){var dv=new DataView(buf);if(dv.byteLength<10||dv.getUint8(0)!==0xAF)return null;var r={dev:dv.getUint8(1),latF:dv.getUint16(2,1),lonF:dv.getUint16(4,1),altM:dv.getInt16(6,1),flags:dv.getUint16(8,1),pg:null};if(dv.byteLength>10){var pt=dv.getUint8(10);var df=PD[pt];if(df&&dv.byteLength>=11+df.s)r.pg={t:pt,d:df.d(dv,11)}}return r}
   function fmtGpsFrac(v){if(v===65535)return'NOT_POWERED';if(v===65534)return'INIT';if(v===65533)return'NO_FIX';if(v>=50000)return'Err:'+v;return'#.'+(v*2+'').padStart(5,'0')}
   function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='pb p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8&&toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null])}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
 
-  function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);document.getElementById('btn-latest').className=viewIdx===-1?'act':'';var info;if(viewIdx===-1){info='Live'+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+sessions[viewIdx].length+')'}document.getElementById('sess-info').textContent=info}
-  function showView(idx){viewIdx=idx;clearCharts();document.getElementById('log').innerHTML='';updateNav();var recs=idx===-1?liveRecs:sessions[idx];for(var i=0;i<recs.length;i++){var r=recs[i];showRecord(r,true,false);addLogRec(r,idx!==-1)}}
+  function getLiveRecs(){return liveSource==='rkt'?rktLiveRecs:baseLiveRecs}
+  function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);document.getElementById('btn-latest').className=viewIdx===-1?'act':'';var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+sessions[viewIdx].length+')'}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
+  function showView(idx){viewIdx=idx;clearCharts();document.getElementById('log').innerHTML='';updateNav();var recs=idx===-1?getLiveRecs():sessions[idx];for(var i=0;i<recs.length;i++){var r=recs[i];showRecord(r,true,false);addLogRec(r,idx!==-1)}}
   function addLogRec(rec,hist){
     var bytes=new Uint8Array(rec.payload);var hex=toHex(bytes);
     var el=document.getElementById('log');var e=document.createElement('div');e.className='le';
@@ -561,7 +615,7 @@ function initCharts() {
     if(hist)el.appendChild(e);else el.insertBefore(e,el.firstChild);
     while(el.children.length>1000)el.removeChild(hist?el.firstChild:el.lastChild);
   }
-  function onLivePkt(buf,snr,rssi,recNum){livePktCount++;lastPktMs=Date.now();document.getElementById('val-cnt').textContent=livePktCount;document.getElementById('val-logrec').textContent=recNum;setSNR(snr);var bootMs=serverUptimeMs+(Date.now()-serverSyncClockMs);var rec={recNum:recNum,snr:snr,rssi:rssi,ts:bootMs,payload:buf,type:'pkt'};liveRecs.push(rec);if(liveRecs.length>MAX_PTS)liveRecs.shift();showPkt(buf,snr,rssi,bootMs,viewIdx===-1,true);if(viewIdx===-1){addLogRec(rec,false)}mapAddPt(buf,snr,rssi,recNum);}
+  function onLivePkt(buf,snr,rssi,recNum){livePktCount++;lastPktMs=Date.now();document.getElementById('val-cnt').textContent=livePktCount;if(recNum>=0)document.getElementById('val-logrec').textContent=recNum;setSNR(snr);var bootMs=serverUptimeMs+(Date.now()-serverSyncClockMs);var rec={recNum:recNum,snr:snr,rssi:rssi,ts:bootMs,payload:buf,type:'pkt'};baseLiveRecs.push(rec);if(baseLiveRecs.length>MAX_PTS)baseLiveRecs.shift();showPkt(buf,snr,rssi,bootMs,viewIdx===-1&&liveSource==='base',true);if(viewIdx===-1&&liveSource==='base'){addLogRec(rec,false)}mapAddPt(buf,snr,rssi,recNum);}
 
   // =============================================================
   // 0xCA LOG CHUNK DECODER (LoRa download from rocket)
@@ -1082,12 +1136,18 @@ function initCharts() {
     document.getElementById('btn-rktble').style.color = on ? '#faa' : '#8fa';
   }
 
+  // Cached last header record from rocket BLE (10-byte: [0xAF][devId][latF u16][lonF u16][altM s16][flags u16])
+  var rktLastHeader = null;  // ArrayBuffer of the last 0xAF record data (including type byte)
+
   // Parse a BLE telem notification from the rocket.
   // Format: sequence of [len u8][data: len bytes] records.
   // data[0] = type byte. Types 0x00-0x7F = data pages; 0xAF = header record.
+  // Header records update rktLastHeader and the main header card.
+  // Data page records go directly to showLogPage (no synthetic 0xAF wrapping).
   function onRktTelemNotify(buf) {
     var dv = new DataView(buf);
     var off = 0;
+    var rktBootMs = rktUptimeMs + (Date.now() - rktSyncClockMs);
     while (off + 1 < buf.byteLength) {
       var recLen = dv.getUint8(off);
       off++;
@@ -1096,22 +1156,23 @@ function initCharts() {
       off += recLen;
       var type = new Uint8Array(recData)[0];
       if (type === 0xAF) {
-        // Header record: skip the type byte, pass the rest as a header-only packet
-        // so existing onLivePkt can decode the header fields.
-        // Build a minimal fake packet with just the header (no page data after it).
-        onLivePkt(recData, 0, 0, -1);  // snr=0,rssi=0,recNum=-1 (rocket direct, no LoRa)
+        // Header record — update header card and cache it.
+        // recData starts with 0xAF so it matches the expected layout for decodeTelem/showPkt.
+        rktLastHeader = recData;
+        // Store header-only packet in rkt live recs; recData IS the correct 0xAF-prefixed buffer.
+        var rec = {recNum: -1, snr: 127, rssi: -130, ts: rktBootMs, payload: recData, type: 'pkt'};
+        rktLiveRecs.push(rec);
+        if (rktLiveRecs.length > MAX_PTS) rktLiveRecs.shift();
+        // Update header card (pass recData which starts with 0xAF — no page portion)
+        showPkt(recData, 127, -130, rktBootMs, viewIdx === -1 && liveSource === 'rkt', true);
+        if (viewIdx === -1 && liveSource === 'rkt') addLogRec(rec, false);
       } else {
-        // Data page record: wrap as a minimal packet for the existing decoder.
-        // onLivePkt expects a raw LoRa packet starting with 0xAF header.
-        // For individual page records from rocket BLE, decode the page inline.
-        // For now, wrap in a synthetic packet: use last known header + this page.
-        // Simpler: just pass the record data; the existing page decoder can handle it
-        // if we feed it as a page-only fragment.
-        // Build a synthetic LoRa-style packet: 10-byte zero header + page record
-        var synth = new Uint8Array(10 + recLen);
-        synth[0] = 0xAF;  // PKT_TELEMETRY type marker (header is all zeros = unknown)
-        synth.set(new Uint8Array(recData), 10);
-        onLivePkt(synth.buffer, 0, 0, -1);
+        // Data page record — decode the page directly (recData[0]=pageType, rest=payload)
+        var rec = {recNum: -1, snr: 127, rssi: -130, ts: rktBootMs, payload: recData, type: 'logpage'};
+        rktLiveRecs.push(rec);
+        if (rktLiveRecs.length > MAX_PTS) rktLiveRecs.shift();
+        showLogPage(recData, 127, rktBootMs, viewIdx === -1 && liveSource === 'rkt', true);
+        if (viewIdx === -1 && liveSource === 'rkt') addLogRec(rec, false);
       }
     }
   }
@@ -1130,6 +1191,11 @@ function initCharts() {
         var be = document.getElementById('val-rktbatt');
         be.textContent = s.batt + 'mV';
         be.style.color = s.batt > 3500 ? '#0f0' : s.batt > 3300 ? '#ff0' : '#f44';
+      }
+      // Sync rocket boot clock for correct x-axis on charts
+      if (typeof s.uptime === 'number') {
+        rktUptimeMs = s.uptime;
+        rktSyncClockMs = Date.now();
       }
     } catch (e) {
       console.error('Rkt BLE status read failed:', e);
@@ -2269,9 +2335,61 @@ function initCharts() {
     document.getElementById('btn-stop').addEventListener('click', function() { fetchAbort = true; });
     document.getElementById('btn-prev').addEventListener('click', function() { fetchAutoNav=false; if(viewIdx>0)showView(viewIdx-1);else if(viewIdx===-1&&sessions.length)showView(sessions.length-1); });
     document.getElementById('btn-next').addEventListener('click', function() { fetchAutoNav=false; if(viewIdx>=0&&viewIdx<sessions.length-1)showView(viewIdx+1); });
-    document.getElementById('btn-latest').addEventListener('click', function() { showView(-1); });
+    document.getElementById('btn-live-base').addEventListener('click', function() { liveSource='base'; showView(-1); });
+    document.getElementById('btn-live-rkt').addEventListener('click', function() { liveSource='rkt'; showView(-1); });
     document.getElementById('btn-ble').addEventListener('click', connectBLE);
     document.getElementById('btn-rktble').addEventListener('click', connectRocketBLE);
+
+    // Rocket BLE settings panel toggle
+    document.getElementById('btn-rkt-settings').addEventListener('click', function() {
+      var p = document.getElementById('rkt-settings-panel');
+      p.style.display = p.style.display === 'none' ? 'block' : 'none';
+      this.textContent = p.style.display === 'none' ? 'Settings \u25BC' : 'Settings \u25B2';
+    });
+
+    // Build page mask checkboxes (pages 1-16)
+    (function() {
+      var PAGE_NAMES = {1:'GPS Full',2:'Baro',3:'Mag',4:'Accel',5:'Gyro',6:'GPS Ext',7:'Kalman',8:'System',9:'Peaks',10:'Cmd Ack',11:'Flight',12:'Radio',13:'Time'};
+      var g = document.getElementById('rkt-mask-grid');
+      var h = '';
+      for (var i = 1; i <= 16; i++) {
+        var nm = PAGE_NAMES[i] || ('Pg'+i);
+        h += '<label><input type="checkbox" class="rkt-mask-cb" data-page="'+i+'" '+(i<=13?'checked':'')+'>'+nm+'</label>';
+      }
+      g.innerHTML = h;
+    })();
+
+    document.getElementById('btn-rkt-rate').addEventListener('click', function() {
+      var us = parseInt(document.getElementById('rkt-rate').value) || 0;
+      rktSetInterval(us);
+    });
+    document.getElementById('btn-rkt-phy').addEventListener('click', function() {
+      var phy = parseInt(document.getElementById('rkt-phy').value);
+      rktSetPhy(phy);
+    });
+    document.getElementById('btn-rkt-mask-all').addEventListener('click', function() {
+      document.querySelectorAll('.rkt-mask-cb').forEach(function(cb){ cb.checked = true; });
+    });
+    document.getElementById('btn-rkt-mask-none').addEventListener('click', function() {
+      document.querySelectorAll('.rkt-mask-cb').forEach(function(cb){ cb.checked = false; });
+    });
+    document.getElementById('btn-rkt-mask-send').addEventListener('click', function() {
+      // Build 64-bit mask as two 32-bit halves (bit N = page N+1, page 1 = bit 1)
+      var lo = 0, hi = 0;
+      document.querySelectorAll('.rkt-mask-cb').forEach(function(cb) {
+        var pg = parseInt(cb.dataset.page);
+        if (cb.checked && pg >= 1 && pg <= 32) lo |= (1 << pg);
+        else if (cb.checked && pg >= 33 && pg <= 63) hi |= (1 << (pg - 32));
+      });
+      var buf = new Uint8Array(9);
+      buf[0] = RKT_CS_PAGEMASK;
+      var dv = new DataView(buf.buffer);
+      dv.setUint32(1, lo, true);
+      dv.setUint32(5, hi, true);
+      if (rktBleConnected && rktConnSetChar_) {
+        rktConnSetChar_.writeValueWithoutResponse(buf).catch(function(e) { console.error('mask send failed', e); });
+      }
+    });
     document.getElementById('btn-ws-reconnect').addEventListener('click', function() {
       // Save base URL to localStorage for next visit
       var url = document.getElementById('base-url').value.trim();
