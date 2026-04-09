@@ -604,7 +604,7 @@ function initCharts() {
   function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='pb p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8&&toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null])}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
 
   function getLiveRecs(){return liveSource==='rkt'?rktLiveRecs:baseLiveRecs}
-  function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);document.getElementById('btn-latest').className=viewIdx===-1?'act':'';var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+sessions[viewIdx].length+')'}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
+  function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+sessions[viewIdx].length+')'}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
   function showView(idx){viewIdx=idx;clearCharts();document.getElementById('log').innerHTML='';updateNav();var recs=idx===-1?getLiveRecs():sessions[idx];for(var i=0;i<recs.length;i++){var r=recs[i];showRecord(r,true,false);addLogRec(r,idx!==-1)}}
   function addLogRec(rec,hist){
     var bytes=new Uint8Array(rec.payload);var hex=toHex(bytes);
@@ -1139,15 +1139,24 @@ function initCharts() {
   // Cached last header record from rocket BLE (10-byte: [0xAF][devId][latF u16][lonF u16][altM s16][flags u16])
   var rktLastHeader = null;  // ArrayBuffer of the last 0xAF record data (including type byte)
 
+  // Cached last header record from rocket BLE (ArrayBuffer starting with 0xAF)
+  var rktLastHeader = null;
+
   // Parse a BLE telem notification from the rocket.
-  // Format: sequence of [len u8][data: len bytes] records.
-  // data[0] = type byte. Types 0x00-0x7F = data pages; 0xAF = header record.
-  // Header records update rktLastHeader and the main header card.
-  // Data page records go directly to showLogPage (no synthetic 0xAF wrapping).
+  // PDU format: [captureUs u64 LE][records...]
+  // Each record: [len u8][data: len bytes], data[0]=type.
+  // Types 0x00-0x7F = data pages; 0xAF = header record.
+  // captureUs is the rocket's micros() at capture time — used as x-axis (ms).
+  // All records in one PDU share the same capture timestamp.
   function onRktTelemNotify(buf) {
+    if (buf.byteLength < 9) return;  // need at least 8-byte ts + 1 record byte
     var dv = new DataView(buf);
-    var off = 0;
-    var rktBootMs = rktUptimeMs + (Date.now() - rktSyncClockMs);
+    // Read capture timestamp as two u32 halves (JS has no u64)
+    var tsLo = dv.getUint32(0, true);
+    var tsHi = dv.getUint32(4, true);
+    // Convert microseconds to milliseconds for chart x-axis
+    var captureMs = (tsHi * 4294967.296 + tsLo / 1000);
+    var off = 8;
     while (off + 1 < buf.byteLength) {
       var recLen = dv.getUint8(off);
       off++;
@@ -1156,22 +1165,17 @@ function initCharts() {
       off += recLen;
       var type = new Uint8Array(recData)[0];
       if (type === 0xAF) {
-        // Header record — update header card and cache it.
-        // recData starts with 0xAF so it matches the expected layout for decodeTelem/showPkt.
         rktLastHeader = recData;
-        // Store header-only packet in rkt live recs; recData IS the correct 0xAF-prefixed buffer.
-        var rec = {recNum: -1, snr: 127, rssi: -130, ts: rktBootMs, payload: recData, type: 'pkt'};
+        var rec = {recNum: -1, snr: 127, rssi: -130, ts: captureMs, payload: recData, type: 'pkt'};
         rktLiveRecs.push(rec);
         if (rktLiveRecs.length > MAX_PTS) rktLiveRecs.shift();
-        // Update header card (pass recData which starts with 0xAF — no page portion)
-        showPkt(recData, 127, -130, rktBootMs, viewIdx === -1 && liveSource === 'rkt', true);
+        showPkt(recData, 127, -130, captureMs, viewIdx === -1 && liveSource === 'rkt', true);
         if (viewIdx === -1 && liveSource === 'rkt') addLogRec(rec, false);
       } else {
-        // Data page record — decode the page directly (recData[0]=pageType, rest=payload)
-        var rec = {recNum: -1, snr: 127, rssi: -130, ts: rktBootMs, payload: recData, type: 'logpage'};
+        var rec = {recNum: -1, snr: 127, rssi: -130, ts: captureMs, payload: recData, type: 'logpage'};
         rktLiveRecs.push(rec);
         if (rktLiveRecs.length > MAX_PTS) rktLiveRecs.shift();
-        showLogPage(recData, 127, rktBootMs, viewIdx === -1 && liveSource === 'rkt', true);
+        showLogPage(recData, 127, captureMs, viewIdx === -1 && liveSource === 'rkt', true);
         if (viewIdx === -1 && liveSource === 'rkt') addLogRec(rec, false);
       }
     }
