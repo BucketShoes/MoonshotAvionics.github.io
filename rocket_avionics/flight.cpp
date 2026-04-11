@@ -375,8 +375,10 @@ static void checkApogeeDetect(unsigned long nowUs) {
 
   if (!flightState.baroFast.valid || !flightState.prevBaroFastValid) return;
 
-  // Apogee = fast EMA is lower than previous loop's value (sustained descent)
-  if (flightState.baroFast.valueCm < flightState.prevBaroFastCm) {
+  // Apogee = fast EMA is not rising vs previous loop (flat or falling).
+  // Strictly increasing means we're still climbing; flat means topped out.
+  // A venturi spike would have resumed climbing after settling, so won't be flat.
+  if (flightState.baroFast.valueCm <= flightState.prevBaroFastCm) {
     flightState.apogeeEntryUs = nowUs;
     enterPhase(PHASE_DROGUE, nowUs);
   }
