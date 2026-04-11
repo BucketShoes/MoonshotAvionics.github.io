@@ -666,7 +666,8 @@ void setup() {
   analogSetAttenuation(ADC_11db);
   readBaseBattery();
 
-  if (!LittleFS.begin()) Serial.println("LittleFS mount failed — run LittleFS Data Upload");
+  if (!LittleFS.begin(false, "/littlefs", 10, "littlefs")) Serial.println("LittleFS mount failed — run LittleFS Data Upload");
+  else Serial.println("LittleFS mounted ok");
 
   logStoreOk = logStore.begin("log_data", "log_index", "bs_log");
   Serial.print("logStore: "); Serial.println(logStoreOk ? "OK" : "FAIL");
