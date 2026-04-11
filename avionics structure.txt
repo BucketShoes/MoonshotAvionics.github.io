@@ -1,0 +1,12 @@
+there are two main systems for flight decisions and telemetry: a simple reliable model, and a fancy model.
+
+the simple model will be vertical only, using be a basic EMA on barometer for altitude, and accelerometer threshold for launch detect
+these will be used for ground altitude, apogee detection for pyro deployment, and AGL for chute release; with launch timers for backup 
+disallow apogee detection before a certain time of boost/coast after launch; and expect it no later than a certain time else fire pyro anyway.
+require a minimum acceleration threshold for a sustained time, and a minimum altitude rise to allow launch detection (backdated to actual start of boost), otherwise do not fire.
+Avionics decisions for chute release/pyro charge will require the rocket to first be armed with the arming command, and require a launch detection (there are also commands for ground testing of charges/reeleases, to be sent on command, while armed)
+
+the fancy model is a full sensor fusion imu, for fun, diagnostics, and debug. it's much less reliable, and when poorly tuned may have more failure modes, but the expectation is it will usually be more acurate for post-flight analysis.
+No avionics desisions or flight controls will be based on the fancy model.
+
+Telemetry packet headers will use the reliable model. other data pages may use the fancy model

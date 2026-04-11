@@ -1,0 +1,23 @@
+Voice callouts have 2 modes, the normal real mode, with real info, and "Moonshot" voice mode - which will say fake data for fun, sounding like it's going into orbit and to the moon (which is silly for a model rocket).
+The moonshot voice mode only applies to the voice callouts, not any graphs or logs, etc.
+
+The voice callouts should be:
+"Armed" (or "FTS is armed for launch" in moonshot mode) - the first time either the armed bit is true or the flight phase is armed
+
+"Ready to launch" (or "Moonshot is ready to launch" in moonshot mode) - every time a telemetry packet has flight phase=armed but only if this callout hasn't been said in the last 30 seconds
+
+"Boost" (or "Max Q" in moonshot mode) - the first time flight phase is boost.
+
+"Coast" (or "Stage 2 ignition" in moonshot mode) - the first time the flight phase is coast
+
+"Apogee at X meters" (or "Nominal orbit X kilometers", where X is really in meters, not km) - the first time either: a peaks page comes in during flight state 4 to 8; or the first time a peaks page comes in with a peak at least 30m higher than the current fusion alt in the same packet while armed=true (note that the fields are in different units, cm vs m), callout the peak MSL in whole meters (not abbreviated, just rounded)
+
+"X meters" (or "TLI burn X seconds") - after we've said the apogee callout, every telemetry packet with flight phase 5 to 7 (drogue to descent), so long as there's not already anything speaking - dont queue if already speaking. X is the altitude in meters using abbreviated numbers (even for the tli callout, which says 'seconds', its meters) ,
+
+"Landed"  (or "Trans-lunar injection complete" in moonshot mode) - the first time flight phase is landed.
+
+"Disarmed" (or "FTS is safe" in moonshot mode) - the first packet with armed=false after saying armed message. - this also resets all the other flags for "the first time that..." above.
+
+"Low Battery" (or "Solar Panel Deployment Failed" in moonshot mode) - every time a telemetry packet with low battery flag true or a system health page with batterymv<3300, if not said within the last 60 seconds.
+
+The 'abbreviated numbers' means 0-20 are just the whole number. 21-99 are the first digit, then a zero, e.g. 39 say "30", 72 say "70". Anything 100-9999 is round(number/100), then the word hundred, e.g. 590 say "6 hundred", or 3406 say "34 hundred". Over 10,000 just output the whole number and let the tts decide naturally. Negative has "minus " prefix. This distinction between digits vs string words should help the voice TTS work better saying lots of numbers fast.

@@ -1,0 +1,11 @@
+Channel mapping - channels mostly match vs lorawan channels AU915, with some exceptions
+channel 0-63 are bw125 at 915.2MHz-927.8MHz in 200KHz increments
+channel 64-71 are bw500 at 915.9MHz-927.1MHz in 1.6MHz steps
+channel 96+ will be reserved for other usage, like FSK or other modulations
+
+Later, the plan will be to use a hopping system - the rocket will hop where it transmits, the base/relays will stay in sync
+The hopping sequence will also change BW, SF and Frequency, not just avoiding single frequency, but also to have occasional long-range signals in amongs the higher data rate/less agressive airtime usage channels, sending shorter-range signals, e.g. have no data page on a narrow bw high sf message with just the basic gps and a few flags.
+Commands might also have a similar system, but will spend most of its time listening on only a few radio settings. Its more acceptable to not hop as much for commands, since they are sent so rarely, even though we need to decide where to listen, it will generally listen on a specific channel most of the time (setting to control which channel, in NVS; but rarely changed)
+The intention is to syncronise to GPS time so everyone can sync and know when to expect packets and where to listen. rocket with no gps can just guess time=0, and listeners can just wait on a particular channel unytil they hear something to sync up. (or a command can tell it the time)
+Perfect timing should  also allow better ability to sleep between time windows for longer battery after landing.
+

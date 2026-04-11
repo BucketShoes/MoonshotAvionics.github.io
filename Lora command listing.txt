@@ -1,0 +1,108 @@
+COMMAND LIST
+All commands use packet type 0x9A. Every command has a target device ID in the packet header.
+Devices ignore commands not matching their ID, or with a nonce less than or equal to the highest nonce seen in a valid command seen so far.
+HMAC SHA-256 covers payload excluding the hmac bytes themselves, i.e. type + target ID + command ID + nonce + params. Truncated to 10 bytes. Keys in firmware/NVS on rockets/relays/bases; PBKDF in JS (password entered by user but never sent to server), with salt "moonshot-hmac-salt" (ascii)
+
+Channel mapping mostly matches vs lorawan channels AU915, with some exceptions"
+Channel 0-63 are bw125 at 915.2MHz-927.8MHz in 200KHz increments
+Channel 64-71 are bw500 at 915.9MHz-927.1MHz in 1.6MHz steps
+Channel 96+ will be reserved for other usage, like FSK or other modulations
+
+
+Rocket commands (only meaningful to rockets, bases/relays just log, no implementation/parsing):
+```
+0x01  ARM
+      Params: none
+      Effect: transition to armed state, activate buzzer, set log protection point at 60 seconds before now (i.e. logs from then onwards wont overwrite until disarm and then re-arm at a different point. log ring buffer just stops logging when full)
+
+0x02  DISARM
+      Params: none
+      Effect: transition to idle state (logs stay protected), deactivate buzzer.
+      Refused if pyro/chute active/energized or any in-progress action (must wait for them to finish, or de-energize).
+
+0x03  FIRE PYRO/CHUTE
+      Params: uint8 channel (pyro1=1,pryo2=2,chute=3), uint16 duration ms
+      Effect: energise pyro MOSFET for specified duration. 
+      Requires armed state. Non-blocking: sets GPIO high, 
+      main loop turns it off after duration expires. This is intended for ground testing. normal pyro/chute will be automatic trigger
+      Refused if not armed.
+
+0x10  SET TX RATE
+      Params: int8 rate
+      Positive: Hz (1-127). Negative: seconds between packets 
+      (+1 = -1 = 1s = 1Hz, -10 = 10s = 0.1Hz +10 = 10Hz, -128 = 128sec).
+      Zero: stop transmitting regular normal telemetry (may still tx even when disabled, e.g. tx a telem packet with the command ack page, immediately after any command).
+
+0x12  SET ROCKET RADIO (rocket variant)
+      Params: uint8 primary channel index, uint8 SF, int8 TX power dBm
+      Effect: changes rocket radio settings. No backhaul channel for rocket. Persistent until next set radio. Stored to NVS
+      Note: the base station sending this must independently change its own radio to match if it wants to keep hearing the rocket. JS handles this by sending a separate command to the base if desired.
+```
+
+Base station/relay commands (acted on by bases and relays, rockets dont implement):
+```
+0x30  SET RELAY RADIO (base station/relay variant)
+      Params: 
+      uint8 primary channel index,
+      uint8 primary SF,
+      int8  primary TX power dBm
+      uint8 backhaul channel index,
+      uint8 backhaul SF,
+      int8  backhaul TX power dBm
+      Effect: changes radio settings on the target base/relay.
+      Persistent until next set radio. Stored to persistent NVS
+      TODO: set BW - or is that from chanel >64=500, <64=125? with same layout as lorawan
+
+0x31  ENABLE WIFI
+      Params: none
+      Effect: starts WiFi AP and HTTP/WebSocket server.
+
+0x32  DISABLE WIFI
+      Params: none
+      Effect: stops WiFi AP. Device re-enables WiFi on next power cycle.
+```
+
+Commands for any device type (rockets and bases/relays both handle):
+```
+0x20  LOG DOWNLOAD
+      Params: 
+      int32 start record index 
+              0 = arm protection reference point on rocket / 0 = boot reference point on relay,
+              negative = that many records before the reference point, positive is after this boot/this prot
+      uint16 requested record count,
+      uint8 download channel index,
+      uint8 download SF,
+      uint8 download BwCode/Modulation
+            Values up to 15 are LoRa Bandwidth: 0=500kHz,1=250,2=125,3=62.5,4=41.7, 5=31.25, 6=20.8, 7=15.6, 8=10.4, 9=7.8
+            (values 16+ reserved for other modulations, 16=FSK on max speed settings BW467Khz, 300kbps, 150kHz deviation, gaussian shaping BT=0.5)
+      int8 download TX power dBm
+Effect: target device switches to download radio settings, waits 10ms (both sides need time to switch) then begins sending log chunks (0xCA) as fast as possible in multiple packets.
+      Sends requested records in multiple chunks sized to fit multiple whole records in each radio packet. After sending all requested records, 
+      waits for more 0x20 requests on download channel, then reverts to normal radio after a few seconds of silence (no further LOG DOWNLOAD commands received on the download channel) - Rocket reverts after 3 seconds, base/relay reverts after 2 seconds, or may revert sooner if known all recieved.
+      Telemetry is paused during download session, and will resume afterwards (this also means no command ack page until completion - if multiple requests are sent, only the last will get an ack, in normal telemetry after download session finishes)
+      During a session, modulation must not be changed. the 10ms wait is only on starting a session. 
+      On the sender's side (base station): after transmitting this command on primary, immediately switches own radio to the download settings to listen for chunks then reverts or sends more commands on the download channel.
+      Other commands are blocked during this mode.
+      Refused if target is armed (rocket only) - this interupts the main system for too long, and is bandwidth heavy. base station reciever needs to be careful of http/tcp limits (gated by JS requesting more only after recieving each piece).
+      Note: Typically sent on primary at SF7/125 at normal power, switch to SF12/BW500 in low power - used for short-range downloads. Low power due to high airtime, should usually be short range only.
+      Usually only request approx 400ms worth of logs at a time.
+      Other BwCodes should be ignored if unknown.
+      
+      
+0x40  PING
+      Params: none
+      Effect: rocket target includes an ack data page (0x0A) in its next telemetry packets (rocket does no special action, commands cause the ack anyway)
+      bases/relays immediately send this packet on backhaul verbatim (since it has this relay as the target, others will ignore it, and also the nonce will be invalid next time so even mis-numbered id's will stop and cannot storm)
+      Mainly for link testing.
+
+0xF0  REBOOT
+      Params: none
+      Effect: software restart.
+      WiFi re-enables on boot (base/relay).
+      Refuse if armed (for rocket)
+
+0xF1  LOG ERASE
+      Params: none
+      Effect: resets log ring buffer — clears log index/log data partitions, resets record counter to 0. (This is needed before 4gb of log writes, otherwise logging stops). Only logs are cleared, config is kept as-is.
+      Refused if armed (rocket).
+```

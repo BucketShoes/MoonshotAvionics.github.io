@@ -1,0 +1,262 @@
+PACKET TYPES (0x80-0xFF)
+These define the over-the-air and over-WebSocket message framing. The type byte values are chosen to be unlikely to appear by coincidence in unrelated traffic.
+```
+0xAF  Telemetry packet - a compact minimal value for every packet, followed by one data page which cycles through different pages each time
+      uint8   type (0xAF)
+      uint8   device ID (rocket)
+      uint16  GPS lat fractional (0.00002° steps within 
+              nearest degree cell, 65535=invalid fix)
+      uint16  GPS lon fractional (0.00002° steps, >50000 for error: GPS_FRAC_NO_FIX=65533, GPS_FRAC_INITIALISING=65534, GPS_FRAC_NOT_POWERED=65535)
+      int16   Fusion altitude, meters MSL (-32768 = invalid)
+      uint16  state flags
+              [3:0]   flight phase (0=idle, 1=armed, 2=boost,
+                      3=coast, 4=apogee, 5=drogue, 
+                      6=main_deploy, 7=descent, 8=landed,
+                      15=error)
+              [4]    armed
+              [5]    pyro/chute ch1 fired/released
+              [6]    pyro/chute ch2 fired/released
+              [7]    pyro/chute ch3 fired/released
+              [8]    low battery
+              [9:15] reserved
+      --- 10 bytes fixed, then optionally: ---
+      uint8   data page type ID
+      (N bytes data page payload, size determined by type ID)
+      --- total 10 bytes (no page) to ~21 bytes (10-byte page) ---
+
+0x9A  Command packet
+      uint8   type (0x9A)
+      uint8   target device ID
+      uint8   command ID (see command list)
+      uint32  nonce (monotonic, never reused, stored in NVS)
+      (0-N bytes command params, depends on command ID)
+      uint8[10]  HMAC-SHA256 truncated to 10 bytes
+                 (computed over all previous bytes)
+      --- total 17 bytes (no params) to 25 bytes (8 bytes params) ---
+
+0xE2  Backhaul envelope (relay → base, on backhaul channel, transmitted by relays occasionally, on backhaul channel)
+      uint8   type (0xE2)
+      --- relay current state (8 bytes) ---
+      uint8   relay device ID
+      uint8   relay battery (encoded mV)
+      uint8   relay primary channel index
+      uint8   relay backhaul channel index
+      uint32  relay current time, ms since boot
+      --- latest recieved packet (from log format) ---
+      (N bytes, as per log format - this will be the latest log that is a telemetry packet, excluding length but including its SNR and timestamp)
+      --- total: 9 + N bytes ---
+
+0xCA  Log download chunk (used during lora log download sessions only, typically with different radio settings, streamed to WebSocket by base station when recieved)
+      uint8   type (0xCA)
+      uint8   source device ID
+      uint32  start record index (absolute, monotonic)
+      uint8   record count in this chunk
+      (N bytes: concatenated flash records, each with their 
+       own length/type/timestamp/payload as stored in flash)
+      --- total: 7 + N bytes, N limited by radio packet size ---
+```
+
+DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but can also be logged directly, include details from specific sensors)
+```
+0x01  Raw GPS position (10 bytes)
+      int32   lat, degrees × 1e7
+      int32   lon, degrees × 1e7
+      uint8   HDOP × 10
+      uint8   sats
+
+0x02  Baro + filtered vertical velocity (6 bytes)
+      int32   baro alt, cm MSL
+      int16   filtered vertical velocity, 0.1 m/s
+      int16   ground level for AGL calculation, rounded whole meters (internally tracked in cm), set at first baro reading or at arming time
+
+0x03  Magnetometer (6 bytes)
+      int16   x, milligauss
+      int16   y, milligauss
+      int16   z, milligauss
+
+0x04  Accelerometer 3-axis (6 bytes)
+      int16   x, milli-g
+      int16   y, milli-g
+      int16   z, milli-g
+
+0x05  Gyroscope 3-axis (6 bytes)
+      int16   x, 0.1 deg/s
+      int16   y, 0.1 deg/s
+      int16   z, 0.1 deg/s
+
+0x06  GPS extra + full-res altitude (10 bytes)
+      uint16  ground speed, cm/s
+      uint16  course, 0.01 degrees
+      uint8   fix age, 100ms units (255 = stale/unknown)
+      uint8   VDOP × 10
+      int32   GPS alt, cm MSL (full resolution)
+
+0x07  Kalman filter state (10 bytes)
+      int32   alt estimate, cm AGL
+      int16   vel estimate, 0.1 m/s
+      uint8   alt uncertainty, log scale: sigma = exp(val/50) cm
+      uint8   vel uncertainty, log scale: sigma = exp(val/50) 0.1m/s
+      uint8   accel uncertainty, log scale
+      uint8   innovation, log scale
+
+0x08  System health (11 bytes)
+      int8    board temp, °C
+      uint16  free heap, KB
+      uint16  uptime, seconds (wraps at 65535)
+      uint16  battery, mV
+      uint32  virtual index of latest log record counter in ring buffer storage, may exceed ring/storage size. logs can no longer write after maxvalue, needs manual reset.
+
+
+0x09  Peak values since arm (8 bytes)
+      int32   max altitude, cm MSL
+      uint16  max acceleration, 0.01g
+      int16   max vertical velocity, 0.1 m/s
+
+0x0A  Command ack + signal quality (9 bytes)
+      uint32  last command nonce
+      uint8   last command result (0=OK, nonzero=error code)
+      int8    command RSSI, dBm
+      int8    command SNR, dB × 4
+      uint16  invalid HMAC count (command packets received that failed HMAC validation)
+
+0x0B  Flight status (6 bytes)
+      int32   ms since launch detect (-1 = not launched)
+      uint16  pyro/chute flags
+              [0] pyro ch1 continuity
+              [1] pyro ch1 fired
+              [2] pyro ch1 active (currently energised)
+              [3] pyro ch2 continuity
+              [4] pyro ch2 fired
+              [5] pyro ch2 active (currently energised)
+              [6] chute release continuity
+              [7] chute release fired
+              [8] chute release active (currently energised)
+              [9:15] reserved
+
+
+0x0C  Radio health (5 bytes)
+      uint16  delayed TX count (times TX was postponed due to 
+              channel busy)
+      uint16  invalid RX count (packets received that failed 
+              validation — wrong type, wrong device ID, bad CRC, 
+              etc)
+      int8    background RSSI, dB (average only measured when not transmitting and when no command incoming - to estimate channel noise outside of packet times)
+
+0x0D  Timestamp (8 bytes)
+     uint64   UTC time, ms since 1/1/1970
+
+
+0x10-0x7F  Reserved for future data pages and log-only types
+           (log-only types are recorded to flash but usually not transmitted as part of regular telemetry pages — e.g. raw sensor dumps, debug data, future high-rate IMU logs)
+```
+
+
+LOG FORMAT:
+```
+uint8   length (payload bytes, excluding log header, 0-254. 0xFF = erased/end marker)
+int8    SNR (dBm, from radio reception. 0x7F = not from radio / locally generated)
+uint32  timestamp (ms since boot on the device which generated/received it)
+--- then length bytes of payload (starting with type byte, <=0x7F is raw data page, >=0x80 is recieved packet) ---
+
+```
+
+
+FLASH INDEX ENTRY (4 bytes):
+```
+uint32  data partition virtual offset of the first record in this 256-record chunk. The N-th index entry points to the address of the (N*256)th data record.
+        (this virtual pointer will exceed the size of the ring buffer after it has looped. Chunks requested more than ringsize bytes before the current log position are refused as overwritten, although indexes may still exist pointing to nonexisting data). 0xFFFFFFFF = unused/erased/end of log marker.
+```
+
+In general, values clamp at their min/max unless otherwise stated.
+
+
+BLE GATT SERVICES AND CHARACTERISTICS:
+
+Two independent BLE GATT services exist — one on the base station and one on the rocket.
+The browser page can connect to both simultaneously (Chrome/Edge Web Bluetooth).
+
+--- Base Station BLE Service ---
+Service UUID:  4d4f4f4e-5348-4f54-4253-000000000000
++
+  Char 0001 (NOTIFY) — Telemetry stream
+    Same binary framing as WebSocket messages from the base station.
+    Each notification is one WebSocket-equivalent message:
+      float32  SNR, dB (little-endian)
+      float32  RSSI, dBm (little-endian)
+      int32    flash record number (little-endian)
+      (N bytes) packet payload — either a 0xAF telemetry packet or 0xCA log chunk
+    SNR/RSSI sentinel: 0x7F (127) = no radio path (locally generated/BLE-originated).
+    Max notification size: limited by negotiated ATT MTU.
+
+  Char 0002 (WRITE WITH RESPONSE) — Command
+    Write: raw binary command packet (same 0x9A format as over-the-air, see above).
+    Read after write: single byte result code (0x00 = accepted, nonzero = error).
+
+  Char 0003 (READ) — Status JSON
+    Equivalent to GET /api/status over HTTP.
+    Returns JSON: {"uptimeMs":N,"records":N,"oldest":N,"baseBattMv":N,"nonce":N}
+    uptimeMs: base station milliseconds since boot (for chart x-axis sync).
+    nonce: highest command nonce seen (client should use nonce+1 for next command).
+
+  Char 0004 (WRITE | NOTIFY) — Log fetch
+    Write: [startRec u32 LE][count u16 LE] — request a range of flash records.
+    Notifications: stream of log records in same format as GET /api/logs HTTP response:
+      uint32  record number (little-endian)
+      uint8   payload length
+      int8    SNR (dB, 0x7F = local/no-radio)
+      uint32  timestamp ms since boot (little-endian)
+      (N bytes) payload (starts with type byte)
+    Empty notification (0 bytes) = end of requested range.
+
+--- Rocket Direct BLE Service ---
+Service UUID:  524f434b-4554-5354-424c-000000000000
+Advertised name prefix: "Moonshot-Rocket"
+Default connection: 2M PHY, 10 Hz subscription rate on connect.
+
+  Char 0001 (NOTIFY) — Telemetry stream
+    Different from base station. No SNR/RSSI wrapper. Each notification:
+      uint64  capture timestamp, microseconds since rocket boot (little-endian)
+              This is the time the data was captured, not sent. Re-inserted into
+              every PDU when draining a multi-packet capture, so all records from
+              one capture share the same timestamp regardless of delivery latency.
+      (records...) sequence of [len u8][data: len bytes] record entries
+              data[0] = type byte
+              len includes the type byte (e.g. len=11 → 1 type + 10 data bytes)
+              Types 0x00-0x7F = raw data pages (same layout as data page formats above)
+              Type 0xAF = telemetry header record (same 10-byte fixed layout as 0xAF
+                          packet header, but WITHOUT any trailing data page — page
+                          records follow separately as individual [len][type+data] entries)
+    Records are whole only per notification — no record is split across notifications.
+    Max notification payload: BLE_MAX_PDU bytes (502, config.h).
+    SNR/RSSI: not present. Use sentinel value 127 (LOG_SNR_LOCAL) for any SNR/RSSI field.
+
+  Char 0002 (WRITE WITH RESPONSE) — Command
+    Same binary format as the 0x9A command packet (see above), same HMAC authentication.
+    No read-back result byte (unlike base station char 0002); result is reported via
+    the 0x0A Cmd Ack data page on char 0001. 
+TODO: @@@@ - this is wrong - it should be reported directly via the service (the 0x0A is a separate mechanism).
+When we eventually combine services/chars, this will still be separate from the base, since bases can talk to any rocket, but this is talking directly to the rocket its talking to.
+
+  Char 0003 (READ) — Status JSON
+    Returns JSON: {"logIdx":N,"batt":N,"armed":true/false,"uptime":N}
+    uptime: rocket milliseconds since boot.
+    logIdx: current flash record counter.
+    batt: battery millivolts.
+
+  Char 0004 (WRITE | WRITE WITHOUT RESPONSE) — Connection settings (ConnSet)
+    Write a single command byte followed by parameters:
+      0x01 [intervalUs u32 LE]  — set subscription interval in microseconds
+                                  (0 = every loop / max rate)
+      0x02 [maskLo u32 LE][maskHi u32 LE]  — set 64-bit page subscription mask
+                                  bit N = include page type N (e.g. bit 1 = GPS Full 0x01)
+                                  default: bits 1-13 set (all defined data pages)
+      0x03 [phy u8]             — set PHY: 0=1M, 1=2M, 2=Coded-S2, 3=Coded-S8
+                                  default: 2M (1) on connect
+
+  Char 0005 (WRITE WITH RESPONSE | NOTIFY) — Log fetch
+    Same request/response format as base station char 0004, but records are in
+    the rocket's own [len][data] wire format (no SNR/timestamp header per record —
+    the payload is the raw data page or packet payload as stored in the rocket flash).
+    Empty notification (0 bytes) = end of requested range.
+TODO: @@@ this is wrong - the logs should each include the relevant timestamp from the log (this isnt the current time, its the time it was logged).
+TODO: it should also include the logged snr/rssi, same as base station does - although for the rocket, the majority of these are expected to be the sentinel 127, since most logs are locally generated - i.e. this is identical format to the base station char0004, except the interpretation differs because its a log from the rocket, rather than a log from the base station, so will be from a different log record index and different timestamp since boot (if they booted at different times and had different other logs before this)
