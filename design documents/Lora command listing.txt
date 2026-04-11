@@ -1,7 +1,7 @@
 COMMAND LIST
 All commands use packet type 0x9A. Every command has a target device ID in the packet header.
 Devices ignore commands not matching their ID, or with a nonce less than or equal to the highest nonce seen in a valid command seen so far.
-HMAC SHA-256 covers payload excluding the hmac bytes themselves, i.e. type + target ID + command ID + nonce + params. Truncated to 10 bytes. Keys in firmware/NVS on rockets/relays/bases; PBKDF in JS (password entered by user but never sent to server), with salt "moonshot-hmac-salt" (ascii)
+HMAC SHA-256 covers payload excluding the hmac bytes themselves, i.e. type + target ID + command ID + nonce + params. Truncated to 10 bytes. Keys in firmware/NVS on rockets/relays/bases; PBKDF in JS (password entered by user but never sent to server), with salt "Moonshot-HMAC-SALT" (ascii)
 
 Channel mapping mostly matches vs lorawan channels AU915, with some exceptions"
 Channel 0-63 are bw125 at 915.2MHz-927.8MHz in 200KHz increments
