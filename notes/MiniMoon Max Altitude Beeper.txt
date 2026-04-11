@@ -1,0 +1,80 @@
+MiniMoon Max Altitude Beeper
+
+CR2032 coin cell holder & cell (on bottom)
+ATTINY10 (1KB flash, 32 bytes ram)
+BMP280/BMP388/BMP390 or LPS22HB/LPS22DF - i2c barometer with readings in hPa
+a shared bypass capacitor
+Piezo for buzzer
+Pads/castelation for TPI - VCC,GND,TPICLK,TPIDATA,RESET - and PB3 for the heck of it
+
+
+start baro 388:
+setup for medium resolution and quick filter, 4hz continuous sampling , with 4x overampling (16 samples per second, output in groups of 4)
+i think that needs:
+standard res osr_p=010 (x4 osp, 18bit)
+iir filter coefficient=1 (80% in 2samples)
+f sampling =4hz? or 16hz?
+normal mode mode[1:0]=11
+ODR=4hz
+
+
+WDT wake every 250ms (4hz)
+tim0=2khz, output onto PB0 for buzzer
+buzzer on/off controlled by either active or sleep idle vs sleep powerdown
+i.e. tim0 always connected to buzzer, but only makes noise if tim0 is running
+might cause short clicks every 250mz while active for a few ms - can cleanup laterif needed
+
+
+
+ISR: 
+bitbang I2C for getting latest available baro reading from baro regiaters
+if pressure below lowest seen, then save it to min tracking
+if ground reading is not yet set, then set it (first reading after power loss is ground)
+(the ISR usually wakes the mcu from sleep - at end of ISR, normal active mode continues)
+
+
+main processing
+read pressure from tracked min
+convert to altitude ((x>>8)*136)>>8 for 8.5meters/hPa valid for sea level - 136 as constant at top for different target alt, e.g. 10.6m/hpa at 10k ft
+beep out each digit of altitude, then pause, then next digit; repeat; then long pause
+loop
+
+pinout
+1=PB0=TPICLK/SCL
+2=GND
+3=PB1=TPIDATA
+4=PB2=SDA
+5=VCC
+6=PB3=^RESET
+(SCL clocks during programming, no data address match so no effect - during programming, internal attiny pullups unavailable - TPI programmer tool must set PB2 pin high or low to prevent address match - or just yolo it)
+
+RESET has separate connection to battery +, remove battery for programming (multiple pads under cell holder)
+?can reset hold itself high? pullup? even during reset? an external pulls low to reset, but can we hold high when released?
+?looks like it has a pullup before even the spike filter
+
+settings:
+1mhz system clock (1/8 divider on 8mhz internal) - mostly just so we can say it has strictly less performance than apollo guidance computer, which had 72kb rom, 4kb ram,2mhz clock
+CLSMS[1:0]=0b00 (select 8mhz internal)
+CLKPSR prescale for div8 = 0011 (default)
+
+turn off analog comparator and adc
+
+turn on wdt
+
+SMCR= sleep mode control - 000x=idle, 010x=power down 100x=standby
+we want with tim0 and without tim0; always with wdt
+last bit = 1 to enable sleep when sleep instruction executed
+
+PRR power reduction = 0b10 disable adc (keep timer0 - although this stops during power down anyway, this makes it resume on wake)
+?might control this? (or control output compare settings directly for buzzer on/off?
+
+
+VLM off
+
+WDTCSR control status reg
+WDTCSR=01001100 (wdif=0 int flag, wdie=1 int enable,wdp3=0,4=reserved0,wde=1 enable,wdp2=1, wdp1=0,wdp0=0)
+wdp3210=0100 (div 32768=0.25 sec)
+
+
+vlmcsr=0? =default not needed
+

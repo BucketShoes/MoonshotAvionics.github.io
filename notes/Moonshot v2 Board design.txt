@@ -1,0 +1,20 @@
+This project is the v1 Moonshot. Currently using Heltec Wireless Tracker (ESP32S3FN8, SX1262 )
+
+This document is for v2 plans/ideas for Moonshot v2 Board design
+
+
+
+Once initial version working smoothly, next version will be live active control avionics.
+Although the current version has pyro charges and chute release, which are safety critical, for deployment when it should (otherwise it lands on someone), to not deploy when it shouldnt (otherwise it explodes near someone) and to turn off once done (otherwise it catches fire) - so its still critical to keep non blocking in main loop.
+However the current approach leaves several structural issues meaning its unfit for active control either for aero fins or TVS. Although its usually under 1ms, it's not always under 1ms main loop with 100% consistency, which is needed for realtime control.
+
+Assuming logs were moved, v1 is 99.9% reliable, v2 should be for 100% - but thats a lot more work.
+
+Consistency issues:
+- Main issue is flash erase - currently, with XIP, and logging to a ring buffer, whenever a new sector is erased, the XIP stalls. Investigate moving this to IRAM, and/or moving logs to separate storage.
+- code separation between cores - need to investigate what runs where, and make sure theres one core dedicated for main loop, and one for everything else - or move to a coporocessor idea
+- coporocessor - one for logs, lora, ble, wifi, etc; and another for flight critical path
+- define exactly what is fliught critical path - currently lora is very central, but although its important, it's not worth stalling the flight system to get lora going.
+- separation of busses - move everything critical to SPI, and no non-critical on the same bus (or critical path controls them, and offloads them)
+- low-work communication to coprocessor - is uart good? send logs, recieve state updates/commands?
+- possibly stm32 for primary flight computer? - because they are all single core, they have a few extra ways to 100% guarentee consistency (but not for flash - that can be multiple seconds in larger sectors)

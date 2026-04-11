@@ -1,0 +1,45 @@
+moonshot pcb:
+accel 100g/200g
+gyro fast
+baro low rms noise
+mag sensitive kalman
+gps neo-m9n-00B  vin 2.7v-3.6v
++ cheap gps
+
+
+buck/vreg (diode? to isolate usb from 3s lipo - no charger, external charging)
+TPS562201DDCR=IC REG BUCK ADJ 2A SOT23 4.5v-17vin; 1L,2R,3C (adj) -find 3v in?
+1 inductor + 3caps + 2resistors for buck
+sx1262 lora+ant
+esp32
+pins
+2.4ghz ant
+
+2 buttons (rst, user)
+2 led
+batt connector
+vdiv for vbatt (& fet for enable? or just a weak divider?)
+gps backup power on main vcc for quick lock (ubx is 1.65v back, even needing 2.7v vcc)
+
+3.0v?
+
+
+
+
+
+
+
+kalman imu:
+gyro+mag for world orientation; accelerometer for world movement; high rate/precise timing to map orientation to accelerometers 
+baro for alt msl
+state for baro/gps alt drift/calibration - option to force calibrated height msl (solve for weather? or input weather? - solve for sensor inaccuracy?)
+
+
+UBX-NAV-COV - covariance matricies in north, east, down - for position and velocity
+?? if i have their covariances, can i put that into my own kalman to improve how i consider gps vs other imu sensors?
+would the internals of a gps use a kalman on position, or would it be more of a kalman with states for all the distances for all satelites to solve? what kind of math solves for a gps position from satelites, and how do different netwoeks effect the results?
+
+
+
+coin cell backup? needs to be out of circuit most of the time - no charge/discharge - keep rtc? or just get new rtc for hopping from gps
+-nah, no backup batt
