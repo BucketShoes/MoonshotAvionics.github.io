@@ -462,6 +462,7 @@ void handleApiLogs(AsyncWebServerRequest *req) {
 void onWsEvent(AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void *a, uint8_t *d, size_t l) {
   if (t == WS_EVT_CONNECT) { Serial.print("WS+ #"); Serial.println(c->id()); }
   else if (t == WS_EVT_DISCONNECT) { Serial.print("WS- #"); Serial.println(c->id()); }
+  else { Serial.print("WS evt="); Serial.println((int)t); }
 }
 
 // ===================== BLE CALLBACKS =====================
@@ -697,22 +698,29 @@ void setup() {
 
 
   // WiFi AP
+  Serial.println("WiFi: setting mode...");
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(WIFI_SSID, WIFI_PASS, WIFI_CHANNEL);
+  Serial.println("WiFi: starting softAP...");
+  bool apOk = WiFi.softAP(WIFI_SSID, WIFI_PASS, WIFI_CHANNEL);
+  Serial.print("WiFi: softAP result="); Serial.println(apOk);
   Serial.print("AP: "); Serial.println(WiFi.softAPIP());
 
   httpServer.on("/", HTTP_GET, [](AsyncWebServerRequest *r){
+    Serial.println("HTTP GET /");
     AsyncWebServerResponse *resp = r->beginResponse(LittleFS, "/index.html.gz", "text/html");
+    if (!resp) { r->send(503, "text/plain", "LittleFS not mounted"); return; }
     resp->addHeader("Content-Encoding", "gzip");
     r->send(resp);
   });
   httpServer.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *r){
     AsyncWebServerResponse *resp = r->beginResponse(LittleFS, "/style.css.gz", "text/css");
+    if (!resp) { r->send(503, "text/plain", "LittleFS not mounted"); return; }
     resp->addHeader("Content-Encoding", "gzip");
     r->send(resp);
   });
   httpServer.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *r){
     AsyncWebServerResponse *resp = r->beginResponse(LittleFS, "/app.js.gz", "application/javascript");
+    if (!resp) { r->send(503, "text/plain", "LittleFS not mounted"); return; }
     resp->addHeader("Content-Encoding", "gzip");
     r->send(resp);
   });
