@@ -10,10 +10,10 @@
 
 <!-- Sticky top bar: phase, batteries, LoRa timer -->
 <div class="sticky-top">
-  <span id="phase-sticky" class="st-phase p-idle">IDLE</span>
-  <div class="st-item"><span class="st-label">BaseBatt:</span><span class="st-val" id="val-basebatt-sticky">&mdash;</span></div>
-  <div class="st-item"><span class="st-label">RktBatt:</span><span class="st-val" id="val-rktbatt-sticky">&mdash;</span></div>
-  <div class="st-item"><div class="dot dd" id="dot-rkt-sticky"></div><span class="st-label">LoRa:</span><span class="st-val" id="val-rkt-sticky">no pkts</span></div>
+  <span id="phase" class="st-phase p-idle">IDLE</span>
+  <div class="st-item"><span class="st-label">BaseBatt:</span><span class="sv" id="val-basebatt">&mdash;</span></div>
+  <div class="st-item"><span class="st-label">RktBatt:</span><span class="sv" id="val-rktbatt">&mdash;</span></div>
+  <div class="st-item"><div class="dot dd" id="dot-rkt"></div><span class="st-label">LoRa:</span><span class="sv" id="val-rkt">no pkts</span></div>
 </div>
 
 <!-- Base Station status row -->
@@ -22,7 +22,6 @@
   <div class="si"><div class="dot dr" id="dot-ws"></div><span class="sl">WS:</span><span class="sv" id="val-ws">...</span></div>
   <div class="si"><div class="dot dd" id="dot-ble"></div><span class="sl">BLE:</span><span class="sv" id="val-ble">off</span></div>
   <button id="btn-ble" style="background:#335;color:#8af;border:1px solid #558;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">BLE</button>
-  <div class="si"><div class="dot dd" id="dot-rkt"></div><span class="sl">LoRa:</span><span class="sv" id="val-rkt">no pkts</span></div>
   <div class="si"><span class="sl">SNR:</span><span class="sv" id="val-snr-top">&mdash;</span></div>
   <div class="si"><span class="sl">Live:</span><span class="sv" id="val-cnt">0</span></div>
   <div class="si"><span class="sl">Flash#:</span><span class="sv" id="val-logrec">?</span></div>
