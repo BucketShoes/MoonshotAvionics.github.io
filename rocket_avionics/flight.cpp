@@ -167,6 +167,7 @@ static void updateBaroStability(unsigned long nowUs) {
 
 static void updateGpsStability(unsigned long nowUs) {
   SensorStability& s = flightState.gpsStab;
+//TODO: @@@@ GPS stability isnt actually checked yet.
 
   // GPS is tracked for errors but not required for arming.
   // "Stale" for GPS is also 1 second without a reading, but only track if GPS has started.
@@ -358,35 +359,24 @@ static void checkCoastDetect(unsigned long nowUs) {
 }
 
 // --- Apogee detection (COAST -> DROGUE) ---
-// Two conditions (either triggers):
-//   A: Fast baro EMA decreasing vs previous loop AND 3s min since boost/coast entry
-//   B: Fast baro EMA has dropped >= 100cm from its peak (handles fast suck-test releases)
+// Fast baro EMA (1s period) is decreasing vs previous loop.
+// 3s minimum after boost/coast entry: covers baro noise during boost and the
+// supersonic-to-subsonic transition (pressure spike right after burnout while
+// still climbing). After that lockout, a single loop-to-loop decrease fires apogee.
+// Loop-to-loop comparison is more robust than drop-from-peak: a venturi/suction
+// spike reads falsely high then snaps back, which looks like a descent from peak
+// but not a sustained decrease — the EMA absorbs the snap-back before it starts
+// truly decreasing.
 
 static void checkApogeeDetect(unsigned long nowUs) {
-  if (!flightState.baroFast.valid) return;
+  // Minimum time since boost/coast entry (covers boost noise and trans-sonic)
+  if (flightState.boostEntryUs == 0) return;
+  if ((nowUs - flightState.boostEntryUs) < 3000000UL) return;
 
-  // Track peak fast EMA
-  if (!flightState.peakBaroFastValid ||
-      flightState.baroFast.valueCm > flightState.peakBaroFastCm) {
-    flightState.peakBaroFastCm = flightState.baroFast.valueCm;
-    flightState.peakBaroFastValid = true;
-  }
+  if (!flightState.baroFast.valid || !flightState.prevBaroFastValid) return;
 
-  // Condition A: decreasing vs previous loop, after 3s min
-  bool condA = false;
-  if (flightState.boostEntryUs != 0 &&
-      (nowUs - flightState.boostEntryUs) >= 3000000UL &&
-      flightState.prevBaroFastValid) {
-    condA = (flightState.baroFast.valueCm < flightState.prevBaroFastCm);
-  }
-
-  // Condition B: dropped >= 100cm from peak (catches fast pressure reversal)
-  bool condB = false;
-  if (flightState.peakBaroFastValid) {
-    condB = (flightState.peakBaroFastCm - flightState.baroFast.valueCm) >= 100.0f;
-  }
-
-  if (condA || condB) {
+  // Apogee = fast EMA is lower than previous loop's value (sustained descent)
+  if (flightState.baroFast.valueCm < flightState.prevBaroFastCm) {
     flightState.apogeeEntryUs = nowUs;
     enterPhase(PHASE_DROGUE, nowUs);
   }
@@ -662,7 +652,6 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   flightState.mainDeployEntryUs = 0;
   flightState.launchDetectUs = 0;
   flightState.prevBaroFastValid = false;
-  flightState.peakBaroFastValid = false;
   flightState.msSinceLaunch = -1;
 
   // Reset landing trackers

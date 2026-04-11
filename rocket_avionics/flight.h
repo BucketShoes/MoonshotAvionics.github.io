@@ -213,9 +213,6 @@ struct FlightState {
   float prevBaroFastCm;
   bool prevBaroFastValid;
 
-  // Peak fast baro EMA seen during coast (for apogee detection: drop from peak)
-  float peakBaroFastCm;
-  bool peakBaroFastValid;
 
   // Sensor stability trackers
   SensorStability accelStab;
