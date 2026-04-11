@@ -120,12 +120,14 @@ static void buildPage01(uint8_t* buf, size_t* pos) {
   writeU8(buf, pos, gps.valid ? gps.sats : 0);
 }
 
-// Page 0x02: Baro + filtered vertical velocity (6 bytes)
+// Page 0x02: Baro + filtered vertical velocity (8 bytes)
 static void buildPage02(uint8_t* buf, size_t* pos) {
   int32_t altCmMSL = baroData.valid ? baroData.altCmMSL : 0;
   writeS32(buf, pos, altCmMSL);
   int16_t vvel = baroData.valid ? baroData.vvel10 : 0;
   writeS16(buf, pos, vvel);
+  int16_t groundM = baroData.valid ? (int16_t)(baroData.groundAltCm / 100) : 0;
+  writeS16(buf, pos, groundM);
 }
 
 // Page 0x03: Magnetometer (6 bytes)
