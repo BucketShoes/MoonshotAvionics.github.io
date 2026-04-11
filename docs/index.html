@@ -8,26 +8,31 @@
 </head>
 <body>
 
+<!-- Sticky top bar: phase, batteries, LoRa timer -->
+<div class="sticky-top">
+  <span id="phase-sticky" class="st-phase p-idle">IDLE</span>
+  <div class="st-item"><span class="st-label">BaseBatt:</span><span class="st-val" id="val-basebatt-sticky">&mdash;</span></div>
+  <div class="st-item"><span class="st-label">RktBatt:</span><span class="st-val" id="val-rktbatt-sticky">&mdash;</span></div>
+  <div class="st-item"><div class="dot dd" id="dot-rkt-sticky"></div><span class="st-label">LoRa:</span><span class="st-val" id="val-rkt-sticky">no pkts</span></div>
+</div>
+
 <!-- Base Station status row -->
 <div class="sbar">
   <div class="si"><span class="sl">Base:</span><input type="text" id="base-url" value="192.168.4.1" style="background:#222;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:11px;width:110px"><button id="btn-ws-reconnect" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;margin-left:2px">WS</button></div>
   <div class="si"><div class="dot dr" id="dot-ws"></div><span class="sl">WS:</span><span class="sv" id="val-ws">...</span></div>
   <div class="si"><div class="dot dd" id="dot-ble"></div><span class="sl">BLE:</span><span class="sv" id="val-ble">off</span></div>
   <button id="btn-ble" style="background:#335;color:#8af;border:1px solid #558;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">BLE</button>
-  <div class="si"><div class="dot dd" id="dot-rkt"></div><span class="sl">Rocket via LoRa:</span><span class="sv" id="val-rkt">no pkts</span></div>
+  <div class="si"><div class="dot dd" id="dot-rkt"></div><span class="sl">LoRa:</span><span class="sv" id="val-rkt">no pkts</span></div>
   <div class="si"><span class="sl">SNR:</span><span class="sv" id="val-snr-top">&mdash;</span></div>
   <div class="si"><span class="sl">Live:</span><span class="sv" id="val-cnt">0</span></div>
   <div class="si"><span class="sl">Flash#:</span><span class="sv" id="val-logrec">?</span></div>
-  <div class="si"><span class="sl">Batt:</span><span class="sv" id="val-basebatt">&mdash;</span></div>
-  <span id="phase" class="pb p-idle">IDLE</span>
 </div>
 <!-- Rocket Direct BLE status row -->
 <div class="sbar2">
   <span style="font-size:11px;color:#4af;font-weight:bold">Rocket Direct:</span>
-  <div class="si"><div class="dot dd" id="dot-rktble"></div><span class="sl">BLE:</span><span class="sv" id="val-rktble">off</span></div>
+  <div class="si"><div class="dot dd" id="dot-rktble"></div><span class="sl">RktBLE:</span><span class="sv" id="val-rktble">off</span></div>
   <button id="btn-rktble" style="background:#353;color:#8fa;border:1px solid #585;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Rkt BLE</button>
-  <div class="si"><span class="sl">Flash#:</span><span class="sv" id="val-rktlogrec">?</span></div>
-  <div class="si"><span class="sl">Batt:</span><span class="sv" id="val-rktbatt">&mdash;</span></div>
+  <div class="si"><span class="sl">RktFlash#:</span><span class="sv" id="val-rktlogrec">?</span></div>
   <button id="btn-rkt-settings" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Settings &#9660;</button>
 </div>
 <!-- Rocket BLE ConnSet panel (hidden by default) -->
@@ -36,17 +41,17 @@
   <div class="rkt-row">
     <label>Rate:</label>
     <select id="rkt-rate">
-      <option value="0">Max (every loop)</option>
       <option value="1000000">1 Hz</option>
       <option value="500000">2 Hz</option>
-      <option value="200000">5 Hz</option>
-      <option value="100000" selected>10 Hz</option>
+      <option value="200000" selected>5 Hz</option>
+      <option value="100000">10 Hz</option>
       <option value="50000">20 Hz</option>
       <option value="20000">50 Hz</option>
       <option value="10000">100 Hz</option>
       <option value="5000">200 Hz</option>
       <option value="2000">500 Hz</option>
       <option value="1000">1000 Hz</option>
+      <option value="0">Max (every loop)</option>
     </select>
     <button id="btn-rkt-rate" style="background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer">Set Rate</button>
     <label style="margin-left:8px">PHY:</label>
