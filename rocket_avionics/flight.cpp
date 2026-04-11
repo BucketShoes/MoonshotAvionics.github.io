@@ -358,18 +358,35 @@ static void checkCoastDetect(unsigned long nowUs) {
 }
 
 // --- Apogee detection (COAST -> DROGUE) ---
-// Fast baro EMA (1s period) has decreased from previous value.
-// Minimum time from first boost/coast entry: 3000ms
+// Two conditions (either triggers):
+//   A: Fast baro EMA decreasing vs previous loop AND 3s min since boost/coast entry
+//   B: Fast baro EMA has dropped >= 100cm from its peak (handles fast suck-test releases)
 
 static void checkApogeeDetect(unsigned long nowUs) {
-  // Minimum time since boost/coast entry
-  if (flightState.boostEntryUs == 0) return;
-  if ((nowUs - flightState.boostEntryUs) < 3000000UL) return;
+  if (!flightState.baroFast.valid) return;
 
-  if (!flightState.baroFast.valid || !flightState.prevBaroFastValid) return;
+  // Track peak fast EMA
+  if (!flightState.peakBaroFastValid ||
+      flightState.baroFast.valueCm > flightState.peakBaroFastCm) {
+    flightState.peakBaroFastCm = flightState.baroFast.valueCm;
+    flightState.peakBaroFastValid = true;
+  }
 
-  // Apogee = fast EMA is lower than previous loop's value
-  if (flightState.baroFast.valueCm < flightState.prevBaroFastCm) {
+  // Condition A: decreasing vs previous loop, after 3s min
+  bool condA = false;
+  if (flightState.boostEntryUs != 0 &&
+      (nowUs - flightState.boostEntryUs) >= 3000000UL &&
+      flightState.prevBaroFastValid) {
+    condA = (flightState.baroFast.valueCm < flightState.prevBaroFastCm);
+  }
+
+  // Condition B: dropped >= 100cm from peak (catches fast pressure reversal)
+  bool condB = false;
+  if (flightState.peakBaroFastValid) {
+    condB = (flightState.peakBaroFastCm - flightState.baroFast.valueCm) >= 100.0f;
+  }
+
+  if (condA || condB) {
     flightState.apogeeEntryUs = nowUs;
     enterPhase(PHASE_DROGUE, nowUs);
   }
@@ -645,6 +662,7 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   flightState.mainDeployEntryUs = 0;
   flightState.launchDetectUs = 0;
   flightState.prevBaroFastValid = false;
+  flightState.peakBaroFastValid = false;
   flightState.msSinceLaunch = -1;
 
   // Reset landing trackers
