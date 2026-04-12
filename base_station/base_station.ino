@@ -8,6 +8,7 @@
 #include <mbedtls/md.h>
 #include <NimBLEDevice.h>
 #include <LittleFS.h>
+#include <esp_ota_ops.h>
 #include "log_store.h"
 #include "esp_wifi.h"
 
@@ -33,6 +34,11 @@
 #define LORA_SYNCWORD 0x12
 
 #define DEVICE_ID     157
+
+// ===================== OTA COMMAND IDs (matching rocket_avionics/config.h) =====================
+#define CMD_OTA_BEGIN     0x50  // Open OTA write session (erases inactive partition)
+#define CMD_OTA_FINALIZE  0x51  // Verify image HMAC, set boot partition, reboot
+#define CMD_OTA_CONFIRM   0x52  // After reboot: confirm new firmware, cancel rollback
 
 // ===================== TRANSPORT FLAGS (for 0x31/0x32 enable/disable) =====================
 // When 0x31/0x32 has no params, all transports are enabled/disabled together.
@@ -135,6 +141,9 @@ struct { uint8_t data[256]; size_t len; int8_t snr4; uint32_t timestamp; bool va
 //     Same body format as POST /api/command.
 //   Status Read (0x0003): read to get status JSON (same as GET /api/status)
 //   Log Fetch (0x0004): write request, receive records via notify (fast/unreliable)
+//   OTA Chunks (0x0006): WRITE|WRITE_NR raw firmware chunks; NOTIFY for errors/progress
+//     Chunk format: [offset u32 LE][data: up to 512 bytes, must not cross 512B sector boundary]
+//     Errors and progress reported via notify (see OTA_STATUS_* defines)
 //     Write format: [uint32 startRec LE][uint16 count LE]
 //     Notify format: concatenated records, same as /api/logs response binary.
 //     Empty notify = end marker.
@@ -145,6 +154,7 @@ struct { uint8_t data[256]; size_t len; int8_t snr4; uint32_t timestamp; bool va
 #define BLE_CMD_CHAR_UUID       "4d4f4f4e-5348-4f54-4253-000000000002"
 #define BLE_STATUS_CHAR_UUID    "4d4f4f4e-5348-4f54-4253-000000000003"
 #define BLE_LOGFETCH_CHAR_UUID  "4d4f4f4e-5348-4f54-4253-000000000004"
+#define BLE_OTA_CHAR_UUID       "4d4f4f4e-5348-4f54-4253-000000000006"  // WRITE|WRITE_NR|NOTIFY
 
 NimBLEServer* bleServer = nullptr;
 NimBLEAdvertising* bleAdvert = nullptr;
@@ -152,9 +162,165 @@ NimBLECharacteristic* bleTelemChar = nullptr;
 NimBLECharacteristic* bleCmdChar = nullptr;
 NimBLECharacteristic* bleStatusChar = nullptr;
 NimBLECharacteristic* bleLogFetchChar = nullptr;
+NimBLECharacteristic* bleOtaChar = nullptr;
 bool bleClientConnected = false;
 
-// BLE log fetch state machine — runs in main loop
+// ===================== OTA STATE MACHINE =====================
+// Status codes (same as rocket ota.h for consistency)
+#define OTA_STATUS_OK            0x00
+#define OTA_STATUS_NOT_ACTIVE    0x01
+#define OTA_STATUS_WRITE_FAIL    0x02
+#define OTA_STATUS_OFFSET_GAP    0x03
+#define OTA_STATUS_HMAC_MISMATCH 0x04
+#define OTA_STATUS_OTA_END_FAIL  0x05
+#define OTA_STATUS_VERIFYING     0x06
+#define OTA_STATUS_REFUSED       0x07
+#define OTA_STATUS_BAD_ALIGN     0x08
+#define OTA_PROGRESS_MARKER      0xA0
+#define OTA_PROGRESS_INTERVAL    1200
+
+enum OtaState { OTA_LOCKED, OTA_ERASING, OTA_RECEIVING, OTA_VERIFYING };
+
+struct OtaContext {
+  OtaState              state;
+  esp_ota_handle_t      handle;
+  const esp_partition_t* partition;
+  uint32_t              bytesWritten;
+  uint32_t              chunkCount;
+  bool                  notifyPending;
+  uint8_t               notifyBuf[8];
+  uint8_t               notifyLen;
+} bsOta = { OTA_LOCKED, 0, nullptr, 0, 0, false, {0}, 0 };
+
+static void bsOtaQueueNotify(uint8_t status) {
+  bsOta.notifyBuf[0] = status;
+  bsOta.notifyLen = 1;
+  bsOta.notifyPending = true;
+}
+
+static void otaHandleChunk(uint32_t offset, const uint8_t* data, size_t len) {
+  if (bsOta.state == OTA_VERIFYING) {
+    bsOtaQueueNotify(OTA_STATUS_VERIFYING); return;
+  }
+  if (bsOta.state != OTA_RECEIVING) {
+    bsOtaQueueNotify(OTA_STATUS_NOT_ACTIVE); return;
+  }
+  if (len == 0) { bsOtaQueueNotify(OTA_STATUS_BAD_ALIGN); return; }
+  uint32_t startSector = offset >> 9;
+  uint32_t endSector   = (offset + len - 1) >> 9;
+  if (startSector != endSector) {
+    bsOtaQueueNotify(OTA_STATUS_BAD_ALIGN); return;
+  }
+  if (offset != bsOta.bytesWritten) {
+    bsOtaQueueNotify(OTA_STATUS_OFFSET_GAP); return;
+  }
+  if (esp_ota_write(bsOta.handle, data, len) != ESP_OK) {
+    esp_ota_abort(bsOta.handle);
+    bsOta.state = OTA_LOCKED;
+    bsOtaQueueNotify(OTA_STATUS_WRITE_FAIL); return;
+  }
+  bsOta.bytesWritten += (uint32_t)len;
+  bsOta.chunkCount++;
+  if (bsOta.chunkCount % OTA_PROGRESS_INTERVAL == 0) {
+    bsOta.notifyBuf[0] = OTA_PROGRESS_MARKER;
+    bsOta.notifyBuf[1] = (uint8_t)(bsOta.bytesWritten);
+    bsOta.notifyBuf[2] = (uint8_t)(bsOta.bytesWritten >> 8);
+    bsOta.notifyBuf[3] = (uint8_t)(bsOta.bytesWritten >> 16);
+    bsOta.notifyBuf[4] = (uint8_t)(bsOta.bytesWritten >> 24);
+    bsOta.notifyLen = 5;
+    bsOta.notifyPending = true;
+  }
+}
+
+static uint8_t otaHandleBegin() {
+  if (esp_ota_check_rollback_is_possible()) {
+    Serial.println("OTA: begin refused — rollback pending");
+    return 0x02;  // CMD_ERR_REFUSED
+  }
+  if (bsOta.state != OTA_LOCKED) {
+    Serial.println("OTA: begin refused — already active");
+    return 0x02;
+  }
+  const esp_partition_t* part = esp_ota_get_next_update_partition(NULL);
+  if (!part) { Serial.println("OTA: no update partition"); return 0x02; }
+  bsOta.state = OTA_ERASING;
+  bsOta.partition = part;
+  Serial.printf("OTA: erasing partition '%s'...\n", part->label);
+  for (uint32_t off = 0; off < part->size; off += 4096) {
+    if (esp_partition_erase_range(part, off, 4096) != ESP_OK) {
+      bsOta.state = OTA_LOCKED;
+      return 0x02;
+    }
+    vTaskDelay(1);
+  }
+  Serial.println("OTA: erase done");
+  esp_ota_handle_t handle;
+  if (esp_ota_begin(part, part->size, &handle) != ESP_OK) {
+    bsOta.state = OTA_LOCKED;
+    return 0x02;
+  }
+  bsOta.handle = handle;
+  bsOta.bytesWritten = 0;
+  bsOta.chunkCount = 0;
+  bsOta.state = OTA_RECEIVING;
+  Serial.println("OTA: session open");
+  return 0x00;  // CMD_OK
+}
+
+static uint8_t otaHandleFinalize(uint32_t expectedSize, const uint8_t* firmwareHmac) {
+  if (bsOta.state != OTA_RECEIVING) return 0x02;
+  bsOta.state = OTA_VERIFYING;
+  if (bsOta.bytesWritten != expectedSize) {
+    esp_ota_abort(bsOta.handle);
+    bsOta.state = OTA_LOCKED;
+    return 0x03;  // CMD_ERR_BAD_PARAMS
+  }
+  uint8_t computed[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, HMAC_KEY, HMAC_KEY_LEN);
+  uint8_t rbuf[256]; uint32_t pos = 0, rem = expectedSize; bool ok = true;
+  while (rem > 0) {
+    uint32_t n = rem < sizeof(rbuf) ? rem : (uint32_t)sizeof(rbuf);
+    if (esp_partition_read(bsOta.partition, pos, rbuf, n) != ESP_OK) { ok = false; break; }
+    mbedtls_md_hmac_update(&ctx, rbuf, n);
+    pos += n; rem -= n;
+    vTaskDelay(0);
+  }
+  mbedtls_md_hmac_finish(&ctx, computed);
+  mbedtls_md_free(&ctx);
+  if (!ok) { esp_ota_abort(bsOta.handle); bsOta.state = OTA_LOCKED; return 0x02; }
+  uint8_t diff = 0;
+  for (int i = 0; i < 32; i++) diff |= computed[i] ^ firmwareHmac[i];
+  if (diff != 0) {
+    Serial.println("OTA: HMAC mismatch");
+    esp_ota_abort(bsOta.handle); bsOta.state = OTA_LOCKED;
+    bsOtaQueueNotify(OTA_STATUS_HMAC_MISMATCH);
+    return 0x02;
+  }
+  if (esp_ota_end(bsOta.handle) != ESP_OK) {
+    bsOta.state = OTA_LOCKED;
+    bsOtaQueueNotify(OTA_STATUS_OTA_END_FAIL);
+    return 0x02;
+  }
+  if (esp_ota_set_boot_partition(bsOta.partition) != ESP_OK) {
+    bsOta.state = OTA_LOCKED; return 0x02;
+  }
+  Serial.println("OTA: success — rebooting");
+  bsOtaQueueNotify(OTA_STATUS_OK);
+  delay(500);
+  esp_restart();
+  return 0x00;
+}
+
+static uint8_t otaHandleConfirm() {
+  if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK) return 0x02;
+  Serial.println("OTA: confirmed, rollback cancelled");
+  return 0x00;
+}
+
+// ===================== BLE log fetch state machine — runs in main loop
 struct BleLogFetch {
   bool active;
   uint32_t startRec;
@@ -350,6 +516,26 @@ void handleCmdTx() {
       logDl.lastRxMs = millis();
     }
 
+    // OTA commands (0x50/0x51/0x52) targeted at us — apply locally, do not forward over LoRa
+    if (cmdTx.pkt[1] == DEVICE_ID &&
+        (cmdTx.pkt[2] == CMD_OTA_BEGIN || cmdTx.pkt[2] == CMD_OTA_FINALIZE || cmdTx.pkt[2] == CMD_OTA_CONFIRM)) {
+      uint8_t r = 0x00;
+      if (cmdTx.pkt[2] == CMD_OTA_BEGIN) {
+        r = otaHandleBegin();
+      } else if (cmdTx.pkt[2] == CMD_OTA_FINALIZE && cmdTx.pktLen >= 7 + 36 + 10) {
+        // params start at pkt[7]: [fwSize u32 LE][fwHmac 32 bytes]
+        uint32_t fwSize = (uint32_t)cmdTx.pkt[7] | ((uint32_t)cmdTx.pkt[8] << 8)
+                        | ((uint32_t)cmdTx.pkt[9] << 16) | ((uint32_t)cmdTx.pkt[10] << 24);
+        const uint8_t* fwHmac = &cmdTx.pkt[11];
+        r = otaHandleFinalize(fwSize, fwHmac);
+      } else if (cmdTx.pkt[2] == CMD_OTA_CONFIRM) {
+        r = otaHandleConfirm();
+      }
+      (void)r;
+      revertToNormalRadio();
+      return;
+    }
+
     // SET RELAY RADIO (0x30) targeted at us — apply locally
     if (cmdTx.pktLen >= 23 && cmdTx.pkt[1] == DEVICE_ID && cmdTx.pkt[2] == 0x30) {
       uint8_t priCh  = cmdTx.pkt[7];
@@ -416,6 +602,23 @@ void handleApiCommand(AsyncWebServerRequest *req, uint8_t *data, size_t len, siz
     int code = (errorMsg == "hmac fail" || errorMsg == "stale nonce") ? 403 : 400;
     req->send(code, "text/plain", errorMsg.c_str());
   }
+}
+
+// PUT /api/ota/chunk — body: [offset u32 LE][data: up to 512 bytes]
+// No authentication on individual chunks; authentication is on the finalize command.
+// Returns single-byte status or 4xx on bad request.
+void handleApiOtaChunk(AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
+  if (index != 0) return;
+  if (len < total) { req->send(400, "text/plain", "fragmented"); return; }
+  if (len < 5) { req->send(400, "text/plain", "too short"); return; }
+  uint32_t offset = (uint32_t)data[0] | ((uint32_t)data[1] << 8)
+                  | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+  // Call handler and flush the queued notify as the HTTP response
+  bsOta.notifyPending = false;
+  otaHandleChunk(offset, data + 4, len - 4);
+  uint8_t status = bsOta.notifyPending ? bsOta.notifyBuf[0] : OTA_STATUS_OK;
+  bsOta.notifyPending = false;
+  req->send(200, "application/octet-stream", String((char)status));
 }
 
 void handleApiStatus(AsyncWebServerRequest *req) {
@@ -539,6 +742,16 @@ class BleLogFetchCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+class BleOtaCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& connInfo) override {
+    NimBLEAttValue val = chr->getValue();
+    if (val.size() < 5) return;  // need at least offset(4) + 1 data byte
+    uint32_t offset = (uint32_t)val.data()[0] | ((uint32_t)val.data()[1] << 8)
+                    | ((uint32_t)val.data()[2] << 16) | ((uint32_t)val.data()[3] << 24);
+    otaHandleChunk(offset, val.data() + 4, val.size() - 4);
+  }
+};
+
 // ===================== BLE LOG FETCH STATE MACHINE =====================
 // Sends one MTU-full of records per main loop iteration (fast, no delay).
 // Uses same binary format as /api/logs: [recNum u32][pLen u8][snr i8][ts u32][payload]
@@ -618,6 +831,10 @@ void initBLE() {
     NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
   bleLogFetchChar->setCallbacks(new BleLogFetchCallbacks());
 
+  bleOtaChar = svc->createCharacteristic(BLE_OTA_CHAR_UUID,
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::NOTIFY);
+  bleOtaChar->setCallbacks(new BleOtaCallbacks());
+
   svc->start();
 
   bleAdvert = NimBLEDevice::getAdvertising();
@@ -642,6 +859,7 @@ void deinitBLE() {
   bleCmdChar = nullptr;
   bleStatusChar = nullptr;
   bleLogFetchChar = nullptr;
+  bleOtaChar = nullptr;
   bleClientConnected = false;
   bleLogFetch.active = false;
   Serial.println("BLE deinited");
@@ -729,6 +947,8 @@ void setup() {
   httpServer.on("/api/logs", HTTP_GET, handleApiLogs);
   httpServer.on("/api/command", HTTP_POST,
     [](AsyncWebServerRequest *req){ }, NULL, handleApiCommand);
+  httpServer.on("/api/ota/chunk", HTTP_PUT,
+    [](AsyncWebServerRequest *req){ }, NULL, handleApiOtaChunk);
   ws.onEvent(onWsEvent);
   httpServer.addHandler(&ws);
   httpServer.begin();
@@ -772,6 +992,13 @@ void loop() {
     revertToNormalRadio();
   }
   handleBleLogFetch();
+
+  // OTA notify drain
+  if (bsOta.notifyPending && bleOtaChar && bleClientConnected) {
+    bleOtaChar->notify(bsOta.notifyBuf, bsOta.notifyLen);
+    bsOta.notifyPending = false;
+  }
+
   if (wifiEnabled) ws.cleanupClients();
 }
 

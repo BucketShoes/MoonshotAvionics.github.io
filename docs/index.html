@@ -196,6 +196,10 @@
         <option value="0xF0">0xF0 REBOOT</option>
         <option value="0xF1">0xF1 LOG ERASE</option>
       </optgroup>
+      <optgroup label="OTA">
+        <option value="0x50">0x50 OTA BEGIN</option>
+        <option value="0x52">0x52 OTA CONFIRM</option>
+      </optgroup>
     </select>
   </div>
   <div class="cmd-help" id="cmd-help-text"></div>
@@ -262,6 +266,36 @@
   </div>
   <div class="cmd-result" id="cmd-result"></div>
 </div>
+<!-- ===================== OTA FIRMWARE UPDATE ===================== -->
+<div class="cmd-section" id="ota-section" style="margin-top:16px">
+  <h2>OTA Firmware Update</h2>
+  <div style="font-size:11px;color:#888;margin-bottom:8px">
+    Requires: key derived above &amp; BLE or WiFi connection.
+    Use CMD_OTA_BEGIN/CONFIRM from the command panel to gate the session.
+    After flashing, reconnect and send 0x52 OTA CONFIRM to keep the new firmware,
+    or reboot without confirming to roll back.
+  </div>
+  <div class="cmd-row">
+    <label>Target:</label>
+    <select id="ota-target" style="background:#222;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:11px">
+      <option value="rkt">Rocket (Rocket BLE)</option>
+      <option value="base">Base Station (Base BLE or HTTP)</option>
+    </select>
+    <label style="margin-left:8px">Target ID:</label>
+    <input type="number" id="ota-target-id" value="146" min="0" max="255" style="width:54px;background:#111;color:#eee;border:1px solid #555;border-radius:3px;padding:1px 4px;font-family:inherit;font-size:11px">
+  </div>
+  <div class="cmd-row">
+    <label>.bin file:</label>
+    <input type="file" id="ota-file" accept=".bin" style="color:#eee;font-size:11px">
+  </div>
+  <div id="ota-file-info" style="font-size:11px;color:#888;margin:3px 0 0 8px">No file selected</div>
+  <div id="ota-hmac-status" style="font-size:11px;color:#888;margin:3px 0 0 8px">HMAC: derive key first</div>
+  <div class="cmd-row" style="margin-top:8px">
+    <button class="cmd-btn" id="ota-send" style="background:#522;border-color:#844">FLASH FIRMWARE</button>
+  </div>
+  <pre id="ota-progress" style="background:#111;border:1px solid #333;border-radius:3px;padding:6px;margin-top:6px;font-size:10px;color:#8c8;min-height:40px;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto"></pre>
+</div>
+
     <br /><br /><br />
     <div style="text-align:center"><a href="https://bucketshoes.github.io/MoonshotAvionics/">Moonshot Avionics</a></div>
     <br /><br /><br />

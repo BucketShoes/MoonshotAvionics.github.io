@@ -71,6 +71,7 @@ enum FlightPhase : uint8_t {
 #define ARM_ERR_ACCEL         0x11  // accel sensor error or not ready
 #define ARM_ERR_STABILITY     0x12  // sensors not stable long enough
 #define ARM_ERR_ALREADY       0x13  // already armed (not an error, but can't re-arm without disarm)
+#define ARM_ERR_OTA_ACTIVE    0x14  // OTA session is open — cannot arm while updating firmware
 
 // ===================== THRESHOLD TRACKER =====================
 // Reusable struct for detecting sustained conditions:

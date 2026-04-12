@@ -57,4 +57,83 @@ connection controls for ble should default to 1m, and automatically attempt rene
 packets should only be filled with length-prefixed whole records, max 502 bytes. request an mtu of 517, but choosing only 502 max allows more LL segments to fit in the intermediate buffers (502 fills 2, 517 spills into a 3rd). use a constant/define for this limit, may be changed later
 
 
+---
+
+## OTA Firmware Update Characteristic (0x0006)
+
+Both devices expose a sixth GATT characteristic with UUID suffix `0x0006` in their respective service UUID families:
+
+| Device | UUID | Properties |
+|--------|------|------------|
+| Rocket | `524f434b-4554-5354-424c-000000000006` | WRITE \| WRITE_NR \| NOTIFY |
+| Base   | `4d4f4f4e-5348-4f54-4253-000000000006` | WRITE \| WRITE_NR \| NOTIFY |
+
+### Chunk write format
+
+```
+[offset u32 LE][data: 1–512 bytes]
+```
+
+Max frame: 516 bytes (fits within the 517-byte negotiated MTU). Chunks are not individually authenticated. Authentication is deferred to the `CMD_OTA_FINALIZE (0x51)` command which verifies HMAC-SHA256 of the entire image.
+
+**Alignment constraint**: `(offset >> 9) != ((offset + len - 1) >> 9)` must be false (chunk must not cross a 512-byte sector boundary), except for the final partial chunk. The JS sender enforces this by using exactly 512-byte-aligned, 512-byte chunks; the last chunk may be shorter. The device rejects violations with status byte `0x08`.
+
+### Notifications
+
+The device does **not** send a per-chunk ACK (incompatible with target throughput ~120 KB/s). Notifications are only sent on errors or as periodic progress reports:
+
+| Byte(s) | Meaning |
+|---------|---------|
+| `0x00` | OK (used for explicit success acks, e.g. finalize confirm before reboot) |
+| `0x01` | OTA not active — CMD_OTA_BEGIN not sent |
+| `0x02` | Write failed / begin/erase failed |
+| `0x03` | Offset gap — chunks must be strictly sequential |
+| `0x04` | HMAC mismatch on finalize — session aborted |
+| `0x05` | esp_ota_end failed |
+| `0x06` | In OTA_VERIFYING state — no more chunks allowed |
+| `0x07` | Refused: device is armed or rollback is pending |
+| `0x08` | Chunk crosses 512-byte sector boundary |
+| `0xA0 [bytesWritten u32 LE]` | Progress report (5 bytes total), sent every 1200 chunks (~600 KB, ~5 s at target throughput) |
+
+JS subscribes to notifications on connect; any non-zero status byte aborts the upload and displays the error. Progress reports (`0xA0` prefix) update the progress bar and reset the stall timer (10 s timeout).
+
+### OTA state machine
+
+```
+OTA_LOCKED → (CMD_OTA_BEGIN) → OTA_ERASING → OTA_RECEIVING → (CMD_OTA_FINALIZE) → OTA_VERIFYING → (reboot) → OTA_LOCKED
+```
+
+- **CMD_OTA_BEGIN (0x50)**: refused while armed, refused if rollback is pending, refused if not OTA_LOCKED. Pre-erases the entire inactive OTA partition (1.5 MB, ~1–2 s, `vTaskDelay(1)` per 4 KB sector), then calls `esp_ota_begin`.
+- **CMD_OTA_FINALIZE (0x51)**: verifies `bytesWritten == fwSize`, reads back entire image and checks HMAC-SHA256 against the provided 32-byte hash, calls `esp_ota_end` + `esp_ota_set_boot_partition`, reboots after 500 ms.
+- **CMD_OTA_CONFIRM (0x52)**: after rebooting into the new firmware, cancels rollback via `esp_ota_mark_app_valid_cancel_rollback()`. If never sent, the bootloader rolls back to the previous slot on the next reboot.
+
+All three commands use the standard 0x9A authenticated command format (nonce + HMAC10), sharing the same nonce counter as all other commands.
+
+### OTA/ARM mutual exclusion
+
+- OTA commands and chunks are refused if the device is armed.
+- `flightTryArm()` returns `ARM_ERR_OTA_ACTIVE` if `otaGetState() != OTA_LOCKED`.
+
+### Partition layout (both devices, 8 MB flash)
+
+**Rocket:**
+```
+app0 (ota_0):  0x010000, 1.5 MB  (currently running)
+app1 (ota_1):  0x190000, 1.5 MB  ← OTA target (alternates)
+log_index:     0x310000, 32 KB
+log_data:      0x318000, 4.9 MB
+```
+
+**Base station:**
+```
+app0 (ota_0):  0x010000, 1.5 MB
+app1 (ota_1):  0x190000, 1.5 MB  ← OTA target (alternates)
+littlefs:      0x310000, 256 KB
+log_index:     0x350000, 32 KB
+log_data:      0x358000, 4.7 MB
+```
+
+The OTA target is always `esp_ota_get_next_update_partition(NULL)` — whichever slot is not currently running. Flashing works in both directions (app0→app1 and app1→app0).
+
+
 

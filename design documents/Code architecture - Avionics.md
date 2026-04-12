@@ -43,6 +43,23 @@ HMAC-SHA256 command authentication (truncated to 10 bytes), nonce replay protect
 
 ---
 
+### `ota.h` + `ota.cpp`
+OTA firmware update state machine. Handles three authenticated commands: `CMD_OTA_BEGIN (0x50)` — erases inactive OTA partition and opens an `esp_ota_begin` session; `CMD_OTA_FINALIZE (0x51)` — blocks further chunks, reads back written image, verifies HMAC-SHA256 against the key, sets boot partition (rollback-pending), reboots; `CMD_OTA_CONFIRM (0x52)` — calls `esp_ota_mark_app_valid_cancel_rollback()` to commit the new firmware.
+
+Chunk writes arrive via the OTA BLE characteristic (WRITE_NR, called from NimBLE task). Progress reports (`[0xA0][bytesWritten u32 LE]`) are sent every 1200 chunks; errors are notified immediately. `otaGetState()` is queried by `flightTryArm()` to enforce mutual exclusion.
+
+OTA target partition is always `esp_ota_get_next_update_partition(NULL)` (the inactive slot — alternates app0/app1 depending on which is currently running).
+
+Partition layout after migration (both devices flash 8 MB):
+- `app0` (ota_0): 0x10000, 1.5 MB
+- `app1` (ota_1): 0x190000, 1.5 MB  ← new
+- `log_index`: 0x310000, 32 KB (shifted)
+- `log_data`: 0x318000, 4.9 MB (rocket) / 0x358000, 4.7 MB (base, after littlefs at 0x310000)
+
+**Edit this when:** changing OTA protocol, chunk format, HMAC verification, or rollback behaviour.
+
+---
+
 ### `telemetry.h` + `telemetry.cpp`
 All telemetry wire format code: `buildTelemetryPacket()`, individual data page builders (0x01–0x0D), the page rotation cycle, binary serialisation helpers (`writeU8`/`U16`/`S16`/`S32`/`U32`), `buildStateFlags()`, `encodeGpsFrac()`. Also owns flash log writing (`logDataPage`, `logPage`, `logReceivedCommand`) and the non-blocking log scheduler (`nonblockingLogging()`).
 
@@ -110,6 +127,13 @@ commands.h
 radio.h
   ├── RadioLib.h
   └── config.h
+
+ota.h
+  ├── esp_ota_ops.h
+  ├── mbedtls/md.h
+  ├── ble.h        (otaQueueNotify / otaQueueNotifyBytes)
+  ├── commands.h   (hmacKey, HMAC_KEY_LEN)
+  └── flight.h     (isArmed)
 ```
 
 Implementation files include the headers they need without creating cycles.
@@ -122,6 +146,10 @@ Implementation files include the headers they need without creating cycles.
 - `nonblockingLogging()` may block for ~30–50ms on sector erase crossings (infrequent; one per ~4KB of log data).
 - `executeLogDownload()` is fully blocking — it is refused while armed.
 - All functions called from `loop()` while armed must have `nonblocking` in their name.
+- `otaHandleBegin()` blocks for ~1–2 s while pre-erasing the 1.5 MB OTA partition (384 × 4 KB erase + `vTaskDelay(1)` per sector to feed the task watchdog). It is refused while armed.
+- `otaHandleFinalize()` blocks while reading back the entire written image to verify HMAC (~1.5 MB read) and is refused while armed.
+- OTA/ARM mutual exclusion is bidirectional: OTA commands refuse if `isArmed`; `flightTryArm()` refuses if `otaGetState() != OTA_LOCKED`. This prevents either operation from interrupting the other.
+- `otaHandleChunk()` is called from the NimBLE task (not `loop()`). It uses only `esp_ota_write` and atomic flag checks — no non-reentrant globals.
 
 
 

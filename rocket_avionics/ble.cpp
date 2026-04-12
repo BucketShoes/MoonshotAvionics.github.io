@@ -9,6 +9,7 @@
 #include "commands.h"
 #include "globals.h"
 #include "flight.h"
+#include "ota.h"
 
 // ===================== GLOBALS =====================
 
@@ -23,6 +24,7 @@ static NimBLECharacteristic* pCmdChar     = nullptr;
 static NimBLECharacteristic* pStatusChar  = nullptr;
 static NimBLECharacteristic* pConnSetChar = nullptr;
 static NimBLECharacteristic* pFetchChar   = nullptr;
+static NimBLECharacteristic* pOtaChar     = nullptr;
 static NimBLEAdvertising*    pAdvert      = nullptr;
 
 // ===================== CALLBACK TIMING HELPER =====================
@@ -281,6 +283,43 @@ class BleFetchCB : public NimBLECharacteristicCallbacks {
   }
 };
 
+// ===================== OTA CHAR CALLBACK =====================
+// Receives raw firmware chunks: [offset u32 LE][data: up to 512 bytes].
+// Uses WRITE_NR — no ATT response. Relies on LL-level ACK for flow control.
+// Notifies errors and periodic progress via the OTA characteristic (drained by main loop).
+
+class BleOtaCB : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
+    BLE_CB_START();
+    NimBLEAttValue val = c->getValue();
+    const uint8_t* data = val.data();
+    size_t len = val.size();
+    if (len < 5) { BLE_CB_END(); return; }  // need at least offset(4) + 1 byte
+
+    uint32_t offset = (uint32_t)data[0] | ((uint32_t)data[1] << 8)
+                    | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+    otaHandleChunk(offset, data + 4, len - 4);
+    BLE_CB_END();
+  }
+};
+
+// ===================== OTA NOTIFY HELPERS =====================
+// Called from the NimBLE FreeRTOS callback task or from ota.cpp.
+// The main loop drains these to the OTA characteristic.
+
+void otaQueueNotify(uint8_t status) {
+  bleState.otaNotifyBuf[0] = status;
+  bleState.otaNotifyLen     = 1;
+  bleState.otaNotifyPending = true;
+}
+
+void otaQueueNotifyBytes(const uint8_t* data, uint8_t len) {
+  if (len > 8) len = 8;
+  memcpy((void*)bleState.otaNotifyBuf, data, len);
+  bleState.otaNotifyLen     = len;
+  bleState.otaNotifyPending = true;
+}
+
 // ===================== TELEM CHAR SUBSCRIPTION TRACKING =====================
 
 class BleTelemCB : public NimBLECharacteristicCallbacks {
@@ -331,6 +370,11 @@ void initBLE() {
     BLE_LOGFETCH_CHAR_UUID,
     NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
   pFetchChar->setCallbacks(new BleFetchCB());
+
+  pOtaChar = svc->createCharacteristic(
+    BLE_OTA_CHAR_UUID,
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::NOTIFY);
+  pOtaChar->setCallbacks(new BleOtaCB());
 
   svc->start();
 
@@ -529,5 +573,11 @@ void nonblockingBle() {
   // Priority 3: log fetch (lower priority than telem)
   if (bleState.fetchActive) {
     bleFetchOnePdu();
+  }
+
+  // OTA notify drain — send queued error/progress byte(s) from OTA callbacks.
+  if (bleState.otaNotifyPending && pOtaChar) {
+    pOtaChar->notify((uint8_t*)bleState.otaNotifyBuf, bleState.otaNotifyLen);
+    bleState.otaNotifyPending = false;
   }
 }

@@ -100,6 +100,9 @@
 #define CMD_SET_TX_RATE   0x10
 #define CMD_SET_RADIO     0x12
 #define CMD_LOG_DOWNLOAD  0x20
+#define CMD_OTA_BEGIN     0x50  // Open OTA write session (erases inactive partition)
+#define CMD_OTA_FINALIZE  0x51  // Verify image HMAC, set boot partition, reboot
+#define CMD_OTA_CONFIRM   0x52  // After reboot: confirm new firmware, cancel rollback
 #define CMD_PING          0x40
 #define CMD_REBOOT        0xF0
 #define CMD_LOG_ERASE     0xF1
@@ -132,6 +135,7 @@
 #define BLE_STATUS_CHAR_UUID   "524f434b-4554-5354-424c-000000000003"  // READ
 #define BLE_CONNSET_CHAR_UUID  "524f434b-4554-5354-424c-000000000004"  // WRITE|WRITE_NR
 #define BLE_LOGFETCH_CHAR_UUID "524f434b-4554-5354-424c-000000000005"  // WRITE|NOTIFY
+#define BLE_OTA_CHAR_UUID      "524f434b-4554-5354-424c-000000000006"  // WRITE|WRITE_NR|NOTIFY
 
 // ConnSet command types
 #define BLE_CONNSET_INTERVAL  0x01   // [intervalUs u32]

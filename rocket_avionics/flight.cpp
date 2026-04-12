@@ -9,6 +9,7 @@
 // Always verify changes against flight phases document. Note that briefs here may be out of date.
 
 #include "flight.h"
+#include "ota.h"
 
 // ===================== GLOBAL STATE =====================
 
@@ -615,6 +616,11 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   // Already armed?
   if (flightState.armed) {
     return ARM_ERR_ALREADY;
+  }
+
+  // Refuse arming if an OTA session is open (flash writes stall the main loop).
+  if (otaGetState() != OTA_LOCKED) {
+    return ARM_ERR_OTA_ACTIVE;
   }
 
   if (!forceArm) {

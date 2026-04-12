@@ -623,6 +623,7 @@ function initCharts() {
   var BLE_CMD_CHAR_UUID      = '4d4f4f4e-5348-4f54-4253-000000000002';
   var BLE_STATUS_CHAR_UUID   = '4d4f4f4e-5348-4f54-4253-000000000003';
   var BLE_LOGFETCH_CHAR_UUID = '4d4f4f4e-5348-4f54-4253-000000000004';
+  var BLE_OTA_CHAR_UUID      = '4d4f4f4e-5348-4f54-4253-000000000006';
 
   var bleDevice = null;
   var bleServer_ = null;
@@ -630,6 +631,7 @@ function initCharts() {
   var bleCmdChar_ = null;
   var bleStatusChar_ = null;
   var bleLogFetchChar_ = null;
+  var bleOtaChar_ = null;
   var bleConnected = false;
 
   // BLE log fetch state for sliding window flow control
@@ -704,6 +706,13 @@ function initCharts() {
           onLivePkt(pktBuf, snr, rssi, recNum);
         }
       });
+
+      // OTA characteristic (optional — may not exist on older firmware)
+      try {
+        bleOtaChar_ = await svc.getCharacteristic(BLE_OTA_CHAR_UUID);
+        await bleOtaChar_.startNotifications();
+        bleOtaChar_.addEventListener('characteristicvaluechanged', onOtaNotify);
+      } catch(e) { bleOtaChar_ = null; }
 
       // Subscribe to log fetch notifications
       await bleLogFetchChar_.startNotifications();
@@ -837,6 +846,7 @@ function initCharts() {
   var RKT_STATUS_CHAR_UUID   = '524f434b-4554-5354-424c-000000000003';
   var RKT_CONNSET_CHAR_UUID  = '524f434b-4554-5354-424c-000000000004';
   var RKT_LOGFETCH_CHAR_UUID = '524f434b-4554-5354-424c-000000000005';
+  var RKT_OTA_CHAR_UUID      = '524f434b-4554-5354-424c-000000000006';
 
   // ConnSet command type bytes
   var RKT_CS_INTERVAL = 0x01;
@@ -850,6 +860,7 @@ function initCharts() {
   var rktStatusChar_ = null;
   var rktConnSetChar_ = null;
   var rktFetchChar_ = null;
+  var rktOtaChar_ = null;
   var rktBleConnected = false;
   var rktFetchDone = false;
   var rktFetchBuffer = [];
@@ -1033,6 +1044,13 @@ function initCharts() {
       rktTelemChar_.addEventListener('characteristicvaluechanged', function(ev) {
         onRktTelemNotify(ev.target.value.buffer);
       });
+
+      // OTA characteristic (optional — may not exist on older firmware)
+      try {
+        rktOtaChar_ = await svc.getCharacteristic(RKT_OTA_CHAR_UUID);
+        await rktOtaChar_.startNotifications();
+        rktOtaChar_.addEventListener('characteristicvaluechanged', onOtaNotify);
+      } catch(e) { rktOtaChar_ = null; }
 
       // Subscribe to log fetch notifications
       await rktFetchChar_.startNotifications();
@@ -1320,7 +1338,9 @@ function initCharts() {
     '0x20': 'LOG DOWNLOAD: Request records from target on download radio settings.',
     '0x40': 'PING: Request ack page. Link test.',
     '0xF0': 'REBOOT: Software restart. Refused if armed (rocket).',
-    '0xF1': 'LOG ERASE: Clear log ring buffer. Refused if armed.'
+    '0xF1': 'LOG ERASE: Clear log ring buffer. Refused if armed.',
+    '0x50': 'OTA BEGIN: Open firmware update session. Erases inactive OTA partition (~2s). Refused while armed or rollback pending.',
+    '0x52': 'OTA CONFIRM: After rebooting into new firmware, confirm it is good. Cancels rollback. If never sent, next reboot reverts to previous firmware.'
   };
 
   function onCmdChange() {
@@ -1357,6 +1377,7 @@ function initCharts() {
       derivedKeyBytes = pbkdf2Sha256(passBytes, saltBytes, 100000, 32);
       document.getElementById('cmd-key-status').textContent =
         'Key: ' + toHex(derivedKeyBytes).substring(0, 1) + '... (32 bytes)';
+      otaUpdateHmac();
     }, 50);
   }
 
@@ -1510,6 +1531,183 @@ function initCharts() {
       document.getElementById('p20-start').value = dirDown ? Math.max(0, dlStart - dlCount) : dlStart + dlCount;
       // Reset DL speed counters so rate shown reflects this download batch
       dlSpeedStartMs = 0; dlSpeedRecs = 0; dlSpeedBytes = 0;
+    }
+  }
+
+  // =============================================================
+  // OTA FIRMWARE UPDATE
+  // =============================================================
+
+  var otaFileBytes = null;   // Uint8Array of selected .bin
+  var otaFileHmac  = null;   // Uint8Array(32) HMAC of entire firmware
+  var otaRunning   = false;
+
+  // Status byte → human-readable string
+  var OTA_STATUS_MSG = {
+    0x00: 'OK',
+    0x01: 'not activated (send OTA BEGIN first)',
+    0x02: 'write/begin/erase failed',
+    0x03: 'offset gap',
+    0x04: 'HMAC mismatch — image rejected',
+    0x05: 'esp_ota_end failed',
+    0x06: 'currently verifying, chunks blocked',
+    0x07: 'refused (armed or rollback pending)',
+    0x08: 'chunk crosses 512-byte sector boundary'
+  };
+
+  function onOtaNotify(ev) {
+    var data = new Uint8Array(ev.target.value.buffer);
+    var prog = document.getElementById('ota-progress');
+    if (!prog) return;
+    if (data.length >= 5 && data[0] === 0xA0) {
+      // Progress report: [0xA0][bytesWritten u32 LE]
+      var bw = data[1] | (data[2] << 8) | (data[3] << 16) | (data[4] << 24);
+      prog.textContent += '\nDevice progress: ' + bw + ' bytes written';
+    } else if (data.length >= 1) {
+      var code = data[0];
+      var msg = OTA_STATUS_MSG[code] !== undefined ? OTA_STATUS_MSG[code] : ('code 0x' + code.toString(16));
+      prog.textContent += '\nDevice: ' + msg;
+      if (code !== 0x00 && otaRunning) {
+        // Non-zero on the OTA char while uploading — stop and report
+        prog.textContent += ' — upload aborted';
+        otaRunning = false;
+        document.getElementById('ota-send').disabled = false;
+        document.getElementById('ota-send').textContent = 'FLASH FIRMWARE';
+      }
+    }
+    prog.scrollTop = prog.scrollHeight;
+  }
+
+  function otaUpdateHmac() {
+    if (!otaFileBytes) return;
+    var el = document.getElementById('ota-hmac-status');
+    if (!el) return;
+    if (!derivedKeyBytes) { el.textContent = 'HMAC: derive key first'; return; }
+    setTimeout(function() {
+      otaFileHmac = hmacSha256(derivedKeyBytes, otaFileBytes);
+      el.textContent = 'HMAC: ' + toHex(otaFileHmac).substring(0, 16) + '... (32 bytes)';
+    }, 10);
+  }
+
+  async function sendOtaFirmware() {
+    if (otaRunning) return;
+    var prog = document.getElementById('ota-progress');
+    prog.textContent = '';
+
+    if (!derivedKeyBytes) { prog.textContent = 'ERROR: derive key first'; return; }
+    if (!otaFileBytes)    { prog.textContent = 'ERROR: select a .bin file'; return; }
+
+    var target = document.getElementById('ota-target').value;
+    var otaChar = (target === 'rkt') ? rktOtaChar_ : bleOtaChar_;
+    var cmdChar = (target === 'rkt') ? rktCmdChar_ : bleCmdChar_;
+    var useHttp = (target === 'base') && !bleOtaChar_ && !bleConnected;
+
+    if (!useHttp && !otaChar) { prog.textContent = 'ERROR: OTA char not available — connect BLE first'; return; }
+    if (!useHttp && !cmdChar) { prog.textContent = 'ERROR: command char not available'; return; }
+
+    // Recompute HMAC just before sending
+    otaFileHmac = hmacSha256(derivedKeyBytes, otaFileBytes);
+    document.getElementById('ota-hmac-status').textContent =
+      'HMAC: ' + toHex(otaFileHmac).substring(0, 16) + '...';
+
+    otaRunning = true;
+    document.getElementById('ota-send').disabled = true;
+    document.getElementById('ota-send').textContent = 'UPLOADING...';
+
+    var CHUNK = 512;
+    var totalBytes = otaFileBytes.length;
+    var totalChunks = Math.ceil(totalBytes / CHUNK);
+    prog.textContent = 'Sending ' + totalChunks + ' chunks (' + totalBytes + ' bytes)...';
+
+    try {
+      for (var i = 0; i < totalChunks; i++) {
+        if (!otaRunning) break;  // aborted by error notify
+        var offset = i * CHUNK;
+        var end = Math.min(offset + CHUNK, totalBytes);
+        var chunk = otaFileBytes.slice(offset, end);
+
+        var pkt = new Uint8Array(4 + chunk.length);
+        var dv = new DataView(pkt.buffer);
+        dv.setUint32(0, offset, true);
+        pkt.set(chunk, 4);
+
+        if (useHttp) {
+          var resp = await fetch(getBaseHttp() + '/api/ota/chunk', {
+            method: 'PUT', body: pkt
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          var statusByte = new Uint8Array(await resp.arrayBuffer())[0];
+          if (statusByte !== 0x00) {
+            var msg = OTA_STATUS_MSG[statusByte] || ('0x' + statusByte.toString(16));
+            throw new Error('Device error: ' + msg);
+          }
+        } else {
+          await otaChar.writeValueWithoutResponse(pkt);
+        }
+
+        // Update progress every 32 chunks and yield to keep UI responsive
+        if (i % 32 === 31 || i === totalChunks - 1) {
+          prog.textContent = 'Chunk ' + (i + 1) + '/' + totalChunks +
+            ' (' + Math.round((i + 1) / totalChunks * 100) + '%)';
+          await new Promise(function(r) { setTimeout(r, 20); });
+        }
+      }
+
+      if (!otaRunning) return;  // aborted
+
+      prog.textContent += '\nAll chunks sent. Sending finalize...';
+
+      // Build CMD_OTA_FINALIZE (0x51) packet
+      var targetId = parseInt(document.getElementById('ota-target-id').value) & 0xFF;
+      var nonce = parseInt(document.getElementById('cmd-nonce').value) >>> 0;
+
+      var pktArr = [0x9A, targetId, 0x51];
+      pktArr.push(nonce & 0xFF, (nonce >> 8) & 0xFF, (nonce >> 16) & 0xFF, (nonce >> 24) & 0xFF);
+      // params: [fwSize u32 LE][fwHmac 32 bytes]
+      pktArr.push(totalBytes & 0xFF, (totalBytes >> 8) & 0xFF,
+                  (totalBytes >> 16) & 0xFF, (totalBytes >> 24) & 0xFF);
+      for (var j = 0; j < 32; j++) pktArr.push(otaFileHmac[j]);
+
+      var hmacInput = new Uint8Array(pktArr);
+      var cmdHmac10 = hmacSha256(derivedKeyBytes, hmacInput).slice(0, 10);
+      var fullPkt = new Uint8Array(pktArr.length + 10);
+      fullPkt.set(hmacInput);
+      fullPkt.set(cmdHmac10, pktArr.length);
+
+      // Transport wrapper: [waitMs u16 LE][sends u8][pktLen u8][packet]
+      var body = new Uint8Array(4 + fullPkt.length);
+      var bdv = new DataView(body.buffer);
+      bdv.setUint16(0, 2000, true);
+      bdv.setUint8(2, 1);
+      bdv.setUint8(3, fullPkt.length);
+      body.set(fullPkt, 4);
+
+      if (useHttp) {
+        var r = await fetch(getBaseHttp() + '/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: body
+        });
+        if (!r.ok) throw new Error('Finalize HTTP ' + r.status + ': ' + await r.text());
+      } else {
+        await cmdChar.writeValueWithResponse(body);
+      }
+
+      // Increment shared nonce
+      var newNonce = nonce + 1;
+      document.getElementById('cmd-nonce').value = newNonce;
+      try { localStorage.setItem('cmd-nonce', newNonce); } catch(e2) {}
+
+      prog.textContent += '\nFinalize sent. Device rebooting...\n' +
+        'Reconnect and send 0x52 OTA CONFIRM to keep new firmware,\n' +
+        'or reboot without confirming to roll back.';
+
+    } catch(err) {
+      prog.textContent += '\nERROR: ' + (err.message || err);
+    } finally {
+      otaRunning = false;
+      document.getElementById('ota-send').disabled = false;
+      document.getElementById('ota-send').textContent = 'FLASH FIRMWARE';
     }
   }
 
@@ -2183,6 +2381,25 @@ function initCharts() {
     // Nonce: load from server if available (latest ack nonce + 1), fallback to localStorage
     try { var n = localStorage.getItem('cmd-nonce'); if (n) document.getElementById('cmd-nonce').value = n; } catch(e) {}
     document.getElementById('cmd-nonce').addEventListener('change', function() { try { localStorage.setItem('cmd-nonce', this.value); } catch(e) {} });
+
+    // OTA event wiring
+    document.getElementById('ota-send').addEventListener('click', sendOtaFirmware);
+    document.getElementById('ota-file').addEventListener('change', function() {
+      var f = this.files[0];
+      if (!f) { otaFileBytes = null; otaFileHmac = null; document.getElementById('ota-file-info').textContent = 'No file selected'; return; }
+      document.getElementById('ota-file-info').textContent = f.name + ' (' + f.size + ' bytes)';
+      document.getElementById('ota-hmac-status').textContent = 'HMAC: computing...';
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        otaFileBytes = new Uint8Array(ev.target.result);
+        otaUpdateHmac();
+      };
+      reader.readAsArrayBuffer(f);
+    });
+    document.getElementById('ota-target').addEventListener('change', function() {
+      // Suggest correct target ID when switching devices
+      document.getElementById('ota-target-id').value = this.value === 'rkt' ? 146 : 157;
+    });
 
     // Map init
     mapIDBInit();

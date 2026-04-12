@@ -6,11 +6,12 @@
 //
 // GATT layout (separate service UUID from base station):
 //   Service:     524f434b-4554-5354-424c-000000000000
-//   Char 0001:   NOTIFY         — realtime telemetry records
-//   Char 0002:   WRITE|WRITE_NR — commands (same binary format as base station, waitMs/sends ignored)
-//   Char 0003:   READ           — status JSON (logIdx, batt, armed, uptime)
-//   Char 0004:   WRITE|WRITE_NR — connection settings (interval, page mask, PHY)
-//   Char 0005:   WRITE|NOTIFY   — log fetch (request then stream records)
+//   Char 0001:   NOTIFY              — realtime telemetry records
+//   Char 0002:   WRITE|WRITE_NR      — commands (same binary format as base station, waitMs/sends ignored)
+//   Char 0003:   READ                — status JSON (logIdx, batt, armed, uptime)
+//   Char 0004:   WRITE|WRITE_NR      — connection settings (interval, page mask, PHY)
+//   Char 0005:   WRITE|NOTIFY        — log fetch (request then stream records)
+//   Char 0006:   WRITE|WRITE_NR|NOTIFY — OTA firmware chunks in, error/progress notifications out
 //
 // Record wire format (used for both telem and fetch):
 //   [len u8][data: len bytes]
@@ -60,6 +61,12 @@ struct BleState {
   LogStore::SeqReader fetchSeq;  // sequential cursor — avoids O(N²) re-scan per record
 
   uint8_t currentTxPhy;        // 1=1M 2=2M 3=Coded (for serial debug / status)
+
+  // OTA notify-back: set by otaQueueNotify() from the NimBLE callback task;
+  // drained by nonblockingBle() in the main loop.
+  volatile bool    otaNotifyPending;
+  volatile uint8_t otaNotifyBuf[8];   // up to 8 bytes (progress reports are 5 bytes)
+  volatile uint8_t otaNotifyLen;
 };
 
 extern BleState bleState;
@@ -78,5 +85,11 @@ void initBLE();
 
 // Call every main loop iteration.
 void nonblockingBle();
+
+// Queue a 1-byte OTA status notify. Safe to call from the NimBLE callback task.
+void otaQueueNotify(uint8_t status);
+
+// Queue a multi-byte OTA notification (e.g. progress report). len <= 8.
+void otaQueueNotifyBytes(const uint8_t* data, uint8_t len);
 
 #endif // BLE_H

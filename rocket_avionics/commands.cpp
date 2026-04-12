@@ -9,6 +9,7 @@
 #include "log_store.h"
 #include "globals.h"
 #include "telemetry.h"
+#include "ota.h"
 
 // ===================== COMMAND STATE =====================
 
@@ -63,6 +64,9 @@ static int expectedParamLen(uint8_t cmdId) {
     case CMD_SET_TX_RATE:   return 1;   // rate(1)
     case CMD_SET_RADIO:     return 3;   // channel(1) + SF(1) + power(1)
     case CMD_LOG_DOWNLOAD:  return 10;  // start(4)+count(2)+ch(1)+SF(1)+BW(1)+power(1)
+    case CMD_OTA_BEGIN:     return 0;
+    case CMD_OTA_FINALIZE:  return 36;  // fwSize(4) + fwHmac(32)
+    case CMD_OTA_CONFIRM:   return 0;
     case CMD_PING:          return 0;
     case CMD_REBOOT:        return 0;
     case CMD_LOG_ERASE:     return 0;
@@ -389,6 +393,23 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       if (!logStoreOk) { result = CMD_ERR_REFUSED; break; }
       executeLogDownload(nonce, params);
       return;  // executeLogDownload handles ack internally
+
+    case CMD_OTA_BEGIN:
+      if (isArmed) { result = CMD_ERR_REFUSED; break; }
+      result = otaHandleBegin();
+      break;
+
+    case CMD_OTA_FINALIZE: {
+      if (isArmed) { result = CMD_ERR_REFUSED; break; }
+      uint32_t fwSize  = readU32(&params[0]);
+      const uint8_t* fwHmac = &params[4];
+      result = otaHandleFinalize(fwHmac, fwSize);
+      break;
+    }
+
+    case CMD_OTA_CONFIRM:
+      result = otaHandleConfirm();
+      break;
 
     case CMD_PING:
       result = CMD_OK;
