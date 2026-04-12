@@ -38,7 +38,7 @@
 // BW is derived from channel index (ch<64 = 125kHz, ch>=64 = 500kHz).
 
 #define LORA_CR         5       // 4/5 coding rate (fixed, not command-configurable)
-#define LORA_PREAMBLE   6       // preamble symbols
+#define LORA_PREAMBLE   8       // preamble symbols
 #define LORA_SYNCWORD   0x12    // private network
 
 // Default channel if NVS is erased (0xFF). Channel 65 = BW500, 917.5 MHz.
