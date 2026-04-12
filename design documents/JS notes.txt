@@ -1,0 +1,25 @@
+loadHistory()
+  → reads newest record number from status
+  → iterates backward in batches (batchSize=2000 for rkt BLE, 200 for HTTP)
+  → each batch: sends [startRec u32][count u16] write to fetch characteristic / HTTP GET
+  → receives stream of records in format: [recNum u32][len u8][snr i8][ts u32][payload: len bytes]
+  → stores each into allFetched[recNum] = {recNum, snr, ts, payload, type}
+    where type = 'pkt' if payload[0]===0xAF, else 'logpage'
+  → after each batch: rebuildSessions() + updateNav()
+  → on done: showView(last session)
+
+rebuildSessions()
+  → sorts allFetched by recNum
+  → assigns type if missing (for older records loaded before type field existed)
+  → splits into sessions on ts decrease (reboot boundary)
+  → appends dlSession (LoRa download) if non-empty
+
+showView(idx)
+  → for each record: showRecord(r, toCharts=true, isLive=false)
+    → if type==='logpage': showLogPage(payload, snr, ts, ...)
+        payload[0] = page type byte (0x01-0x0D)
+        decodes with PD[pageType], updates cards + charts directly
+    → else (type==='pkt'): showPkt(payload, snr, rssi, ts, ...)
+        expects 0xAF header (10 bytes): deviceId, GPS fracs, fusedAlt, flags
+        then optionally one appended data page at offset 10
+        decodes both header fields and the embedded page
