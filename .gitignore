@@ -1,3 +1,4 @@
 .pio/
 secrets.h
 base_station/data/
+/rocket_avionics/build/
