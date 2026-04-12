@@ -211,10 +211,6 @@ static void buildPage0A(uint8_t* buf, size_t* pos) {
 static void buildPage0B(uint8_t* buf, size_t* pos) {
   writeS32(buf, pos, flightState.msSinceLaunch);
   writeU16(buf, pos, 0);  // pyro/chute flags TODO
-  int16_t groundM = baroData.altCalibrated ?
-    (int16_t)constrain(baroData.groundAltCm / 100, -32768, 32767) :
-    (int16_t)constrain(baroData.altCmMSL / 100, -32768, 32767);
-  writeS16(buf, pos, groundM);
 }
 
 // Page 0x0C: Radio health (5 bytes)

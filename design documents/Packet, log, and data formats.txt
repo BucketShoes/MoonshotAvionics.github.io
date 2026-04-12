@@ -18,7 +18,8 @@ These define the over-the-air and over-WebSocket message framing. The type byte 
               [6]    pyro/chute ch2 fired/released
               [7]    pyro/chute ch3 fired/released
               [8]    low battery
-              [9:15] reserved
+              [9] baro_ok, [10] accel_ok, [11] arm_ready
+              [12:15] reserved
       --- 10 bytes fixed, then optionally: ---
       uint8   data page type ID
       (N bytes data page payload, size determined by type ID)
