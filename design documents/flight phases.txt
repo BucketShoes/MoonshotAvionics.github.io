@@ -64,43 +64,6 @@ disarming (any phase to idle) - disarm command received
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # initial build plan:
 ok, time to build the flight phases. here's my plan. let me know what you think. (this is the same as the flight phases doc i just uploaded)
 

@@ -195,6 +195,8 @@ static void updateBaroEMAs(unsigned long nowUs) {
   flightState.baroSlow.update(altCm, nowUs, BARO_SLOW_TAU_US);
   flightState.baroFast.update(altCm, nowUs, BARO_FAST_TAU_US);
 
+  // LOGI_BARO is set fresh by sensors.h when baro data is read.
+  // Flight status changes when baro EMA updates — mark fresh here too.
   logPages[LOGI_FLIGHT_STATUS].freshMask |= 0xFF;
 }
 
@@ -367,13 +369,24 @@ static void checkCoastDetect(unsigned long nowUs) {
 // update, so this is always a genuine loop-to-loop comparison.
 // 3s minimum after boost/coast entry covers baro noise during boost and the
 // supersonic-to-subsonic pressure spike right after burnout.
+// 3s minimum after boost/coast entry: covers baro noise during boost and the
+// supersonic-to-subsonic transition (pressure spike right after burnout while
+// still climbing). After that lockout, a single loop-to-loop decrease fires apogee.
+// Loop-to-loop comparison is more robust than drop-from-peak: a venturi/suction
+// spike reads falsely high then snaps back, which looks like a descent from peak
+// but not a sustained decrease — the EMA absorbs the snap-back before it starts
+// truly decreasing.
 
 static void checkApogeeDetect(unsigned long nowUs) {
+  // Minimum time since boost/coast entry (covers boost noise and trans-sonic)
   if (flightState.boostEntryUs == 0) return;
   if ((nowUs - flightState.boostEntryUs) < 3000000UL) return;
 
   if (!flightState.baroFast.valid || !flightState.prevBaroFastValid) return;
 
+  // Apogee = fast EMA is not rising vs previous loop (flat or falling).
+  // Strictly increasing means we're still climbing; flat means topped out.
+  // A venturi spike would have resumed climbing after settling, so won't be flat.
   if (flightState.baroFast.valueCm <= flightState.prevBaroFastCm) {
     flightState.apogeeEntryUs = nowUs;
     enterPhase(PHASE_DROGUE, nowUs);
