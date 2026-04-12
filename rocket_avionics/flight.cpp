@@ -359,14 +359,13 @@ static void checkCoastDetect(unsigned long nowUs) {
 }
 
 // --- Apogee detection (COAST -> DROGUE) ---
-// Fast baro EMA (1s period) is decreasing vs previous loop.
+// Two conditions must both be true:
+//   1. Raw baro is below the fast EMA — rocket has crested the smoothed peak.
+//   2. Fast EMA is strictly falling vs previous loop — trend is descending.
 // 3s minimum after boost/coast entry: covers baro noise during boost and the
 // supersonic-to-subsonic transition (pressure spike right after burnout while
-// still climbing). After that lockout, a single loop-to-loop decrease fires apogee.
-// Loop-to-loop comparison is more robust than drop-from-peak: a venturi/suction
-// spike reads falsely high then snaps back, which looks like a descent from peak
-// but not a sustained decrease — the EMA absorbs the snap-back before it starts
-// truly decreasing.
+// still climbing). Requiring raw < EMA prevents triggering during the climb
+// when EMA lags behind (raw > EMA while ascending, raw < EMA only after crest).
 
 static void checkApogeeDetect(unsigned long nowUs) {
   // Minimum time since boost/coast entry (covers boost noise and trans-sonic)
@@ -374,11 +373,13 @@ static void checkApogeeDetect(unsigned long nowUs) {
   if ((nowUs - flightState.boostEntryUs) < 3000000UL) return;
 
   if (!flightState.baroFast.valid || !flightState.prevBaroFastValid) return;
+  if (!baroData.valid) return;
 
-  // Apogee = fast EMA is not rising vs previous loop (flat or falling).
-  // Strictly increasing means we're still climbing; flat means topped out.
-  // A venturi spike would have resumed climbing after settling, so won't be flat.
-  if (flightState.baroFast.valueCm <= flightState.prevBaroFastCm) {
+  // Raw must be below the fast EMA (confirms we're on the descending side)
+  if (baroData.altCmMSL >= flightState.baroFast.valueCm) return;
+
+  // EMA must also be strictly falling vs previous loop
+  if (flightState.baroFast.valueCm < flightState.prevBaroFastCm) {
     flightState.apogeeEntryUs = nowUs;
     enterPhase(PHASE_DROGUE, nowUs);
   }
