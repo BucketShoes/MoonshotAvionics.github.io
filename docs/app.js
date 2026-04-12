@@ -2170,6 +2170,12 @@ function initCharts() {
       document.getElementById('voice-status').textContent = voiceEnabled ? 'on' : '';
       if (!voiceEnabled) { voiceQueue = []; voiceBusy = false; try{speechSynthesis.cancel()}catch(e){} }
     });
+
+    // Default on
+    toggleDetail();
+    voiceEnabled = true;
+    document.getElementById('btn-voice').className = 'act';
+    document.getElementById('voice-status').textContent = 'on';
     document.getElementById('voice-mode').addEventListener('change', function() {
       voiceMode = this.value;
     });
@@ -2236,6 +2242,8 @@ function initCharts() {
         }).catch(function() {});
       }
     });
+
+    mapToggle();
   });
 
 })();
