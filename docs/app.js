@@ -1643,12 +1643,31 @@ function initCharts() {
       }
     }
 
-    // Send CMD_OTA_BEGIN and wait for device to erase partition (~1-2s)
+    // Send CMD_OTA_BEGIN and wait for 0x00 notify on the OTA char.
+    // The device notifies 0x00 after erase + esp_ota_begin completes (~1-2s).
     prog.textContent = 'Sending OTA BEGIN (erasing partition, ~2s)...';
+    var beginReady = new Promise(function(resolve, reject) {
+      var timeout = setTimeout(function() {
+        reject(new Error('OTA BEGIN timeout — no ready signal from device'));
+      }, 10000);
+      function onBeginNotify(ev) {
+        var d = new Uint8Array(ev.target.value.buffer);
+        if (d.length >= 1 && d[0] === 0x00) {
+          clearTimeout(timeout);
+          otaChar.removeEventListener('characteristicvaluechanged', onBeginNotify);
+          resolve();
+        } else if (d.length >= 1 && d[0] !== 0xA0) {
+          // Error during begin
+          clearTimeout(timeout);
+          otaChar.removeEventListener('characteristicvaluechanged', onBeginNotify);
+          var msg = OTA_STATUS_MSG[d[0]] || ('code 0x' + d[0].toString(16));
+          reject(new Error('OTA BEGIN failed: ' + msg));
+        }
+      }
+      otaChar.addEventListener('characteristicvaluechanged', onBeginNotify);
+    });
     await sendCmd(0x50);
-    // Give the device time to finish erasing before we start sending chunks.
-    // The erase blocks inside the command handler so the BLE ACK arrives after erase completes.
-    await new Promise(function(r) { setTimeout(r, 500); });
+    await beginReady;
 
     var CHUNK = 508;  // 4-byte offset prefix + 508 bytes data = 512-byte BLE write limit
     var totalBytes = otaFileBytes.length;

@@ -72,6 +72,8 @@ uint8_t otaHandleBegin() {
   otaCtx.chunkCount = 0;
   otaCtx.state = OTA_RECEIVING;
   Serial.println("OTA: session open, ready for chunks");
+  // Notify 0x00 on the OTA char so JS knows erase is complete and chunks can begin.
+  otaQueueNotify(OTA_STATUS_OK);
   return CMD_OK;
 }
 
