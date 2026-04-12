@@ -1614,6 +1614,42 @@ function initCharts() {
     document.getElementById('ota-send').disabled = true;
     document.getElementById('ota-send').textContent = 'UPLOADING...';
 
+    var targetId = parseInt(document.getElementById('ota-target-id').value) & 0xFF;
+    var nonce = parseInt(document.getElementById('cmd-nonce').value) >>> 0;
+
+    // Helper: build and send a no-param 0x9A command, return result byte (BLE) or throw (HTTP)
+    async function sendCmd(cmdId) {
+      var pktArr = [0x9A, targetId, cmdId];
+      pktArr.push(nonce & 0xFF, (nonce >> 8) & 0xFF, (nonce >> 16) & 0xFF, (nonce >> 24) & 0xFF);
+      var hmacInput = new Uint8Array(pktArr);
+      var mac10 = hmacSha256(derivedKeyBytes, hmacInput).slice(0, 10);
+      var fullPkt = new Uint8Array(pktArr.length + 10);
+      fullPkt.set(hmacInput); fullPkt.set(mac10, pktArr.length);
+      nonce++;
+      document.getElementById('cmd-nonce').value = nonce;
+      try { localStorage.setItem('cmd-nonce', nonce); } catch(e2) {}
+
+      if (useHttp) {
+        var body = new Uint8Array(4 + fullPkt.length);
+        var bdv = new DataView(body.buffer);
+        bdv.setUint16(0, 3000, true); bdv.setUint8(2, 1); bdv.setUint8(3, fullPkt.length);
+        body.set(fullPkt, 4);
+        var r = await fetch(getBaseHttp() + '/api/command', {
+          method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: body
+        });
+        if (!r.ok) throw new Error('CMD 0x' + cmdId.toString(16) + ' HTTP ' + r.status);
+      } else {
+        await cmdChar.writeValueWithResponse(fullPkt);
+      }
+    }
+
+    // Send CMD_OTA_BEGIN and wait for device to erase partition (~1-2s)
+    prog.textContent = 'Sending OTA BEGIN (erasing partition, ~2s)...';
+    await sendCmd(0x50);
+    // Give the device time to finish erasing before we start sending chunks.
+    // The erase blocks inside the command handler so the BLE ACK arrives after erase completes.
+    await new Promise(function(r) { setTimeout(r, 500); });
+
     var CHUNK = 508;  // 4-byte offset prefix + 508 bytes data = 512-byte BLE write limit
     var totalBytes = otaFileBytes.length;
     var totalChunks = Math.ceil(totalBytes / CHUNK);
@@ -1657,46 +1693,33 @@ function initCharts() {
 
       prog.textContent += '\nAll chunks sent. Sending finalize...';
 
-      // Build CMD_OTA_FINALIZE (0x51) packet
-      var targetId = parseInt(document.getElementById('ota-target-id').value) & 0xFF;
-      var nonce = parseInt(document.getElementById('cmd-nonce').value) >>> 0;
-
+      // Build CMD_OTA_FINALIZE (0x51) packet: [0x9A][target][0x51][nonce u32][fwSize u32][fwHmac 32][HMAC10]
       var pktArr = [0x9A, targetId, 0x51];
       pktArr.push(nonce & 0xFF, (nonce >> 8) & 0xFF, (nonce >> 16) & 0xFF, (nonce >> 24) & 0xFF);
-      // params: [fwSize u32 LE][fwHmac 32 bytes]
       pktArr.push(totalBytes & 0xFF, (totalBytes >> 8) & 0xFF,
                   (totalBytes >> 16) & 0xFF, (totalBytes >> 24) & 0xFF);
       for (var j = 0; j < 32; j++) pktArr.push(otaFileHmac[j]);
-
       var hmacInput = new Uint8Array(pktArr);
       var cmdHmac10 = hmacSha256(derivedKeyBytes, hmacInput).slice(0, 10);
       var fullPkt = new Uint8Array(pktArr.length + 10);
       fullPkt.set(hmacInput);
       fullPkt.set(cmdHmac10, pktArr.length);
-
-      // Transport wrapper: [waitMs u16 LE][sends u8][pktLen u8][packet]
-      var body = new Uint8Array(4 + fullPkt.length);
-      var bdv = new DataView(body.buffer);
-      bdv.setUint16(0, 2000, true);
-      bdv.setUint8(2, 1);
-      bdv.setUint8(3, fullPkt.length);
-      body.set(fullPkt, 4);
+      nonce++;
+      document.getElementById('cmd-nonce').value = nonce;
+      try { localStorage.setItem('cmd-nonce', nonce); } catch(e2) {}
 
       if (useHttp) {
+        var body = new Uint8Array(4 + fullPkt.length);
+        var bdv = new DataView(body.buffer);
+        bdv.setUint16(0, 2000, true); bdv.setUint8(2, 1); bdv.setUint8(3, fullPkt.length);
+        body.set(fullPkt, 4);
         var r = await fetch(getBaseHttp() + '/api/command', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: body
+          method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: body
         });
         if (!r.ok) throw new Error('Finalize HTTP ' + r.status + ': ' + await r.text());
       } else {
-        await cmdChar.writeValueWithResponse(body);
+        await cmdChar.writeValueWithResponse(fullPkt);
       }
-
-      // Increment shared nonce
-      var newNonce = nonce + 1;
-      document.getElementById('cmd-nonce').value = newNonce;
-      try { localStorage.setItem('cmd-nonce', newNonce); } catch(e2) {}
 
       prog.textContent += '\nFinalize sent. Device rebooting...\n' +
         'Reconnect and send 0x52 OTA CONFIRM to keep new firmware,\n' +
