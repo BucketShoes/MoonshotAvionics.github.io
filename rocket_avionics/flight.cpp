@@ -184,14 +184,22 @@ static void updateGpsStability(unsigned long nowUs) {
 
 static void updateBaroEMAs(unsigned long nowUs) {
   if (!baroData.valid) return;
+  if (baroData.lastReadUs == flightState.lastBaroReadUs) return;  // no new sensor data
+  flightState.lastBaroReadUs = baroData.lastReadUs;
+
+  // Save previous fast EMA before updating — this is the per-sample snapshot
+  // used for apogee detection. Gating on new data means the comparison is
+  // between consecutive real sensor samples, not between flight-loop iterations.
+  if (flightState.baroFast.valid) {
+    flightState.prevBaroFastCm = flightState.baroFast.valueCm;
+    flightState.prevBaroFastValid = true;
+  }
 
   float altCm = (float)baroData.altCmMSL;
 
   flightState.baroSlow.update(altCm, nowUs, BARO_SLOW_TAU_US);
   flightState.baroFast.update(altCm, nowUs, BARO_FAST_TAU_US);
 
-  // LOGI_BARO is set fresh by sensors.h when baro data is read.
-  // Flight status changes when baro EMA updates — mark fresh here too.
   logPages[LOGI_FLIGHT_STATUS].freshMask |= 0xFF;
 }
 
@@ -359,27 +367,21 @@ static void checkCoastDetect(unsigned long nowUs) {
 }
 
 // --- Apogee detection (COAST -> DROGUE) ---
-// Two conditions must both be true:
-//   1. Raw baro is below the fast EMA — rocket has crested the smoothed peak.
-//   2. Fast EMA is strictly falling vs previous loop — trend is descending.
-// 3s minimum after boost/coast entry: covers baro noise during boost and the
-// supersonic-to-subsonic transition (pressure spike right after burnout while
-// still climbing). Requiring raw < EMA prevents triggering during the climb
-// when EMA lags behind (raw > EMA while ascending, raw < EMA only after crest).
+// Fast baro EMA falls below its value from the previous baro sample.
+// prevBaroFastCm is saved once per real sensor reading (gated on lastReadUs),
+// so this comparison is between consecutive sensor samples — not between
+// flight-loop iterations — eliminating false triggers from stale data being
+// fed to the EMA many times per loop.
+// 3s minimum after boost/coast entry covers baro noise during boost and the
+// supersonic-to-subsonic pressure spike right after burnout.
 
 static void checkApogeeDetect(unsigned long nowUs) {
-  // Minimum time since boost/coast entry (covers boost noise and trans-sonic)
   if (flightState.boostEntryUs == 0) return;
   if ((nowUs - flightState.boostEntryUs) < 3000000UL) return;
 
   if (!flightState.baroFast.valid || !flightState.prevBaroFastValid) return;
-  if (!baroData.valid) return;
 
-  // Raw must be below the fast EMA (confirms we're on the descending side)
-  if (baroData.altCmMSL >= flightState.baroFast.valueCm) return;
-
-  // EMA must also be strictly falling vs previous loop
-  if (flightState.baroFast.valueCm < flightState.prevBaroFastCm) {
+  if (flightState.baroFast.valueCm <= flightState.prevBaroFastCm) {
     flightState.apogeeEntryUs = nowUs;
     enterPhase(PHASE_DROGUE, nowUs);
   }
@@ -508,12 +510,6 @@ void nonblockingFlight() {
 
   // Update arm readiness flag
   flightState.armReady = !flightState.armed && checkArmReady(nowUs);
-
-  // Save previous fast baro EMA for apogee detection (before any phase update changes it)
-  if (flightState.baroFast.valid) {
-    flightState.prevBaroFastCm = flightState.baroFast.valueCm;
-    flightState.prevBaroFastValid = true;
-  }
 
   // Update ms since launch
   if (flightState.launchDetectUs > 0) {

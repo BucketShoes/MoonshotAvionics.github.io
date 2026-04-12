@@ -210,8 +210,10 @@ struct FlightState {
   BaroEMA baroFast;  // 1s period  — for flight decisions (apogee, deploy, etc)
 
   // Previous fast baro EMA value (for apogee detection: new < old = descending)
+  // Only updated when new baro sensor data arrives (tracked via lastBaroReadUs).
   float prevBaroFastCm;
   bool prevBaroFastValid;
+  unsigned long lastBaroReadUs;  // last baroData.lastReadUs we processed
 
 
   // Sensor stability trackers
