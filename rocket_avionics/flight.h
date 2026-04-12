@@ -11,31 +11,37 @@
 //   DISARM command: flightDisarm()
 //   Read state: flightState, flightPhase, etc.
 //
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║                  *** SAFETY-CRITICAL CODE ***                        ║
-// ║                                                                      ║
+// ╔═════════════════════════════════════════════════════════════════════╗
+// ║                  *** SAFETY-CRITICAL CODE ***                       ║
+// ║                                                                     ║
 // ║  Phase transitions in this file directly trigger pyro charges and   ║
-// ║  chute release mechanisms on a live rocket:                          ║
-// ║                                                                      ║
+// ║  chute release mechanisms on a live rocket:                         ║
+// ║                                                                     ║
 // ║  PHASE_DROGUE     — fires pyro channel 1 (drogue chute ejection).   ║
 // ║                     Early trigger: chute ejects while still         ║
 // ║                     climbing — could explode into ground crew.      ║
 // ║                     Late/missed: rocket descends ballistically,     ║
 // ║                     potentially at hundreds of m/s.                 ║
-// ║                                                                      ║
+// ║                                                                     ║
 // ║  PHASE_MAIN_DEPLOY — fires pyro channel 2 and/or energises          ║
 // ║                      nichrome wire or servo for main chute.         ║
 // ║                      Nichrome stays hot while the GPIO is high —    ║
 // ║                      if the main loop stalls it can burn through    ║
 // ║                      structure. Missed deploy means fast descent.   ║
-// ║                                                                      ║
+// ║                                                                     ║
 // ║  REVIEW POLICY: any change to phase transition conditions,          ║
 // ║  timing constants, EMA parameters, or the order of operations in    ║
 // ║  nonblockingFlight() must be reviewed against the flight phase      ║
 // ║  spec ("design documents/flight phases.txt") before committing.     ║
-// ║  An AI assistant should NOT make these changes autonomously —       ║
-// ║  propose the change and its reasoning, let the human decide.        ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+// ║                                                                     ║
+// ║  If AI makes any changes which could effect the logic for any phase ║
+// ║  transitions, or the data which is used to control them (such as    ║
+// ║  around barometer logic), then the message MUST                     ║
+// ║  end with "THIS TURN CHANGES FLIGHT PHASE LOGIC" with               ║
+// ║  nothing after it. (before the end, describe the changes).          ║
+// ║  Following turns should also check if previous turns made changes   ║
+// ║  without a warning (e.g. if this note wasnt yet in context)         ║
+// ╚═════════════════════════════════════════════════════════════════════╝
 
 #ifndef FLIGHT_H
 #define FLIGHT_H
