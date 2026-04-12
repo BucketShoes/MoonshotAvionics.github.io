@@ -184,12 +184,15 @@ static void updateGpsStability(unsigned long nowUs) {
 
 static void updateBaroEMAs(unsigned long nowUs) {
   if (!baroData.valid) return;
-  if (baroData.lastReadUs == flightState.lastBaroReadUs) return;  // no new sensor data
-  flightState.lastBaroReadUs = baroData.lastReadUs;
+  // Only step EMAs when there is a new sensor reading. Pass the actual read
+  // timestamp so dt reflects the true inter-sample interval (~69ms at 14Hz),
+  // not the flight-loop period. Without this, repeated calls with the same
+  // stale reading advance lastUs each loop, causing dt to be near-zero on
+  // real samples — the EMA barely moves and prev ≈ current always.
+  unsigned long sampleUs = baroData.lastReadUs;
+  if (sampleUs == flightState.baroFast.lastUs && flightState.baroFast.valid) return;
 
-  // Save previous fast EMA before updating — this is the per-sample snapshot
-  // used for apogee detection. Gating on new data means the comparison is
-  // between consecutive real sensor samples, not between flight-loop iterations.
+  // Save previous fast EMA before this step for apogee detection
   if (flightState.baroFast.valid) {
     flightState.prevBaroFastCm = flightState.baroFast.valueCm;
     flightState.prevBaroFastValid = true;
@@ -197,8 +200,8 @@ static void updateBaroEMAs(unsigned long nowUs) {
 
   float altCm = (float)baroData.altCmMSL;
 
-  flightState.baroSlow.update(altCm, nowUs, BARO_SLOW_TAU_US);
-  flightState.baroFast.update(altCm, nowUs, BARO_FAST_TAU_US);
+  flightState.baroSlow.update(altCm, sampleUs, BARO_SLOW_TAU_US);
+  flightState.baroFast.update(altCm, sampleUs, BARO_FAST_TAU_US);
 
   logPages[LOGI_FLIGHT_STATUS].freshMask |= 0xFF;
 }
