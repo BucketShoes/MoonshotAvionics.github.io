@@ -25,7 +25,6 @@
 #define OTA_STATUS_OTA_END_FAIL  0x05  // esp_ota_end failed
 #define OTA_STATUS_VERIFYING     0x06  // finalize in progress, no more chunks
 #define OTA_STATUS_REFUSED       0x07  // armed or rollback pending
-#define OTA_STATUS_BAD_ALIGN     0x08  // chunk crosses 512-byte sector boundary
 
 // Progress report prefix (5 bytes: [0xA0][bytesWritten u32 LE]) sent every ~1200 chunks.
 #define OTA_PROGRESS_MARKER      0xA0
@@ -54,7 +53,7 @@ uint8_t otaHandleBegin();
 
 // Called from the BLE OTA characteristic callback and HTTP handler.
 // offset:    byte offset of this chunk in the firmware image
-// data:      chunk payload (up to 512 bytes)
+// data:      chunk payload (up to 508 bytes)
 // len:       number of bytes in this chunk
 // Queues a status notify via otaQueueNotify() on errors; sends a progress
 // report (OTA_PROGRESS_MARKER + bytesWritten) every OTA_PROGRESS_INTERVAL chunks.

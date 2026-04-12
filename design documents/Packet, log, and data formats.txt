@@ -210,15 +210,12 @@ Service UUID:  4d4f4f4e-5348-4f54-4253-000000000000
     Empty notification (0 bytes) = end of requested range.
 
   Char 0006 (WRITE | WRITE WITHOUT RESPONSE | NOTIFY) — OTA firmware chunk
-    Write (chunk): [offset u32 LE][data: 1–512 bytes]
-      Max frame: 516 bytes (fits within 517-byte MTU). Not authenticated individually.
-      Alignment: chunk must not cross a 512-byte sector boundary:
-        (offset >> 9) must equal ((offset + len - 1) >> 9), except the final partial chunk.
-        Device rejects misaligned chunks with status 0x08.
+    Write (chunk): [offset u32 LE][data: 1–508 bytes]
+      Max frame: 512 bytes (4-byte offset + 508 bytes data = Web Bluetooth write limit). Not authenticated individually.
       Chunks must be sent in strictly sequential order (offset == bytesWritten). Gap → status 0x03.
     Notifications (device → client):
       Only sent on errors and periodic progress (no per-chunk ACK — use WRITE_NR for throughput):
-      [status byte]  error codes 0x01–0x08 (see command listing for full table)
+      [status byte]  error codes 0x01–0x07 (see command listing for full table)
       [0xA0][bytesWritten u32 LE]  progress report (5 bytes), sent every 1200 chunks (~600 KB)
     OTA session gating: CMD_OTA_BEGIN (0x50) must be sent first via char 0002;
       CMD_OTA_FINALIZE (0x51) and CMD_OTA_CONFIRM (0x52) also go via char 0002.

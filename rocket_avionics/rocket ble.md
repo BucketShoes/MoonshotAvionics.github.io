@@ -71,12 +71,10 @@ Both devices expose a sixth GATT characteristic with UUID suffix `0x0006` in the
 ### Chunk write format
 
 ```
-[offset u32 LE][data: 1–512 bytes]
+[offset u32 LE][data: 1–508 bytes]
 ```
 
-Max frame: 516 bytes (fits within the 517-byte negotiated MTU). Chunks are not individually authenticated. Authentication is deferred to the `CMD_OTA_FINALIZE (0x51)` command which verifies HMAC-SHA256 of the entire image.
-
-**Alignment constraint**: `(offset >> 9) != ((offset + len - 1) >> 9)` must be false (chunk must not cross a 512-byte sector boundary), except for the final partial chunk. The JS sender enforces this by using exactly 512-byte-aligned, 512-byte chunks; the last chunk may be shorter. The device rejects violations with status byte `0x08`.
+Max frame: 512 bytes (4-byte offset prefix + 508 bytes data = Web Bluetooth `writeValueWithoutResponse` limit). Chunks are not individually authenticated. Authentication is deferred to the `CMD_OTA_FINALIZE (0x51)` command which verifies HMAC-SHA256 of the entire image.
 
 ### Notifications
 
@@ -92,7 +90,6 @@ The device does **not** send a per-chunk ACK (incompatible with target throughpu
 | `0x05` | esp_ota_end failed |
 | `0x06` | In OTA_VERIFYING state — no more chunks allowed |
 | `0x07` | Refused: device is armed or rollback is pending |
-| `0x08` | Chunk crosses 512-byte sector boundary |
 | `0xA0 [bytesWritten u32 LE]` | Progress report (5 bytes total), sent every 1200 chunks (~600 KB, ~5 s at target throughput) |
 
 JS subscribes to notifications on connect; any non-zero status byte aborts the upload and displays the error. Progress reports (`0xA0` prefix) update the progress bar and reset the stall timer (10 s timeout).

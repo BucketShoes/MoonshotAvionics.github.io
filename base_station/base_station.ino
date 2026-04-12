@@ -175,7 +175,6 @@ bool bleClientConnected = false;
 #define OTA_STATUS_OTA_END_FAIL  0x05
 #define OTA_STATUS_VERIFYING     0x06
 #define OTA_STATUS_REFUSED       0x07
-#define OTA_STATUS_BAD_ALIGN     0x08
 #define OTA_PROGRESS_MARKER      0xA0
 #define OTA_PROGRESS_INTERVAL    1200
 
@@ -205,12 +204,7 @@ static void otaHandleChunk(uint32_t offset, const uint8_t* data, size_t len) {
   if (bsOta.state != OTA_RECEIVING) {
     bsOtaQueueNotify(OTA_STATUS_NOT_ACTIVE); return;
   }
-  if (len == 0) { bsOtaQueueNotify(OTA_STATUS_BAD_ALIGN); return; }
-  uint32_t startSector = offset >> 9;
-  uint32_t endSector   = (offset + len - 1) >> 9;
-  if (startSector != endSector) {
-    bsOtaQueueNotify(OTA_STATUS_BAD_ALIGN); return;
-  }
+  if (len == 0) { bsOtaQueueNotify(OTA_STATUS_NOT_ACTIVE); return; }
   if (offset != bsOta.bytesWritten) {
     bsOtaQueueNotify(OTA_STATUS_OFFSET_GAP); return;
   }

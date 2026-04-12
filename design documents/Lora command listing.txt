@@ -139,7 +139,6 @@ OTA STATUS BYTES (notified on BLE char 0006 / returned in HTTP /api/ota/chunk re
 0x05  esp_ota_end failed
 0x06  Already in OTA_VERIFYING state — no more chunks accepted
 0x07  Refused: device is armed or rollback is pending
-0x08  Chunk crosses 512-byte sector boundary (misaligned)
 0xA0 [bytesWritten u32 LE]  Progress report (5 bytes total), sent every 1200 chunks (~600 KB)
 ```
 

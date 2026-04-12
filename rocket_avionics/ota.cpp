@@ -87,17 +87,8 @@ void otaHandleChunk(uint32_t offset, const uint8_t* data, size_t len) {
     return;
   }
 
-  // Alignment check: chunk must not cross a 512-byte sector boundary.
-  // Allow chunks that start and end in the same 512-byte block.
-  // Exception: zero-length is always rejected.
   if (len == 0) {
-    otaQueueNotify(OTA_STATUS_BAD_ALIGN);
-    return;
-  }
-  uint32_t startSector = offset >> 9;
-  uint32_t endSector   = (offset + len - 1) >> 9;
-  if (startSector != endSector) {
-    otaQueueNotify(OTA_STATUS_BAD_ALIGN);
+    otaQueueNotify(OTA_STATUS_NOT_ACTIVE);
     return;
   }
 

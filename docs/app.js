@@ -1614,7 +1614,7 @@ function initCharts() {
     document.getElementById('ota-send').disabled = true;
     document.getElementById('ota-send').textContent = 'UPLOADING...';
 
-    var CHUNK = 512;
+    var CHUNK = 508;  // 4-byte offset prefix + 508 bytes data = 512-byte BLE write limit
     var totalBytes = otaFileBytes.length;
     var totalChunks = Math.ceil(totalBytes / CHUNK);
     prog.textContent = 'Sending ' + totalChunks + ' chunks (' + totalBytes + ' bytes)...';
