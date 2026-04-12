@@ -182,26 +182,18 @@ static void updateGpsStability(unsigned long nowUs) {
 
 // ===================== BARO EMA UPDATES =====================
 
+// EMAs run every flight loop with the latest baro reading.
+// Their purpose is to estimate altitude *between* sensor readings and filter
+// noise — they should keep moving toward the last known value even when no
+// new sample has arrived. prevBaroFastCm is saved each loop so apogee
+// detection compares the last two loop values of the EMA.
 static void updateBaroEMAs(unsigned long nowUs) {
   if (!baroData.valid) return;
-  // Only step EMAs when there is a new sensor reading. Pass the actual read
-  // timestamp so dt reflects the true inter-sample interval (~69ms at 14Hz),
-  // not the flight-loop period. Without this, repeated calls with the same
-  // stale reading advance lastUs each loop, causing dt to be near-zero on
-  // real samples — the EMA barely moves and prev ≈ current always.
-  unsigned long sampleUs = baroData.lastReadUs;
-  if (sampleUs == flightState.baroFast.lastUs && flightState.baroFast.valid) return;
-
-  // Save previous fast EMA before this step for apogee detection
-  if (flightState.baroFast.valid) {
-    flightState.prevBaroFastCm = flightState.baroFast.valueCm;
-    flightState.prevBaroFastValid = true;
-  }
 
   float altCm = (float)baroData.altCmMSL;
 
-  flightState.baroSlow.update(altCm, sampleUs, BARO_SLOW_TAU_US);
-  flightState.baroFast.update(altCm, sampleUs, BARO_FAST_TAU_US);
+  flightState.baroSlow.update(altCm, nowUs, BARO_SLOW_TAU_US);
+  flightState.baroFast.update(altCm, nowUs, BARO_FAST_TAU_US);
 
   logPages[LOGI_FLIGHT_STATUS].freshMask |= 0xFF;
 }
@@ -370,11 +362,9 @@ static void checkCoastDetect(unsigned long nowUs) {
 }
 
 // --- Apogee detection (COAST -> DROGUE) ---
-// Fast baro EMA falls below its value from the previous baro sample.
-// prevBaroFastCm is saved once per real sensor reading (gated on lastReadUs),
-// so this comparison is between consecutive sensor samples — not between
-// flight-loop iterations — eliminating false triggers from stale data being
-// fed to the EMA many times per loop.
+// Fast baro EMA (1s period) is falling vs its value from the previous loop.
+// prevBaroFastCm is saved at the top of nonblockingFlight(), before the EMA
+// update, so this is always a genuine loop-to-loop comparison.
 // 3s minimum after boost/coast entry covers baro noise during boost and the
 // supersonic-to-subsonic pressure spike right after burnout.
 
@@ -501,6 +491,13 @@ static void checkLanding(unsigned long nowUs) {
 
 void nonblockingFlight() {
   unsigned long nowUs = micros();
+
+  // Save previous fast baro EMA before updating — apogee detection compares
+  // this loop's EMA value against last loop's to detect a falling trend.
+  if (flightState.baroFast.valid) {
+    flightState.prevBaroFastCm = flightState.baroFast.valueCm;
+    flightState.prevBaroFastValid = true;
+  }
 
   // Always update baro EMAs (needed for both arming and flight)
   updateBaroEMAs(nowUs);
