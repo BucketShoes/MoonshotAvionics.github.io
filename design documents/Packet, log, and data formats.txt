@@ -209,6 +209,21 @@ Service UUID:  4d4f4f4e-5348-4f54-4253-000000000000
       (N bytes) payload (starts with type byte)
     Empty notification (0 bytes) = end of requested range.
 
+  Char 0006 (WRITE | WRITE WITHOUT RESPONSE | NOTIFY) — OTA firmware chunk
+    Write (chunk): [offset u32 LE][data: 1–512 bytes]
+      Max frame: 516 bytes (fits within 517-byte MTU). Not authenticated individually.
+      Alignment: chunk must not cross a 512-byte sector boundary:
+        (offset >> 9) must equal ((offset + len - 1) >> 9), except the final partial chunk.
+        Device rejects misaligned chunks with status 0x08.
+      Chunks must be sent in strictly sequential order (offset == bytesWritten). Gap → status 0x03.
+    Notifications (device → client):
+      Only sent on errors and periodic progress (no per-chunk ACK — use WRITE_NR for throughput):
+      [status byte]  error codes 0x01–0x08 (see command listing for full table)
+      [0xA0][bytesWritten u32 LE]  progress report (5 bytes), sent every 1200 chunks (~600 KB)
+    OTA session gating: CMD_OTA_BEGIN (0x50) must be sent first via char 0002;
+      CMD_OTA_FINALIZE (0x51) and CMD_OTA_CONFIRM (0x52) also go via char 0002.
+      See command listing for full OTA state machine and status byte table.
+
 --- Rocket Direct BLE Service ---
 Service UUID:  524f434b-4554-5354-424c-000000000000
 Advertised name prefix: "Moonshot-Rocket"
@@ -261,3 +276,39 @@ When we eventually combine services/chars, this will still be separate from the 
     Empty notification (0 bytes) = end of requested range.
 TODO: @@@ this is wrong - the logs should each include the relevant timestamp from the log (this isnt the current time, its the time it was logged).
 TODO: it should also include the logged snr/rssi, same as base station does - although for the rocket, the majority of these are expected to be the sentinel 127, since most logs are locally generated - i.e. this is identical format to the base station char0004, except the interpretation differs because its a log from the rocket, rather than a log from the base station, so will be from a different log record index and different timestamp since boot (if they booted at different times and had different other logs before this)
+
+  Char 0006 (WRITE | WRITE WITHOUT RESPONSE | NOTIFY) — OTA firmware chunk
+    Same chunk wire format and notification protocol as base station char 0006 (see above).
+    UUID: 524f434b-4554-5354-424c-000000000006
+
+--- Rocket BLE Connection Behaviour ---
+
+  MTU: negotiate 517, but limit notification payloads to BLE_MAX_PDU (502 bytes).
+    Rationale: 502 bytes fits in two LL segments; 517 spills into a third.
+
+  PHY: advertise on legacy 1M only (NimBLE dual advertising not fully supported).
+    On connect: attempt to negotiate 2M PHY. Default PHY for historical log fetch is 2M.
+    Coded PHY S8 is available via char 0004 command 0x03 (lower throughput, longer range — intended for in-flight realtime telemetry).
+
+  Advertising interval: ~1 second (to conserve battery).
+
+  Connection multiplicity: one client at a time. A new connection causes the previous
+    connection to be disconnected, buffers and counters cleared, and all page fresh-flags
+    set. Advertising continues while connected.
+
+  Realtime telemetry (char 0001):
+    On connect, subscription begins at 10 Hz for pages 1–13 (all implemented data pages).
+    A "fresh" flag per page type is set when new sensor data arrives; cleared when the page
+    is sent. Non-fresh pages are skipped in reliable transports (BLE = reliable).
+    If a captured set of pages does not fit in one PDU, the overflow is buffered (max 4 KB)
+    and drained one PDU per loop iteration. No new capture begins until the buffer is empty.
+    All records in one capture share the same uint64 capture timestamp.
+
+  Historical log fetch (char 0005):
+    One PDU per main loop iteration, filled with as many whole records as fit (max 502 bytes).
+    Non-blocking. Allowed while armed (impact expected minimal; may be reviewed after flight testing).
+
+  Transport trust: BLE is untrusted. Unauthenticated requests (char 0004 ConnSet, char 0005 log
+    fetch) are available to any connected client. Authenticated 0x9A commands (char 0002) still
+    require valid HMAC. If BLE is found to affect flight determinism, the entire stack will be
+    stopped when armed (not currently implemented).

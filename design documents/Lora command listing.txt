@@ -1,7 +1,9 @@
 COMMAND LIST
-All commands use packet type 0x9A. Every command has a target device ID in the packet header.
+All commands use packet type 0x9A and are transport-agnostic: they are accepted equally over LoRa, BLE char 0002 (rocket or base), WebSocket, and HTTP POST /api/command. Every command has a target device ID in the packet header.
 Devices ignore commands not matching their ID, or with a nonce less than or equal to the highest nonce seen in a valid command seen so far.
 HMAC SHA-256 covers payload excluding the hmac bytes themselves, i.e. type + target ID + command ID + nonce + params. Truncated to 10 bytes. Keys in firmware/NVS on rockets/relays/bases; PBKDF in JS (password entered by user but never sent to server), with salt "Moonshot-HMAC-SALT" (ascii)
+
+Note: OTA firmware chunks (BLE char 0006 / HTTP PUT /api/ota/chunk) are NOT commands. They use a separate wire format and are not authenticated individually. Only the three OTA control commands (0x50/0x51/0x52) below are 0x9A commands. Chunks are too large for LoRa and have no LoRa equivalent.
 
 Channel mapping mostly matches vs lorawan channels AU915, with some exceptions"
 Channel 0-63 are bw125 at 915.2MHz-927.8MHz in 200KHz increments
@@ -105,4 +107,44 @@ Effect: target device switches to download radio settings, waits 10ms (both side
       Params: none
       Effect: resets log ring buffer — clears log index/log data partitions, resets record counter to 0. (This is needed before 4gb of log writes, otherwise logging stops). Only logs are cleared, config is kept as-is.
       Refused if armed (rocket).
+
+0x50  OTA BEGIN
+      Params: none
+      Effect: enables OTA chunk writes on the target device. Erases the entire inactive OTA partition (~1.5 MB, ~1–2 s — pre-erased with vTaskDelay(1) per 4 KB sector to feed the watchdog), then opens an esp_ota_begin session.
+      Refused if: armed; a rollback is pending (device rebooted into new firmware but CMD_OTA_CONFIRM has not been sent — must confirm or reboot-to-rollback before starting a new session); OTA session already in progress.
+      OTA and ARM are mutually exclusive in both directions: OTA commands refuse if armed; ARM refuses if any OTA state other than OTA_LOCKED.
+      Note: LoRa transport is technically valid for this command (no params, small packet), but in practice OTA is initiated from BLE/HTTP where the chunk transport is also available.
+
+0x51  OTA FINALIZE
+      Params: uint32 fwSize (LE) + uint8[32] fwHmac
+             = 36 bytes total
+      fwHmac: full 32-byte HMAC-SHA256(derivedKey, entire_firmware_binary)
+      Effect: stops accepting chunks (enters OTA_VERIFYING state), verifies bytesWritten == fwSize, reads back the entire written image from flash and verifies HMAC-SHA256 against the provided hash, then calls esp_ota_end + esp_ota_set_boot_partition (rollback-pending mode) and reboots after 500 ms.
+      Refused if: armed; not in OTA_RECEIVING state.
+      On HMAC mismatch: esp_ota_abort is called, session resets to OTA_LOCKED, status 0x04 notified.
+      Note: this command is normally sent over BLE/HTTP after all chunks. LoRa transport is valid (36-byte params fit in a LoRa packet) but not a normal use case.
+
+0x52  OTA CONFIRM
+      Params: none
+      Effect: after rebooting into new firmware, confirms the new firmware is good by calling esp_ota_mark_app_valid_cancel_rollback(). The device will stay on the new partition permanently. If this command is never sent after a reboot into new firmware, the bootloader will automatically roll back to the previous firmware slot on the next reboot.
 ```
+
+OTA STATUS BYTES (notified on BLE char 0006 / returned in HTTP /api/ota/chunk response):
+```
+0x00  OK / chunk accepted
+0x01  OTA not active (CMD_OTA_BEGIN not sent)
+0x02  Write failed / begin or erase failed
+0x03  Offset gap — chunks must be strictly sequential
+0x04  HMAC mismatch on finalize — session aborted, must resend CMD_OTA_BEGIN
+0x05  esp_ota_end failed
+0x06  Already in OTA_VERIFYING state — no more chunks accepted
+0x07  Refused: device is armed or rollback is pending
+0x08  Chunk crosses 512-byte sector boundary (misaligned)
+0xA0 [bytesWritten u32 LE]  Progress report (5 bytes total), sent every 1200 chunks (~600 KB)
+```
+
+OTA STATE MACHINE:
+```
+OTA_LOCKED → (CMD_OTA_BEGIN) → OTA_ERASING → OTA_RECEIVING → (CMD_OTA_FINALIZE) → OTA_VERIFYING → (reboot) → OTA_LOCKED
+```
+The target OTA partition is always esp_ota_get_next_update_partition(NULL) — whichever slot is not currently running. Alternates between app0/app1 each flash.
