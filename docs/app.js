@@ -1629,17 +1629,18 @@ function initCharts() {
       document.getElementById('cmd-nonce').value = nonce;
       try { localStorage.setItem('cmd-nonce', nonce); } catch(e2) {}
 
+      // Both BLE and HTTP use the [waitMs u16 LE][sends u8][pktLen u8][packet] wrapper.
+      var body = new Uint8Array(4 + fullPkt.length);
+      var bdv = new DataView(body.buffer);
+      bdv.setUint16(0, 3000, true); bdv.setUint8(2, 1); bdv.setUint8(3, fullPkt.length);
+      body.set(fullPkt, 4);
       if (useHttp) {
-        var body = new Uint8Array(4 + fullPkt.length);
-        var bdv = new DataView(body.buffer);
-        bdv.setUint16(0, 3000, true); bdv.setUint8(2, 1); bdv.setUint8(3, fullPkt.length);
-        body.set(fullPkt, 4);
         var r = await fetch(getBaseHttp() + '/api/command', {
           method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: body
         });
         if (!r.ok) throw new Error('CMD 0x' + cmdId.toString(16) + ' HTTP ' + r.status);
       } else {
-        await cmdChar.writeValueWithResponse(fullPkt);
+        await cmdChar.writeValueWithResponse(body);
       }
     }
 
@@ -1727,17 +1728,17 @@ function initCharts() {
       document.getElementById('cmd-nonce').value = nonce;
       try { localStorage.setItem('cmd-nonce', nonce); } catch(e2) {}
 
+      var finalBody = new Uint8Array(4 + fullPkt.length);
+      var fbdv = new DataView(finalBody.buffer);
+      fbdv.setUint16(0, 2000, true); fbdv.setUint8(2, 1); fbdv.setUint8(3, fullPkt.length);
+      finalBody.set(fullPkt, 4);
       if (useHttp) {
-        var body = new Uint8Array(4 + fullPkt.length);
-        var bdv = new DataView(body.buffer);
-        bdv.setUint16(0, 2000, true); bdv.setUint8(2, 1); bdv.setUint8(3, fullPkt.length);
-        body.set(fullPkt, 4);
         var r = await fetch(getBaseHttp() + '/api/command', {
-          method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: body
+          method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: finalBody
         });
         if (!r.ok) throw new Error('Finalize HTTP ' + r.status + ': ' + await r.text());
       } else {
-        await cmdChar.writeValueWithResponse(fullPkt);
+        await cmdChar.writeValueWithResponse(finalBody);
       }
 
       prog.textContent += '\nFinalize sent. Device rebooting...\n' +
