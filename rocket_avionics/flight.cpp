@@ -1,5 +1,12 @@
 // flight.cpp — Flight phase state machine implementation
-// See flight.h for API documentation and struct definitions.
+// See flight.h for API documentation, struct definitions, and safety warnings.
+//
+// *** SAFETY-CRITICAL — READ flight phases doc and flight.h HEADER BEFORE MODIFYING ***
+// Phase transitions here fire pyro charges and chute releases on a live rocket.
+// Wrong apogee detection: drogue fires into ground crew, or rocket descends
+// ballistically. Wrong main deploy timing: 2nd pyro fires, or nichrome can burn through structure or chute lines
+// if the line stays high or happens at the wrong time. 
+// Always verify changes against flight phases document. Note that briefs here may be out of date.
 
 #include "flight.h"
 
@@ -327,7 +334,7 @@ static void checkLaunchDetect(unsigned long nowUs) {
 }
 
 // --- Coast detection (BOOST -> COAST, or ARMED -> COAST) ---
-// (in boost OR at coast altitude) AND low accel (<2000mg for 5 samples/500ms)
+// Brief: (in boost OR at coast altitude) AND low accel (<2000mg for 5 samples/500ms)
 
 static void checkCoastDetect(unsigned long nowUs) {
   if (!accelData.valid) return;
@@ -364,18 +371,15 @@ static void checkCoastDetect(unsigned long nowUs) {
 }
 
 // --- Apogee detection (COAST -> DROGUE) ---
-// Fast baro EMA (1s period) is falling vs its value from the previous loop.
-// prevBaroFastCm is saved at the top of nonblockingFlight(), before the EMA
-// update, so this is always a genuine loop-to-loop comparison.
-// 3s minimum after boost/coast entry covers baro noise during boost and the
-// supersonic-to-subsonic pressure spike right after burnout.
+// *** SAFETY-CRITICAL: triggers pyro channel 1 (drogue ejection) ***
+// Early trigger while climbing: chute deploys into ground crew or launch structure.
+// Missed trigger: no drogue, rocket descends ballistically. Read flight phases document.
+//
+// Read flight phases document. Brief: fast baro EMA (1s period) has negative descent rate — i.e. EMA(now) < EMA(prev loop).
+// prevBaroFastCm is saved at the TOP of nonblockingFlight(), BEFORE updateBaroEMAs(),
+// so prev holds last loop's value and current holds this loop's updated value.
 // 3s minimum after boost/coast entry: covers baro noise during boost and the
-// supersonic-to-subsonic transition (pressure spike right after burnout while
-// still climbing). After that lockout, a single loop-to-loop decrease fires apogee.
-// Loop-to-loop comparison is more robust than drop-from-peak: a venturi/suction
-// spike reads falsely high then snaps back, which looks like a descent from peak
-// but not a sustained decrease — the EMA absorbs the snap-back before it starts
-// truly decreasing.
+// pressure spike at the supersonic-to-subsonic transition just after burnout.
 
 static void checkApogeeDetect(unsigned long nowUs) {
   // Minimum time since boost/coast entry (covers boost noise and trans-sonic)
@@ -394,7 +398,12 @@ static void checkApogeeDetect(unsigned long nowUs) {
 }
 
 // --- Main deploy detection (DROGUE -> MAIN_DEPLOY) ---
-// At least 3 seconds after apogee, AND fast baro EMA below main deploy alt AGL
+// *** SAFETY-CRITICAL: triggers pyro channel 2 and/or nichrome/servo for main chute ***
+// Nichrome stays energised while GPIO is high — main loop MUST cut it off promptly.
+// Early trigger: main deploys too high, could overstress chute or drift far downrange.
+// Missed/late trigger: rocket hits ground under drogue only (faster descent).
+//
+// Read flight phases document. Brief: at least 3 seconds after apogee AND fast baro EMA (1s period) below deploy altitude.
 
 static void checkMainDeploy(unsigned long nowUs) {
   if (flightState.apogeeEntryUs == 0) return;

@@ -1,6 +1,4 @@
-ok, time to build the flight phases. here's my plan. let me know what you think.
-
-
+# Flight phase detection
 
 Arming stability/errors requirement:
 arming command - send optional params for flight plan (based on packet length), otherwise default to: boost accel threshold 3000mg + boost alt threshold 100m over agl; coast alt threshold 200m; main deploy alt threshold 100m agl; stability thresholds are hardcoded, flight thresholds are optionally in arm packet with hardcoded defaults if missing. params in uint16 milli-g and uint16 whole meters. flight plan params are compact format, calculations may need higher precision.
@@ -37,7 +35,7 @@ apogee phase - skipped. reserved. no longer used.
 
 apogee detection (coast phase to drogue phase) baro EMA (1 sec period) has negative descent rate. (no duration or samples requirement - ema already does filtering)
 
-main deploy (from drogue to main_deploy) - at least 3 seconds after apogee, and fast baro EMA (1 sec period) below main deploy alt AGL
+main deploy (from drogue to main_deploy) - at least 3 seconds after apogee, and fast baro EMA (1 sec period) below main deploy alt setting relative to AGL
 
 landing (from main_deploy to landed) - 120 seconds after main deploy; OR (at least 10 seconds after main deploy AND not moving much). "moving much" defined as each accel axis matches its ema (1 second period) within +/-300mg over at least 10 samples and at least 5 seconds;  each raw gyro axis under +/-50 degrees per second on each gyro axis for 5 seconds; raw baro matches fast baro ema within 5m continuously for 5 seconds and at least 4 baro samples. - the landing trackers may need separate timers/counters from the arming trackers. landed is still considered an armed state until disarm command
 
@@ -64,57 +62,43 @@ disarming (any phase to idle) - disarm command received
 
 
 
-# initial build plan:
-ok, time to build the flight phases. here's my plan. let me know what you think. (this is the same as the flight phases doc i just uploaded)
-
-Arming stability/errors requirement:
-arming command - send optional params for flight plan (based on packet length), otherwise default to: boost accel threshold 3000mg + boost alt threshold 100m over agl; coast alt threshold 200m; main deploy alt threshold 100m agl; stability thresholds are hardcoded, flight thresholds are optionally in arm packet with hardcoded defaults if missing. params in uint16 milli-g and uint16 whole meters. flight plan params are compact format, calculations may need higher precision.
-add flag to arm command for force, regardless of sensor errors/refusal reasons (missing params means force arm).
-refuse to arm if not stable or baro/accel sensor errors (gyro/mag/gps track errors, but not required for arming).
-stable is based on raw sensor samples vs thresholds, which must be good continuously for 10 seconds to allow arming - one bad reading resets timer on that sensor.
-errors are tracked when they happen, and any error on any sensor in the last 10 seconds refuses to arm. lack of ability to read for 1 second counts as an error, as does non-initialized, error codes, etc unusually high or low readings do not count as errors.
-
-there is one slow baro ema with a 30-second period used for arming and calibration, and one fast baro ema with a 1-second period used for realtime altitude estimates in telemetry header and in apogee/descent/main deploy phases. These may be upgraded to different flight models later, such as Kalman or others.
-
-
-raw accel is stable if 800-1200mg total (Pythagoras all axies) and 700-1300mg on +x or -x (x negative or positive are both valid. record orientation up/down in a flag, locked in when armed. stable requires it be in the same orientation as the previous loop, swapping between +1000 and -1000 is not stable)
-gyro is stable if raw gyro under +/-50 degrees per second on each gyro axis,
-baro is stable if raw baro alt MSL between -1000m to +2500m MSL and no raw baro samples more than 10m away from a slow, arming-specific baro ema (with 30 seconds period). When it becomes armed, this ema value is used to set ground level calibration.
-gps is stable if good fix and low ground speed <10m/s and hdop <30m and sats >=5
-
-each sensor tracks time of last error and time of last reading. over 1 second since last reading counts as an error (setting the error timer if discovered readings are old).
-arming requires being stable for a duration.
-
-Flight phases after arming:
-
-launch detect (armed to boost) - two detect modes - either
-over coast altitude agl for alt-only trigger(A); or
-over boost acceleration trigger(B) plus over boost altitude agl trigger(C)
-accel trigger (B) needs at least 5 samples over at least 200ms duration with all samples over total g (pythagoras).
-alt triggers (A and C) need at least 4 samples over at least 250ms duration with all samples over thresholds.
-if A is triggered, launch detect immediately. if B or C is triggered, track time of last B and time of last C. if B is hit while C is within 10 sec, or C is hit while B is within 10 sec, then launch detect.
-
-coast (armed to coast, or boost to coast)- coast detection if
-(in boost phase OR over coast altitude agl for at least 4 samples over at least 250ms) AND (acceleration below 2000mg Pythagoras for at least 5 samples over at least 500ms duration) - i.e. being in boost detected phase can substitute for being at coast altitude, but either way, need low accel. coast doesnt require reaching coast altitude - but being at coast altitude implies it has definitely reached coast phase regardless of earlier steps.
-coast can be reached from boost or directly from armed phase (skipping boost phase)
-
-apogee phase - skipped. reserved. no longer used.
-
-apogee detection (coast phase to drogue phase) baro EMA (1 sec period) has negative descent rate. (no duration or samples requirement - ema already does filtering)
-
-main deploy (from drogue to main_deploy) - at least 3 seconds after apogee, and fast baro EMA (1 sec period) below main deploy alt AGL
-
-landing (from main_deploy to landed) - 120 seconds after main deploy; OR (at least 10 seconds after main deploy AND not moving much). "moving much" defined as each accel axis matches its ema (1 second period) within +/-300mg over at least 10 samples and at least 5 seconds;  each raw gyro axis under +/-50 degrees per second on each gyro axis for 5 seconds; raw baro matches fast baro ema within 5m continuously for 5 seconds and at least 4 baro samples. - the landing trackers may need separate timers/counters from the arming trackers. landed is still considered an armed state until disarm command.
-
-disarming (any phase to idle) - disarm command received
 
 
 
 
 
 
-# planning and discussions had the following changes/corrections:
-(todo: combine this into one finished spec)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# planning and discussions had the following changes/corrections before initial implementation:
+(todo: combine this into one finished spec - the following was autogenerated summary based on conversations, may not be correct)
 Let me compare your original spec against what we actually built.Your original spec is mostly accurate but here are the differences from what we settled on during the conversation:
 
 **Changes to note:**

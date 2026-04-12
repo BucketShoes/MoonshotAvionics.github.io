@@ -1,6 +1,5 @@
 // flight.h — Flight phase state machine for Moonshot rocket avionics
 // Handles arming stability checks, launch detection, coast/apogee/deploy/landing.
-// Safety-critical path: simple baro EMA for deployment decisions.
 // All functions are non-blocking, called from the main loop.
 //
 // Dependencies: sensors.h (accelData, gyroData, magData, baroData, sensorState)
@@ -11,6 +10,32 @@
 //   ARM command: flightTryArm(forceArm, params...)
 //   DISARM command: flightDisarm()
 //   Read state: flightState, flightPhase, etc.
+//
+// ╔══════════════════════════════════════════════════════════════════════╗
+// ║                  *** SAFETY-CRITICAL CODE ***                        ║
+// ║                                                                      ║
+// ║  Phase transitions in this file directly trigger pyro charges and   ║
+// ║  chute release mechanisms on a live rocket:                          ║
+// ║                                                                      ║
+// ║  PHASE_DROGUE     — fires pyro channel 1 (drogue chute ejection).   ║
+// ║                     Early trigger: chute ejects while still         ║
+// ║                     climbing — could explode into ground crew.      ║
+// ║                     Late/missed: rocket descends ballistically,     ║
+// ║                     potentially at hundreds of m/s.                 ║
+// ║                                                                      ║
+// ║  PHASE_MAIN_DEPLOY — fires pyro channel 2 and/or energises          ║
+// ║                      nichrome wire or servo for main chute.         ║
+// ║                      Nichrome stays hot while the GPIO is high —    ║
+// ║                      if the main loop stalls it can burn through    ║
+// ║                      structure. Missed deploy means fast descent.   ║
+// ║                                                                      ║
+// ║  REVIEW POLICY: any change to phase transition conditions,          ║
+// ║  timing constants, EMA parameters, or the order of operations in    ║
+// ║  nonblockingFlight() must be reviewed against the flight phase      ║
+// ║  spec ("design documents/flight phases.txt") before committing.     ║
+// ║  An AI assistant should NOT make these changes autonomously —       ║
+// ║  propose the change and its reasoning, let the human decide.        ║
+// ╚══════════════════════════════════════════════════════════════════════╝
 
 #ifndef FLIGHT_H
 #define FLIGHT_H
