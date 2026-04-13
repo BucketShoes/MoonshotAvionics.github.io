@@ -396,14 +396,14 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
 
     case CMD_OTA_BEGIN:
       if (isArmed) {
-        otaQueueNotify(OTA_STATUS_REFUSED);
+        otaNotifyStatus(OTA_STATUS_REFUSED);
         result = CMD_ERR_REFUSED;
         break;
       }
       result = otaHandleBegin();
       // otaHandleBegin() notifies 0x00 on success (ready for chunks) and
       // returns CMD_ERR_REFUSED on failure — notify the refusal so JS can detect it.
-      if (result != CMD_OK) otaQueueNotify(OTA_STATUS_REFUSED);
+      if (result != CMD_OK) otaNotifyStatus(OTA_STATUS_REFUSED);
       break;
 
     case CMD_OTA_FINALIZE: {

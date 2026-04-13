@@ -17,6 +17,8 @@ static OtaContext otaCtx = {
 
 OtaState otaGetState() { return otaCtx.state; }
 
+void otaNotifyStatus(uint8_t status) { otaQueueNotify(status); }
+
 // ===================== BEGIN =====================
 
 uint8_t otaHandleBegin() {

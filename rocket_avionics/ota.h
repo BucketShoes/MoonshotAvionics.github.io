@@ -73,4 +73,8 @@ uint8_t otaHandleConfirm();
 // Returns the current OTA state (used by flight.cpp for arm guard).
 OtaState otaGetState();
 
+// Notify a single status byte on the OTA BLE characteristic.
+// Wraps ble.h otaQueueNotify() so callers (commands.cpp) don't need to include ble.h.
+void otaNotifyStatus(uint8_t status);
+
 #endif // OTA_H
