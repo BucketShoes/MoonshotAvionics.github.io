@@ -168,16 +168,16 @@ void nonblockingRadio() {
     switch (radioState) {
       case RADIO_TX_ACTIVE:
         if (dio1Fired) {
+          // SX1262 returns to standby automatically after single TX completes.
           dio1Fired = false;
           hopLedSet(false);
-          radio.standby();
-          radioState = RADIO_OFF;  // standby; next window boundary will set proper mode
+          radioState = RADIO_OFF;
         }
-        return;  // always return here — window boundary handled below after switch
+        return;  // don't check window boundary while TX in progress or just completed
 
       case RADIO_RX_LISTENING:
-        // Check for a received packet (command during RX window, or timeout)
         if (dio1Fired) {
+          // SX1262 returns to standby automatically after rxDone or timeout.
           dio1Fired = false;
           hopLedSet(false);
 
@@ -196,8 +196,11 @@ void nonblockingRadio() {
             invalidRxCount++;
           }
           preambleActive = false;
-          radio.standby();
-          radioState = RADIO_OFF;  // standby; next window boundary will set proper mode
+          radioState = RADIO_OFF;
+          // Fall through to window boundary check — may be time for next window already.
+        } else {
+          // RX still in progress — don't interrupt for a window boundary.
+          return;
         }
         break;
 
@@ -205,7 +208,7 @@ void nonblockingRadio() {
         break;
     }
 
-    // Window boundary check — act on new window
+    // Window boundary check — only reached when radio is idle.
     if (winIdx != lastWindowIndex) {
       lastWindowIndex = winIdx;
       WindowType wt = hopCurrentWindowType();
@@ -223,9 +226,8 @@ void nonblockingRadio() {
         Serial.print("WIN "); Serial.print(winIdx);
         Serial.print(": RX ch="); Serial.println(activeChannel);
 
-        radio.standby();
         hopLedSet(true);
-        // startReceive with timeout. RadioLib timeout unit is ms for SX126x.
+        // SX1262 is already in standby (returned automatically after TX/timeout/rxDone).
         int rxState = radio.startReceive(HOP_RX_TIMEOUT_MS);
         if (rxState == RADIOLIB_ERR_NONE) {
           radioState = RADIO_RX_LISTENING;

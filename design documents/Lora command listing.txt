@@ -39,6 +39,16 @@ Rocket commands (only meaningful to rockets, bases/relays just log, no implement
       Params: uint8 primary channel index, uint8 SF, int8 TX power dBm
       Effect: changes rocket radio settings. No backhaul channel for rocket. Persistent until next set radio. Stored to NVS
       Note: the base station sending this must independently change its own radio to match if it wants to keep hearing the rocket. JS handles this by sending a separate command to the base if desired.
+
+0x13  SET HOPPING (rocket and base station)
+      Params: uint8 command_channel (0xFF = keep current channel)
+      Effect: enables timed window mode. 420ms windows alternate TX (odd index) and RX (even index).
+      Both rocket and base station treat the moment of processing (rxDone on rocket, TxDone on base) as window index 0 (hopSyncOffsetUs / bsSyncOffsetMs).
+      If command_channel != 0xFF, rocket also changes its active channel (same as SET ROCKET RADIO for channel only). Stored to NVS.
+      The base station sends this automatically: 2s after boot, then every 60s if no 0xAF packet received from the rocket in the last 60s.
+      Phase 1 (implemented): single fixed channel, timed windows only.
+      Phase 2 (future): add Fisher-Yates channel permutation per window (53 BW125 channels, seed 0).
+      LED behaviour (FLASH_SYNC_TIMING=true): rocket LED on from startTransmit to TxDone; base LED on from startReceive to rxDone/timeout. Short flash = real packet. Long flash = waited the full timeout.
 ```
 
 Base station/relay commands (acted on by bases and relays, rockets dont implement):

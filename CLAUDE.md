@@ -74,12 +74,14 @@ Pull the relevant doc into the conversation when working in that area.
 - **Log protection point**: set on ARM at 60 seconds before arm time. Ring buffer stops logging when full (does not overwrite protected region).
 - **executeLogDownload() refused while armed** — it is fully blocking and bandwidth-heavy.
 - **Relays**: All base stations are also relays (not yet implemented). Reference to a base station is the one the user is connected to. References to relays are other identical base stations placed far away acting in their role as a relay, sending traffic on backhaul.
+- **Timed window mode (Phase 1 implemented)**: `CMD_SET_HOPPING` (0x13) enables 420ms windows alternating TX (odd index) and RX (even index). Base station auto-bootstraps at 2s boot and every 60s if no rocket packet heard. `FLASH_SYNC_TIMING=true` shows sync visually via LED. No channel changes yet — Phase 2 adds Fisher-Yates channel permutation per window. Window timing: `hopSyncOffsetUs` (rocket, micros) and `bsSyncOffsetMs` (base, millis) set at command TxDone/rxDone respectively. No drift correction yet — re-bootstrap if lost. SX1262 returns to standby automatically after single TX and after timed RX (timeout or rxDone); no explicit standby calls needed.
 
 ## Known TODOs in the codebase
 
 - Rocket BLE char 0002 result reporting is noted as wrong in the packet format doc (TODO `@@@@`).
 - Rocket BLE char 0005 log fetch is missing timestamp and SNR per record (TODO `@@@`).
 - SET RELAY RADIO command (0x30) BW param is unresolved (TODO in command doc).
+- Timed window Phase 2: add frequency hopping per window (Fisher-Yates, 53 BW125 channels, seed 0, `CMD_ENABLE_HOPPING`).
 
 ## What's not yet documented (gaps)
 

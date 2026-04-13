@@ -506,25 +506,26 @@ void bsScheduleHopRx() {
   if (!bsHopEnabled || logDl.active || cmdTx.active) return;
 
   uint32_t now = millis();
-  uint32_t elapsed = now - bsSyncOffsetMs;
-  uint32_t winIdx  = elapsed / HOP_WINDOW_MS;
-  uint32_t winStart = bsSyncOffsetMs + winIdx * HOP_WINDOW_MS;
-  uint32_t nextWinStart = winStart + HOP_WINDOW_MS;
+  // Next window boundary, rounded up from current time.
+  // Use the window index of the *next* window so we open just before it starts.
+  uint32_t currentWinIdx = (now - bsSyncOffsetMs) / HOP_WINDOW_MS;
+  uint32_t nextWinIdx    = currentWinIdx + 1;
+  uint32_t nextWinStart  = bsSyncOffsetMs + nextWinIdx * HOP_WINDOW_MS;
 
-  // Open a new RX window at each window boundary (within 10ms of start)
+  // Open listen window 10ms before the expected boundary.
+  // Use signed comparison so this works correctly even if now is slightly ahead.
   static uint32_t lastOpenedWin = 0xFFFFFFFF;
-  if (winIdx != lastOpenedWin && (now - winStart) < 10) {
-    lastOpenedWin = winIdx;
+  if (nextWinIdx != lastOpenedWin && !bsHopRxOpen &&
+      (int32_t)(now + 10 - nextWinStart) >= 0) {
+    lastOpenedWin = nextWinIdx;
     bsHopRxOpen = true;
-    radio.standby();
 #if FLASH_SYNC_TIMING
     ledcWrite(LED_PIN, 255);
 #endif
     radio.startReceive(BS_HOP_RX_TIMEOUT_MS);
-    Serial.print("BS WIN "); Serial.print(winIdx); Serial.print(": RX ch=");
+    Serial.print("BS WIN "); Serial.print(nextWinIdx); Serial.print(": RX ch=");
     Serial.println(activeChannel);
   }
-  (void)nextWinStart;
 }
 
 // ===================== LoRa RX HANDLER =====================
