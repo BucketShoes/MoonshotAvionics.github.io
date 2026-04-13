@@ -223,6 +223,12 @@ void nonblockingRadio() {
       lastWindowIndex = winIdx;
       WindowType wt = hopCurrentWindowType();
 
+      // startReceiveCommon calls standby() internally. startTransmit (stageMode TX) does NOT,
+      // but after a timed RX the chip auto-returns to standby; by the next 420ms boundary
+      // BUSY will be settled, so calling startTransmit directly is safe.
+      // Do NOT call radio.standby() here — it races with the chip's own BUSY settling
+      // after a timed RX timeout and causes -705.
+
       if (wt == WIN_TELEM) {
         Serial.print("WIN "); Serial.print(winIdx);
         Serial.print(": TELEM ch="); Serial.println(activeChannel);
@@ -237,7 +243,6 @@ void nonblockingRadio() {
         } else {
           Serial.print("  TX start fail: "); Serial.println(txState);
           hopLedSet(false);
-          radio.standby();
           radioState = RADIO_OFF;
         }
 
@@ -251,7 +256,6 @@ void nonblockingRadio() {
           dio1Fired = false;
         } else {
           Serial.print("  RX start fail: "); Serial.println(rxState);
-          radio.standby();
           radioState = RADIO_OFF;
         }
       }

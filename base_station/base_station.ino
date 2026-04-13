@@ -517,6 +517,9 @@ void bsScheduleHopRx() {
   if (nextWinIdx != bsLastOpenedWin && !bsHopRxOpen &&
       (int32_t)(now + 10 - nextWinStart) >= 0) {
     bsLastOpenedWin = nextWinIdx;
+    // startReceiveCommon calls standby() internally — do NOT call radio.standby() here.
+    // Calling it before the chip has finished BUSY settling after a timed RX timeout
+    // races the BUSY pin and causes -705. Let startReceive handle it when ready.
     bsHopRxOpen = true;
 #if FLASH_SYNC_TIMING
     ledcWrite(LED_PIN, 255);
@@ -557,10 +560,17 @@ void handleLoRaRx() {
     Serial.println();
   }
 
+  // In hop mode, if no window is open this is a stale interrupt (e.g. from the
+  // blocking radio.transmit() ISR, or a leftover from before hopping started).
+  // Ignore it — touching radio state here would corrupt bsHopRxOpen tracking.
+  if (bsHopEnabled && !bsHopRxOpen && !isTxDone) {
+    Serial.println("BS DIO1: stale interrupt (no window open), ignoring");
+    return;
+  }
+
   // TX_DONE can fire here if the blocking radio.transmit() ISR set rxFlag.
   // The blocking call already handled the transmit result — just ignore.
   if (isTxDone) {
-    radio.standby();
     return;
   }
 
@@ -578,7 +588,6 @@ void handleLoRaRx() {
   uint8_t buf[256];
   size_t len = radio.getPacketLength();
   if (len == 0 || len > sizeof(buf)) {
-    radio.standby();
     if (!bsHopEnabled) radio.startReceive();
     return;
   }
