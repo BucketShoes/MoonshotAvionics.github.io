@@ -468,11 +468,13 @@ static void computeHMACbs(const uint8_t* data, size_t len, uint8_t* out) {
 void bsSendSetHopping() {
   if (cmdTx.active) return;  // don't interrupt another command in flight
 
-  // Increment nonce and persist it
+  // Increment the shared nonce counter and persist it. JS reads the current
+  // nonce from /api/status and uses highestNonce+1 for its own commands, so
+  // bumping here keeps everyone in sync.
   highestNonce++;
   bsNvs.putUInt("nonce", highestNonce);
 
-  // Packet layout: [0xAF][deviceId][cmdId][nonce u32LE][params][HMAC_TRUNC_LEN]
+  // Packet layout: [0x9A][deviceId][cmdId][nonce u32LE][params][HMAC_TRUNC_LEN]
   // params: commandChannel=0xFF (keep current)
   uint8_t pkt[18];
   uint8_t pos = 0;
@@ -1021,6 +1023,11 @@ void setup() {
 
   bsNvs.begin("basestation", false);
   highestNonce = bsNvs.getUInt("nonce", 0);
+  // Reserve a block of nonces on each boot for self-originated commands.
+  // This guarantees our auto-bootstrap nonces always exceed what we last sent,
+  // even after multiple reboots without JS interaction.
+  highestNonce += 100;
+  bsNvs.putUInt("nonce", highestNonce);
 
   // Load radio settings from NVS
   if (bsNvs.isKey("radio_ch")) { uint8_t c = bsNvs.getUChar("radio_ch", DEFAULT_CHANNEL); activeChannel = (channelToFreqMHz(c) != 0.0f) ? c : DEFAULT_CHANNEL; }

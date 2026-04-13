@@ -161,52 +161,50 @@ void nonblockingRadio() {
   unsigned long now = micros();
 
   // ===================== TIMED WINDOW MODE =====================
+  //
+  // Single-TX and single-RX modes: the radio goes to standby automatically
+  // after TxDone or after the RX timeout/packet. DIO1 fires in both cases.
+  //
+  // Window boundaries only switch mode when the radio is idle (not mid-TX or
+  // mid-RX). A packet arriving late may straddle a window boundary — that's fine,
+  // we let it finish and pick up the correct mode on the next boundary check.
+
   if (hopEnabled) {
     static uint32_t lastWindowIndex = 0xFFFFFFFF;
     uint32_t winIdx = hopCurrentWindowIndex();
 
-    switch (radioState) {
-      case RADIO_TX_ACTIVE:
-        if (dio1Fired) {
-          dio1Fired = false;
-          hopLedSet(false);
-          radio.standby();
-          radioState = RADIO_OFF;  // standby; next window boundary will set proper mode
+    // Handle DIO1 events from previous TX or RX.
+    if (dio1Fired) {
+      dio1Fired = false;
+      hopLedSet(false);
+
+      if (radioState == RADIO_TX_ACTIVE) {
+        // TxDone: radio goes to standby automatically in single-TX mode.
+        radioState = RADIO_OFF;
+
+      } else if (radioState == RADIO_RX_LISTENING) {
+        // RxDone or RX timeout: radio goes to standby automatically.
+        uint8_t rxBuf[64];
+        int state = radio.readData(rxBuf, sizeof(rxBuf));
+        if (state == RADIOLIB_ERR_NONE) {
+          size_t rxLen = radio.getPacketLength();
+          float pktRssi = radio.getRSSI(true);
+          float pktSnr  = radio.getSNR();
+          processReceivedPacket(rxBuf, rxLen, (int8_t)pktRssi, (int8_t)pktSnr);
+        } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
+          Serial.println("RX: CRC fail");
+          invalidRxCount++;
+        } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
+          Serial.print("RX err: "); Serial.println(state);
+          invalidRxCount++;
         }
-        return;  // always return here — window boundary handled below after switch
-
-      case RADIO_RX_LISTENING:
-        // Check for a received packet (command during RX window, or timeout)
-        if (dio1Fired) {
-          dio1Fired = false;
-          hopLedSet(false);
-
-          uint8_t rxBuf[64];
-          int state = radio.readData(rxBuf, sizeof(rxBuf));
-          if (state == RADIOLIB_ERR_NONE) {
-            size_t rxLen = radio.getPacketLength();
-            float pktRssi = radio.getRSSI(true);
-            float pktSnr  = radio.getSNR();
-            processReceivedPacket(rxBuf, rxLen, (int8_t)pktRssi, (int8_t)pktSnr);
-          } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
-            Serial.println("RX: CRC fail");
-            invalidRxCount++;
-          } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
-            Serial.print("RX err: "); Serial.println(state);
-            invalidRxCount++;
-          }
-          preambleActive = false;
-          radio.standby();
-          radioState = RADIO_OFF;  // standby; next window boundary will set proper mode
-        }
-        break;
-
-      default:
-        break;
+        preambleActive = false;
+        radioState = RADIO_OFF;
+      }
     }
 
-    // Window boundary check — act on new window
-    if (winIdx != lastWindowIndex) {
+    // Window boundary check — only act if radio is idle (not mid-TX or mid-RX).
+    if (winIdx != lastWindowIndex && radioState == RADIO_OFF) {
       lastWindowIndex = winIdx;
       WindowType wt = hopCurrentWindowType();
 
@@ -223,9 +221,7 @@ void nonblockingRadio() {
         Serial.print("WIN "); Serial.print(winIdx);
         Serial.print(": RX ch="); Serial.println(activeChannel);
 
-        radio.standby();
         hopLedSet(true);
-        // startReceive with timeout. RadioLib timeout unit is ms for SX126x.
         int rxState = radio.startReceive(HOP_RX_TIMEOUT_MS);
         if (rxState == RADIOLIB_ERR_NONE) {
           radioState = RADIO_RX_LISTENING;

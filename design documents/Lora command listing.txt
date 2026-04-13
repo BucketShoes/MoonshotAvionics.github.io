@@ -39,6 +39,19 @@ Rocket commands (only meaningful to rockets, bases/relays just log, no implement
       Params: uint8 primary channel index, uint8 SF, int8 TX power dBm
       Effect: changes rocket radio settings. No backhaul channel for rocket. Persistent until next set radio. Stored to NVS
       Note: the base station sending this must independently change its own radio to match if it wants to keep hearing the rocket. JS handles this by sending a separate command to the base if desired.
+
+0x13  SET HOPPING (rocket only)
+      Params: uint8 commandChannel (0xFF = keep current channel)
+      Effect: enables timed 420ms window mode. The moment the rocket processes this command
+      is treated as window 0. Even window indexes = 40ms RX window for commands (on the
+      active channel). Odd indexes = TX telemetry window.
+      The base station, on TxDone of this command, also records its own window 0 at that moment.
+      Pre-bootstrap behaviour (before first CMD_SET_HOPPING): continuous RX + CSMA TX as normal.
+      Base auto-sends this command 2s after boot, then every 60s if no 0xAF packet received.
+      Base nonce: the base station originates this command internally (not from JS). It uses
+      the shared nonce counter (incremented and persisted to NVS), and bumps the counter by 100
+      on each boot to stay ahead of prior sends. JS should always read the current nonce from
+      /api/status before generating its own commands.
 ```
 
 Base station/relay commands (acted on by bases and relays, rockets dont implement):
