@@ -39,12 +39,6 @@
 #define CMD_OTA_BEGIN     0x50  // Open OTA write session (erases inactive partition)
 #define CMD_OTA_FINALIZE  0x51  // Verify image HMAC, set boot partition, reboot
 #define CMD_OTA_CONFIRM   0x52  // After reboot: confirm new firmware, cancel rollback
-#define CMD_SET_HOPPING   0x13
-
-// ===================== TIMED WINDOW / HOPPING =====================
-#define HOP_WINDOW_MS       420UL
-#define BS_HOP_RX_TIMEOUT_MS 150   // base station RX window timeout (ms) — used as ms, converted to raw units via calculateRxTimeout
-#define FLASH_SYNC_TIMING   true   // LED on during RX windows when synced
 
 // ===================== TRANSPORT FLAGS (for 0x31/0x32 enable/disable) =====================
 // When 0x31/0x32 has no params, all transports are enabled/disabled together.
@@ -130,13 +124,6 @@ void readBaseBattery() {
 
 Preferences bsNvs;
 uint32_t highestNonce = 0;
-
-// ===================== HOPPING STATE =====================
-bool     bsHopEnabled     = false;
-uint32_t bsSyncOffsetMs   = 0;    // millis() at which window 0 occurred
-uint32_t bsLastRocketRxMs = 0;    // millis() of last received 0xAF packet
-uint32_t bsLastBootstrapMs = 0;   // millis() of last CMD_SET_HOPPING send
-bool     bsHopRxOpen      = false; // true while RX window is open
 
 volatile bool rxFlag = false;
 void IRAM_ATTR onDio1() { rxFlag = true; }
@@ -446,161 +433,16 @@ void pushToAllTransports(const uint8_t* wsBuf, size_t wsLen) {
   }
 }
 
-// ===================== HOPPING: SIGN AND SEND CMD_SET_HOPPING =====================
-// Builds a signed CMD_SET_HOPPING packet internally and loads it into cmdTx.
-// Bypasses queueCommandTx because that path requires pre-signed JS-sourced packets.
-
-static void computeHMACbs(const uint8_t* data, size_t len, uint8_t* out) {
-  uint8_t fullHmac[32];
-  mbedtls_md_context_t ctx;
-  mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, HMAC_KEY, HMAC_KEY_LEN);
-  mbedtls_md_hmac_update(&ctx, data, len);
-  mbedtls_md_hmac_finish(&ctx, fullHmac);
-  mbedtls_md_free(&ctx);
-  memcpy(out, fullHmac, HMAC_TRUNC_LEN);
-}
-
-// Rocket device ID (must match config.h DEVICE_ID on rocket).
-#define ROCKET_DEVICE_ID 0x92
-
-void bsSendSetHopping() {
-  if (cmdTx.active) return;  // don't interrupt another command in flight
-
-  // Increment nonce and persist it
-  highestNonce++;
-  bsNvs.putUInt("nonce", highestNonce);
-
-  // Packet layout: [0xAF][deviceId][cmdId][nonce u32LE][params][HMAC_TRUNC_LEN]
-  // params: commandChannel=0xFF (keep current)
-  uint8_t pkt[18];
-  uint8_t pos = 0;
-  pkt[pos++] = 0x9A;               // PKT_COMMAND
-  pkt[pos++] = ROCKET_DEVICE_ID;
-  pkt[pos++] = CMD_SET_HOPPING;
-  pkt[pos++] = highestNonce & 0xFF;
-  pkt[pos++] = (highestNonce >> 8) & 0xFF;
-  pkt[pos++] = (highestNonce >> 16) & 0xFF;
-  pkt[pos++] = (highestNonce >> 24) & 0xFF;
-  pkt[pos++] = 0xFF;               // commandChannel: keep current
-  computeHMACbs(pkt, pos, pkt + pos);
-  pos += HMAC_TRUNC_LEN;
-
-  memcpy(cmdTx.pkt, pkt, pos);
-  cmdTx.pktLen = pos;
-  cmdTx.sends  = 1;
-  cmdTx.sent   = 0;
-  cmdTx.waitMs = 0;
-  cmdTx.lastSendMs = 0;
-  cmdTx.active = true;
-
-  Serial.println("HOP: queued CMD_SET_HOPPING");
-}
-
-// ===================== HOPPING: SCHEDULE RX WINDOW =====================
-// Opens a receive window at each 420ms boundary when synced.
-// Called from loop() every iteration.
-
-static uint32_t bsLastOpenedWin = 0xFFFFFFFF;  // reset on each re-bootstrap
-
-void bsScheduleHopRx() {
-  if (!bsHopEnabled || logDl.active || cmdTx.active) return;
-
-  uint32_t now = millis();
-  // Next window boundary, rounded up from current time.
-  uint32_t currentWinIdx = (now - bsSyncOffsetMs) / HOP_WINDOW_MS;
-  uint32_t nextWinIdx    = currentWinIdx + 1;
-  uint32_t nextWinStart  = bsSyncOffsetMs + nextWinIdx * HOP_WINDOW_MS;
-
-  // Open listen window 10ms before the expected boundary.
-  if (nextWinIdx != bsLastOpenedWin && !bsHopRxOpen &&
-      (int32_t)(now + 10 - nextWinStart) >= 0) {
-    bsLastOpenedWin = nextWinIdx;
-    // startReceiveCommon calls standby() internally — do NOT call radio.standby() here.
-    // Calling it before the chip has finished BUSY settling after a timed RX timeout
-    // races the BUSY pin and causes -705. Let startReceive handle it when ready.
-    bsHopRxOpen = true;
-#if FLASH_SYNC_TIMING
-    ledcWrite(LED_PIN, 255);
-#endif
-    int rxSt = radio.startReceive(radio.calculateRxTimeout(BS_HOP_RX_TIMEOUT_MS * 1000UL));
-    if (rxSt != RADIOLIB_ERR_NONE) {
-      Serial.print("BS RX win start fail: "); Serial.println(rxSt);
-      bsHopRxOpen = false;
-#if FLASH_SYNC_TIMING
-      ledcWrite(LED_PIN, 0);
-#endif
-      return;
-    }
-    Serial.print("BS WIN "); Serial.print(nextWinIdx);
-    Serial.print(": RX open, nextStart="); Serial.print(nextWinStart);
-    Serial.print(" now="); Serial.print(now);
-    Serial.print(" ch="); Serial.println(activeChannel);
-  }
-}
-
 // ===================== LoRa RX HANDLER =====================
 
 void handleLoRaRx() {
   if (!rxFlag) return;
   rxFlag = false;
-
-  // Check which IRQ event fired before clearing anything.
-  uint16_t irq = (uint16_t)radio.getIrqFlags();
-  bool isTimeout = (irq & RADIOLIB_SX126X_IRQ_TIMEOUT) && !(irq & RADIOLIB_SX126X_IRQ_RX_DONE);
-  bool isTxDone  = (irq & RADIOLIB_SX126X_IRQ_TX_DONE);
-
-  if (bsHopEnabled) {
-    Serial.print("BS DIO1: irq=0x"); Serial.print(irq, HEX);
-    if (irq & RADIOLIB_SX126X_IRQ_TX_DONE)    Serial.print(" TX_DONE");
-    if (irq & RADIOLIB_SX126X_IRQ_RX_DONE)    Serial.print(" RX_DONE");
-    if (irq & RADIOLIB_SX126X_IRQ_TIMEOUT)    Serial.print(" TIMEOUT");
-    if (irq & RADIOLIB_SX126X_IRQ_CRC_ERR)    Serial.print(" CRC_ERR");
-    Serial.println();
-  }
-
-  // In hop mode, if no window is open this is a stale interrupt (e.g. from the
-  // blocking radio.transmit() ISR, or a leftover from before hopping started).
-  // Ignore it — touching radio state here would corrupt bsHopRxOpen tracking.
-  if (bsHopEnabled && !bsHopRxOpen && !isTxDone) {
-    Serial.println("BS DIO1: stale interrupt (no window open), ignoring");
-    return;
-  }
-
-  // TX_DONE can fire here if the blocking radio.transmit() ISR set rxFlag.
-  // The blocking call already handled the transmit result — just ignore.
-  if (isTxDone) {
-    return;
-  }
-
-#if FLASH_SYNC_TIMING
-  if (bsHopEnabled) ledcWrite(LED_PIN, 0);  // RX window ended — clear LED
-#endif
-  bsHopRxOpen = false;
-
-  if (isTimeout) {
-    // No packet this window — radio already returned to standby after timed RX.
-    if (!bsHopEnabled) radio.startReceive();
-    return;
-  }
-
   uint8_t buf[256];
   size_t len = radio.getPacketLength();
-  if (len == 0 || len > sizeof(buf)) {
-    if (!bsHopEnabled) radio.startReceive();
-    return;
-  }
+  if (len == 0 || len > sizeof(buf)) { radio.startReceive(); return; }
   int state = radio.readData(buf, len);
-  if (state != RADIOLIB_ERR_NONE) {
-    if (state == RADIOLIB_ERR_CRC_MISMATCH) {
-      Serial.println("BS RX: CRC fail");
-    } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
-      Serial.print("BS RX err: "); Serial.println(state);
-    }
-    if (!bsHopEnabled) radio.startReceive();
-    return;
-  }
+  if (state != RADIOLIB_ERR_NONE) { radio.startReceive(); return; }
   float snrF = radio.getSNR();
   float rssiF = radio.getRSSI(true);
   int8_t snr4 = (int8_t)(snrF * 4);
@@ -615,18 +457,6 @@ void handleLoRaRx() {
     memcpy(latestTelem.data, buf, len);
     latestTelem.len = len; latestTelem.snr4 = snr4;
     latestTelem.timestamp = nowMs; latestTelem.valid = true;
-
-    // Track last rocket RX for re-bootstrap detection
-    if (bsHopEnabled) {
-      bsLastRocketRxMs = nowMs;
-      // Drift logging: expected window start vs actual rxDone
-      uint32_t elapsed    = nowMs - bsSyncOffsetMs;
-      uint32_t winIdx     = elapsed / HOP_WINDOW_MS;
-      uint32_t winStart   = bsSyncOffsetMs + winIdx * HOP_WINDOW_MS;
-      int32_t  drift      = (int32_t)(nowMs - winStart);
-      Serial.print("BS RX win="); Serial.print(winIdx);
-      Serial.print(" drift="); Serial.print(drift); Serial.println("ms");
-    }
   }
 
   uint8_t wsBuf[268];
@@ -636,18 +466,18 @@ void handleLoRaRx() {
   memcpy(wsBuf + 12, buf, len);
   pushToAllTransports(wsBuf, 12 + len);
 
-  if (!bsHopEnabled) {
-    // CSMA mode: toggle LED on each packet, restart continuous RX
-    static bool ledSt = false;
-    ledSt = !ledSt;
-    ledcWrite(LED_PIN, ledSt ? 10 : 1);
-    radio.startReceive();
-  }
+  static bool ledSt = false;
+  ledSt = !ledSt;
+  
+  
+  ledcWrite(LED_PIN, ledSt ? 10 : 1);
+  //digitalWrite(LED_PIN, ledSt ? HIGH : LOW);
 
   Serial.print("RX "); Serial.print(len);
   Serial.print("B snr:"); Serial.print(snrF, 1);
   Serial.print(" rssi:"); Serial.print(rssiF, 0);
   Serial.print(" #"); Serial.println(recNum);
+  radio.startReceive();
 }
 
 // ===================== COMMAND TX STATE MACHINE =====================
@@ -657,15 +487,6 @@ void handleCmdTx() {
   unsigned long now = millis();
   if (cmdTx.sent > 0 && (now - cmdTx.lastSendMs) < cmdTx.waitMs) return;
 
-  // Standby may interrupt an open hop RX window — clear the flag so
-  // bsScheduleHopRx doesn't think a window is still in progress.
-  if (bsHopRxOpen) {
-    Serial.println("CMD TX: interrupting hop RX window");
-    bsHopRxOpen = false;
-#if FLASH_SYNC_TIMING
-    if (bsHopEnabled) ledcWrite(LED_PIN, 0);
-#endif
-  }
   radio.standby();
   int st = radio.transmit(cmdTx.pkt, cmdTx.pktLen);
   cmdTx.lastSendMs = millis();
@@ -678,19 +499,6 @@ void handleCmdTx() {
   if (cmdTx.sent >= cmdTx.sends) {
     cmdTx.active = false;
     if (logStoreOk) logStore.writeRecord(cmdTx.pkt, cmdTx.pktLen, 0x7F, millis());
-
-    // CMD_SET_HOPPING (0x13) — record TxDone time as our sync offset
-    if (cmdTx.pkt[2] == CMD_SET_HOPPING) {
-      bsSyncOffsetMs   = millis();
-      bsHopEnabled     = true;
-      bsLastRocketRxMs = millis();  // reset watchdog so we don't immediately re-bootstrap
-      bsHopRxOpen      = false;     // no window open yet; bsScheduleHopRx will open the first one
-      bsLastOpenedWin  = 0xFFFFFFFF; // reset so scheduler doesn't think a window was already opened
-      Serial.print("HOP: sync set, bsSyncOffsetMs="); Serial.println(bsSyncOffsetMs);
-      // Do NOT open an RX window here — bsScheduleHopRx will open it 10ms before the
-      // first window boundary. Opening one here would be misaligned with the window grid.
-      return;
-    }
 
     // LOG DOWNLOAD (0x20) — switch to download radio
     if (cmdTx.pktLen >= 17 && cmdTx.pkt[2] == 0x20) {
@@ -1149,7 +957,7 @@ void setup() {
   int st = radio.begin(activeFreqMHz, activeBwKHz, activeSF, LORA_CR, LORA_SYNCWORD, activePower, LORA_PREAMBLE);
   Serial.print("LoRa: "); Serial.println(st == RADIOLIB_ERR_NONE ? "ok" : "FAIL");
   radio.setDio2AsRfSwitch(true);
-  radio.setDio1Action(onDio1);  // fires on RX_DONE, TX_DONE, and RX_TIMEOUT — needed for timed windows
+  radio.setPacketReceivedAction(onDio1);
   radio.startReceive();
 
 Serial.println("Radio Done");
@@ -1161,32 +969,11 @@ Serial.println("Radio Done");
 esp_wifi_set_max_tx_power(20);//8=2dbm, 0.25dbm units 80=20dbm
 esp_wifi_set_ps(WIFI_PS_MAX_MODEM); // WIFI_PS_MIN_MODEM or WIFI_PS_MAX_MODEM for more aggressive - only wakes at DTIM beacons so drops first packet, should drop wifi from 111ma to 30ma
 setCpuFrequencyMhz(160); //tune this original 240 - rocket can also slow down - dont need speed, only need consistency, and the flash delay is our worst, not impacted by speed. clock should drop from 40-80 down by 20-30ma
-// Hopping: RX windows are scheduled in loop() via bsScheduleHopRx().
+//TODO: @@@when we do hopping, also schedule recieve, at least when landed - agt least shrink it when clocks are syncd. keep 100% rx when no gps time
 
 
 
   Serial.println("=== Ready === new3");
-}
-
-// ===================== HOPPING: AUTO-BOOTSTRAP =====================
-// Sends CMD_SET_HOPPING 2s after boot, then every 60s if no rocket packet received.
-
-void handleHopBootstrap() {
-  uint32_t now = millis();
-  // Don't bootstrap while a command is already queued or downloading
-  if (cmdTx.active || logDl.active) return;
-  // Don't bootstrap if synced and still hearing rocket packets
-  if (bsHopEnabled && (now - bsLastRocketRxMs) < 60000) return;
-
-  uint32_t interval = (bsLastBootstrapMs == 0) ? 2000 : 60000;
-  if ((now - bsLastBootstrapMs) >= interval) {
-    Serial.print("HOP bootstrap: now="); Serial.print(now);
-    Serial.print(" lastBootstrap="); Serial.print(bsLastBootstrapMs);
-    Serial.print(" hopEnabled="); Serial.print(bsHopEnabled);
-    Serial.print(" sinceLastRx="); Serial.println(bsHopEnabled ? (now - bsLastRocketRxMs) : 0);
-    bsSendSetHopping();
-    bsLastBootstrapMs = now;
-  }
 }
 
 // ===================== MAIN LOOP =====================
@@ -1199,8 +986,6 @@ void loop() {
 
   handleLoRaRx();
   handleCmdTx();
-  bsScheduleHopRx();
-  handleHopBootstrap();
   if (logDl.active && (millis() - logDl.lastRxMs) >= LogDlState::TIMEOUT_MS) {
     revertToNormalRadio();
   }

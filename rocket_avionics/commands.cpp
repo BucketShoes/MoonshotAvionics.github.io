@@ -63,7 +63,6 @@ static int expectedParamLen(uint8_t cmdId) {
     case CMD_FIRE_PYRO:     return 3;   // channel(1) + duration(2)
     case CMD_SET_TX_RATE:   return 1;   // rate(1)
     case CMD_SET_RADIO:     return 3;   // channel(1) + SF(1) + power(1)
-    case CMD_SET_HOPPING:   return 1;   // commandChannel(1), 0xFF = keep current
     case CMD_LOG_DOWNLOAD:  return 10;  // start(4)+count(2)+ch(1)+SF(1)+BW(1)+power(1)
     case CMD_OTA_BEGIN:     return 0;
     case CMD_OTA_FINALIZE:  return 36;  // fwSize(4) + fwHmac(32)
@@ -385,24 +384,6 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       Serial.print(" "); Serial.print(activeFreqMHz, 1); Serial.print("MHz SF");
       Serial.print(sf); Serial.print(" BW"); Serial.print((int)activeBwKHz);
       Serial.print(" pwr="); Serial.println(power);
-      result = CMD_OK;
-      break;
-    }
-
-    case CMD_SET_HOPPING: {
-      uint8_t ch = params[0];
-      if (ch != 0xFF) {
-        float freq = channelToFreqMHz(ch);
-        if (freq == 0.0f) { result = CMD_ERR_BAD_PARAMS; break; }
-        activeChannel = ch;
-        updateActiveFreqBw();
-        nvs.putUChar("radio_ch", activeChannel);
-        // Radio hardware will be reconfigured at the next timed window boundary.
-      }
-      hopSyncOffsetUs = (uint64_t)micros();
-      hopEnabled = true;
-      Serial.print("Hopping enabled: syncUs="); Serial.print((uint32_t)hopSyncOffsetUs);
-      Serial.print(" ch="); Serial.println(activeChannel);
       result = CMD_OK;
       break;
     }

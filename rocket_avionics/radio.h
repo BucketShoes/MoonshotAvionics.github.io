@@ -50,22 +50,6 @@ extern float   activeBwKHz;
 
 extern unsigned long nextTxDueUs;
 
-// ===================== TIMED WINDOWS / HOPPING =====================
-// When hopEnabled, the radio uses fixed 420ms windows instead of CSMA scheduling.
-// Even window index = RX for commands (40ms timeout). Odd = TX telemetry.
-// hopSyncOffsetUs is the micros() value at which window 0 occurred.
-
-extern bool     hopEnabled;
-extern uint64_t hopSyncOffsetUs;
-
-enum WindowType { WIN_TELEM, WIN_LONG_RANGE, WIN_SCANNER, WIN_RX, WIN_OFF };
-
-// Returns the current window index based on micros() and hopSyncOffsetUs.
-uint32_t hopCurrentWindowIndex();
-
-// Returns the window type for the current window (Phase 1: WIN_TELEM or WIN_RX).
-WindowType hopCurrentWindowType();
-
 // ===================== RSSI EMA =====================
 
 extern double rssiEma;  // background noise floor estimate
