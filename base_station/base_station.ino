@@ -973,7 +973,7 @@ setCpuFrequencyMhz(160); //tune this original 240 - rocket can also slow down - 
 
 
 
-  Serial.println("=== Ready ===");
+  Serial.println("=== Ready === new2");
 }
 
 // ===================== MAIN LOOP =====================
