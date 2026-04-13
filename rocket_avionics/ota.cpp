@@ -20,13 +20,20 @@ OtaState otaGetState() { return otaCtx.state; }
 // ===================== BEGIN =====================
 
 uint8_t otaHandleBegin() {
-  // Refuse if a rollback is pending (another OTA slot booted but not confirmed).
-  // esp_ota_check_rollback_is_possible() returns true when the running app was
-  // set via esp_ota_set_boot_partition and has not yet called
-  // esp_ota_mark_app_valid_cancel_rollback().
-  if (esp_ota_check_rollback_is_possible()) {
-    Serial.println("OTA: begin refused — rollback pending, confirm first");
-    return CMD_ERR_REFUSED;
+  // Refuse if this boot is pending confirmation — the app was set via OTA and
+  // esp_ota_mark_app_valid_cancel_rollback() has not been called yet.
+  // On next reboot without confirm, the bootloader would roll back automatically.
+  // We block OTA_BEGIN here to protect the known-good previous slot from being
+  // overwritten before the user has decided whether to keep the current firmware.
+  // Note: esp_ota_check_rollback_is_possible() is NOT the right check — it returns
+  // true permanently once two OTA partitions exist. Use the partition state instead.
+  {
+    esp_ota_img_states_t imgState;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &imgState) == ESP_OK
+        && imgState == ESP_OTA_IMG_PENDING_VERIFY) {
+      Serial.println("OTA: begin refused — this boot is pending confirmation (send 0x52 first)");
+      return CMD_ERR_REFUSED;
+    }
   }
 
   if (otaCtx.state != OTA_LOCKED) {

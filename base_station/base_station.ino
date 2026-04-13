@@ -227,9 +227,13 @@ static void otaHandleChunk(uint32_t offset, const uint8_t* data, size_t len) {
 }
 
 static uint8_t otaHandleBegin() {
-  if (esp_ota_check_rollback_is_possible()) {
-    Serial.println("OTA: begin refused — rollback pending");
-    return 0x02;  // CMD_ERR_REFUSED
+  {
+    esp_ota_img_states_t imgState;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &imgState) == ESP_OK
+        && imgState == ESP_OTA_IMG_PENDING_VERIFY) {
+      Serial.println("OTA: begin refused — boot pending confirmation (send 0x52 first)");
+      return 0x07;  // OTA_STATUS_REFUSED
+    }
   }
   if (bsOta.state != OTA_LOCKED) {
     Serial.println("OTA: begin refused — already active");

@@ -111,7 +111,7 @@ Effect: target device switches to download radio settings, waits 10ms (both side
 0x50  OTA BEGIN
       Params: none
       Effect: enables OTA chunk writes on the target device. Erases the entire inactive OTA partition (~1.5 MB, ~1–2 s — pre-erased with vTaskDelay(1) per 4 KB sector to feed the watchdog), then opens an esp_ota_begin session.
-      Refused if: armed; a rollback is pending (device rebooted into new firmware but CMD_OTA_CONFIRM has not been sent — must confirm or reboot-to-rollback before starting a new session); OTA session already in progress.
+      Refused if: armed; the running firmware is in pending-verification state (booted via OTA but CMD_OTA_CONFIRM not yet sent — the bootloader would roll back on next reboot). Checked via esp_ota_get_state_partition() == ESP_OTA_IMG_PENDING_VERIFY. USB-flashed firmware is never pending. OTA session already in progress also refused.
       OTA and ARM are mutually exclusive in both directions: OTA commands refuse if armed; ARM refuses if any OTA state other than OTA_LOCKED.
       Note: LoRa transport is technically valid for this command (no params, small packet), but in practice OTA is initiated from BLE/HTTP where the chunk transport is also available.
 
