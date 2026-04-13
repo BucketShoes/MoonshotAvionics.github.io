@@ -220,6 +220,7 @@ void nonblockingRadio() {
         uint8_t pkt[32];
         size_t len = buildTelemetryPacket(pkt);
         hopLedSet(true);
+        radio.standby();  // ensure not in continuous RX (e.g. first window after bootstrap)
         radioStartTx(pkt, len);
 
       } else {  // WIN_RX
@@ -227,7 +228,7 @@ void nonblockingRadio() {
         Serial.print(": RX ch="); Serial.println(activeChannel);
 
         hopLedSet(true);
-        // SX1262 is already in standby (returned automatically after TX/timeout/rxDone).
+        radio.standby();  // ensure not in continuous RX (e.g. first window after bootstrap)
         int rxState = radio.startReceive(HOP_RX_TIMEOUT_MS);
         if (rxState == RADIOLIB_ERR_NONE) {
           radioState = RADIO_RX_LISTENING;

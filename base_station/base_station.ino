@@ -489,9 +489,9 @@ void bsSendSetHopping() {
 
   memcpy(cmdTx.pkt, pkt, pos);
   cmdTx.pktLen = pos;
-  cmdTx.sends  = 3;   // send 3 times for reliability
+  cmdTx.sends  = 1;
   cmdTx.sent   = 0;
-  cmdTx.waitMs = 200;
+  cmdTx.waitMs = 0;
   cmdTx.lastSendMs = 0;
   cmdTx.active = true;
 
@@ -1084,7 +1084,7 @@ void setup() {
   int st = radio.begin(activeFreqMHz, activeBwKHz, activeSF, LORA_CR, LORA_SYNCWORD, activePower, LORA_PREAMBLE);
   Serial.print("LoRa: "); Serial.println(st == RADIOLIB_ERR_NONE ? "ok" : "FAIL");
   radio.setDio2AsRfSwitch(true);
-  radio.setPacketReceivedAction(onDio1);
+  radio.setDio1Action(onDio1);  // fires on RX_DONE, TX_DONE, and RX_TIMEOUT — needed for timed windows
   radio.startReceive();
 
 Serial.println("Radio Done");
