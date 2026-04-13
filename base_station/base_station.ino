@@ -472,7 +472,7 @@ void bsSendSetHopping() {
   highestNonce++;
   bsNvs.putUInt("nonce", highestNonce);
 
-  // Packet layout: [0x9A][deviceId][cmdId][nonce u32LE][params][HMAC_TRUNC_LEN]
+  // Packet layout: [0xAF][deviceId][cmdId][nonce u32LE][params][HMAC_TRUNC_LEN]
   // params: commandChannel=0xFF (keep current)
   uint8_t pkt[18];
   uint8_t pos = 0;

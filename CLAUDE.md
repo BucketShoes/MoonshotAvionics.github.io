@@ -92,4 +92,3 @@ Pull the relevant doc into the conversation when working in that area.
 ## Keep updated
 - When changing functionality, consider if it should also require an update to the design docs but do not make frivolous changes.
 - If this CLAUDE.md file falls out of sync with a designs, update it.
-- When adding a new command, always update `Lora command listing.txt` in the same session.
