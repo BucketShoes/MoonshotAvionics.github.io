@@ -220,7 +220,6 @@ void nonblockingRadio() {
         uint8_t pkt[32];
         size_t len = buildTelemetryPacket(pkt);
         hopLedSet(true);
-        radio.standby();  // ensure not in continuous RX (e.g. first window after bootstrap)
         radioStartTx(pkt, len);
 
       } else {  // WIN_RX
@@ -228,7 +227,6 @@ void nonblockingRadio() {
         Serial.print(": RX ch="); Serial.println(activeChannel);
 
         hopLedSet(true);
-        radio.standby();  // ensure not in continuous RX (e.g. first window after bootstrap)
         int rxState = radio.startReceive(HOP_RX_TIMEOUT_MS);
         if (rxState == RADIOLIB_ERR_NONE) {
           radioState = RADIO_RX_LISTENING;
@@ -277,7 +275,7 @@ void nonblockingRadio() {
           invalidRxCount++;
           Serial.println("RX: header error (preamble without valid packet)");
           radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-          radioStartRx();
+          if (!hopEnabled) radioStartRx();
           break;
         }
       }
@@ -306,7 +304,14 @@ void nonblockingRadio() {
 
         preambleActive = false;
         lastRssiSampleUs = now;
-        radioStartRx();
+        // If CMD_SET_HOPPING just enabled timed windows, go to standby and let
+        // the window boundary logic take over. Do not restart continuous RX.
+        if (hopEnabled) {
+          radio.standby();
+          radioState = RADIO_OFF;
+        } else {
+          radioStartRx();
+        }
         break;
       }
 
