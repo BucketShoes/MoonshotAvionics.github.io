@@ -43,7 +43,7 @@
 
 // ===================== TIMED WINDOW / HOPPING =====================
 #define HOP_WINDOW_MS       420UL
-#define BS_HOP_RX_TIMEOUT_MS 150   // base station RX window timeout (ms)
+#define BS_HOP_RX_TIMEOUT_MS 150   // base station RX window timeout (ms) — used as ms, converted to raw units via calculateRxTimeout
 #define FLASH_SYNC_TIMING   true   // LED on during RX windows when synced
 
 // ===================== TRANSPORT FLAGS (for 0x31/0x32 enable/disable) =====================
@@ -522,7 +522,12 @@ void bsScheduleHopRx() {
 #if FLASH_SYNC_TIMING
     ledcWrite(LED_PIN, 255);
 #endif
-    radio.startReceive(BS_HOP_RX_TIMEOUT_MS);
+    int rxSt = radio.startReceive(radio.calculateRxTimeout(BS_HOP_RX_TIMEOUT_MS * 1000UL));
+    if (rxSt != RADIOLIB_ERR_NONE) {
+      Serial.print("BS RX win start fail: "); Serial.println(rxSt);
+      bsHopRxOpen = false;
+      ledcWrite(LED_PIN, 0);
+    }
     Serial.print("BS WIN "); Serial.print(nextWinIdx); Serial.print(": RX ch=");
     Serial.println(activeChannel);
   }
@@ -541,7 +546,13 @@ void handleLoRaRx() {
 
   uint8_t buf[256];
   size_t len = radio.getPacketLength();
-  if (len == 0 || len > sizeof(buf)) { if (!bsHopEnabled) radio.startReceive(); return; }
+  if (len == 0 || len > sizeof(buf)) {
+    // RX timeout (len==0) or oversized. Explicit standby clears any stale SX1262
+    // command-timeout status left by the timed SetRx, so the next startReceive succeeds.
+    radio.standby();
+    if (!bsHopEnabled) radio.startReceive();
+    return;
+  }
   int state = radio.readData(buf, len);
   if (state != RADIOLIB_ERR_NONE) {
     // Timeout is expected in hopping mode — not an error, just no packet this window.
@@ -623,7 +634,18 @@ void handleCmdTx() {
       bsHopEnabled     = true;
       bsLastRocketRxMs = millis();  // reset watchdog so we don't immediately re-bootstrap
       Serial.print("HOP: sync set at "); Serial.print(bsSyncOffsetMs); Serial.println("ms");
-      radio.startReceive(BS_HOP_RX_TIMEOUT_MS);
+      // Open an initial RX window so the rocket's first TELEM after bootstrap is heard.
+      // bsHopRxOpen=true so bsScheduleHopRx doesn't open a second window on top.
+      bsHopRxOpen = true;
+#if FLASH_SYNC_TIMING
+      ledcWrite(LED_PIN, 255);
+#endif
+      int rxSt = radio.startReceive(radio.calculateRxTimeout(BS_HOP_RX_TIMEOUT_MS * 1000UL));
+      if (rxSt != RADIOLIB_ERR_NONE) {
+        Serial.print("BS initial RX fail: "); Serial.println(rxSt);
+        bsHopRxOpen = false;
+        ledcWrite(LED_PIN, 0);
+      }
       return;
     }
 

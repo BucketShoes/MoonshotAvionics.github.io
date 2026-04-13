@@ -179,7 +179,6 @@ void nonblockingRadio() {
         if (dio1Fired) {
           // SX1262 returns to standby automatically after rxDone or timeout.
           dio1Fired = false;
-          hopLedSet(false);
 
           uint8_t rxBuf[64];
           int state = radio.readData(rxBuf, sizeof(rxBuf));
@@ -196,6 +195,9 @@ void nonblockingRadio() {
             invalidRxCount++;
           }
           preambleActive = false;
+          // Explicit standby clears any stale SX1262 command-timeout status left
+          // by the timed SetRx expiry, so the next startTransmit succeeds cleanly.
+          radio.standby();
           radioState = RADIO_OFF;
           // Fall through to window boundary check — may be time for next window already.
         } else {
@@ -226,8 +228,7 @@ void nonblockingRadio() {
         Serial.print("WIN "); Serial.print(winIdx);
         Serial.print(": RX ch="); Serial.println(activeChannel);
 
-        hopLedSet(true);
-        int rxState = radio.startReceive(HOP_RX_TIMEOUT_MS);
+        int rxState = radio.startReceive(radio.calculateRxTimeout(HOP_RX_TIMEOUT_MS * 1000UL));
         if (rxState == RADIOLIB_ERR_NONE) {
           radioState = RADIO_RX_LISTENING;
         } else {
