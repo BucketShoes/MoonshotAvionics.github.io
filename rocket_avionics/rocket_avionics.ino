@@ -338,7 +338,7 @@ void nonblockingLoopStats() {
     Serial.print("  runningMaxLoopUs: "); Serial.print(runningMaxLoopUs);
     Serial.print("  bleCbTotal: "); Serial.print(bleCallbackTotalUs);
     Serial.print("us  bleCbPeak: "); Serial.print(bleCallbackPeakUs);
-    Serial.println("us. new");
+    Serial.println("us. new2");
 
     if (recentMaxLoopUs > runningMaxLoopUs) runningMaxLoopUs = recentMaxLoopUs;
     recentMaxLoopUs = 0;
