@@ -131,28 +131,38 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
 // Two modes:
 //
 // CSMA mode (hopEnabled == false, default):
-//   TX uses a fixed schedule (t=0, t=interval, t=2*interval, ...).
+//   Continuous RX between TX slots. TX uses a fixed schedule.
 //   Deferred TX (channel busy) does not drift the schedule.
 //   Hard ceiling: TX anyway after TX_MAX_DEFER_US regardless of blockers.
-//   Deferral reasons:
-//     1. Preamble detected (matching modulation — no processing gain)
-//     2. Post-TX keepout active
-//     3. High RSSI within last RSSI_HIGH_HOLDOFF_US (non-matching signal — polite defer)
-//   RSSI EMA: samples ALL non-preamble time, including high-RSSI from non-matching signals.
 //
 // Timed window mode (hopEnabled == true):
-//   420ms windows. Even index = WIN_RX (40ms timeout). Odd index = WIN_TELEM.
-//   Window transitions are detected by comparing hopCurrentWindowIndex() to lastWindowIndex.
-//   On WIN_TELEM: build and TX packet immediately. LED on if FLASH_SYNC_TIMING.
-//   On WIN_RX: open 40ms RX window. LED on if FLASH_SYNC_TIMING.
-//   DIO1 in WIN_RX: packet received, clear LED, restart standby (next window picks up).
-//   DIO1 in WIN_TELEM: TX complete, clear LED, go to standby (not back to RX).
+//   420ms windows. Even index = WIN_RX (40ms single-shot RX). Odd index = WIN_TELEM (TX).
+//   Everything uses single-shot RX (timed startReceive); radio returns to standby on its own
+//   after rxDone, rxTimeout, or txDone — no explicit standby needed for normal flow.
+//   LED (FLASH_SYNC_TIMING): on for the duration of TX only (WIN_TELEM).
+//   The base station opens a single-shot RX window at every boundary, so both sides are
+//   active for a brief aligned window each 420ms.
 
 static void hopLedSet(bool on) {
 #if FLASH_SYNC_TIMING
   ledcWrite(LED_PIN, on ? 255 : 0);
 #endif
   (void)on;
+}
+
+// Read IRQ flags and log which events fired. Returns the raw IRQ word.
+static uint16_t hopLogIrq(const char* context) {
+  uint16_t irq = (uint16_t)radio.getIrqFlags();
+  Serial.print("  IRQ("); Serial.print(context); Serial.print(")=0x");
+  Serial.print(irq, HEX);
+  if (irq & RADIOLIB_SX126X_IRQ_TX_DONE)        Serial.print(" TX_DONE");
+  if (irq & RADIOLIB_SX126X_IRQ_RX_DONE)        Serial.print(" RX_DONE");
+  if (irq & RADIOLIB_SX126X_IRQ_TIMEOUT)        Serial.print(" TIMEOUT");
+  if (irq & RADIOLIB_SX126X_IRQ_CRC_ERR)        Serial.print(" CRC_ERR");
+  if (irq & RADIOLIB_SX126X_IRQ_HEADER_ERR)     Serial.print(" HDR_ERR");
+  if (irq & RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED) Serial.print(" PREAMBLE");
+  Serial.println();
+  return irq;
 }
 
 void nonblockingRadio() {
@@ -165,21 +175,20 @@ void nonblockingRadio() {
     static uint32_t lastWindowIndex = 0xFFFFFFFF;
     uint32_t winIdx = hopCurrentWindowIndex();
 
-    switch (radioState) {
-      case RADIO_TX_ACTIVE:
-        if (dio1Fired) {
-          // SX1262 returns to standby automatically after single TX completes.
-          dio1Fired = false;
-          hopLedSet(false);
-          radioState = RADIO_OFF;
-        }
-        return;  // don't check window boundary while TX in progress or just completed
+    // --- Handle DIO1 events while a window is active ---
+    if (dio1Fired) {
+      dio1Fired = false;
+      uint16_t irq = hopLogIrq(radioState == RADIO_TX_ACTIVE ? "TX" : "RX");
 
-      case RADIO_RX_LISTENING:
-        if (dio1Fired) {
-          // SX1262 returns to standby automatically after rxDone or timeout.
-          dio1Fired = false;
+      if (radioState == RADIO_TX_ACTIVE) {
+        // TX_DONE: SX1262 already returned to standby.
+        hopLedSet(false);
+        radioState = RADIO_OFF;
+        // Fall through to window boundary check — next window may already be due.
 
+      } else if (radioState == RADIO_RX_LISTENING) {
+        // RX_DONE or TIMEOUT: SX1262 already returned to standby.
+        if (irq & RADIOLIB_SX126X_IRQ_RX_DONE) {
           uint8_t rxBuf[64];
           int state = radio.readData(rxBuf, sizeof(rxBuf));
           if (state == RADIOLIB_ERR_NONE) {
@@ -190,27 +199,26 @@ void nonblockingRadio() {
           } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
             Serial.println("RX: CRC fail");
             invalidRxCount++;
-          } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
+          } else {
             Serial.print("RX err: "); Serial.println(state);
             invalidRxCount++;
           }
-          preambleActive = false;
-          // Explicit standby clears any stale SX1262 command-timeout status left
-          // by the timed SetRx expiry, so the next startTransmit succeeds cleanly.
-          radio.standby();
-          radioState = RADIO_OFF;
-          // Fall through to window boundary check — may be time for next window already.
-        } else {
-          // RX still in progress — don't interrupt for a window boundary.
-          return;
         }
-        break;
+        // TIMEOUT: no packet this window — radio already in standby, nothing to read.
+        preambleActive = false;
+        radioState = RADIO_OFF;
+        // Fall through to window boundary check.
 
-      default:
-        break;
+      } else {
+        // Unexpected DIO1 while RADIO_OFF — stale interrupt. Ignore.
+        Serial.print("HOP: unexpected DIO1 in state "); Serial.println(radioState);
+      }
+    } else if (radioState != RADIO_OFF) {
+      // Radio is mid-TX or mid-RX and DIO1 hasn't fired yet — wait for it.
+      return;
     }
 
-    // Window boundary check — only reached when radio is idle.
+    // --- Window boundary check — only reached when radio is idle ---
     if (winIdx != lastWindowIndex) {
       lastWindowIndex = winIdx;
       WindowType wt = hopCurrentWindowType();
@@ -222,7 +230,16 @@ void nonblockingRadio() {
         uint8_t pkt[32];
         size_t len = buildTelemetryPacket(pkt);
         hopLedSet(true);
-        radioStartTx(pkt, len);
+        int txState = radio.startTransmit(pkt, len);
+        if (txState == RADIOLIB_ERR_NONE) {
+          radioState = RADIO_TX_ACTIVE;
+          dio1Fired = false;
+        } else {
+          Serial.print("  TX start fail: "); Serial.println(txState);
+          hopLedSet(false);
+          radio.standby();
+          radioState = RADIO_OFF;
+        }
 
       } else {  // WIN_RX
         Serial.print("WIN "); Serial.print(winIdx);
@@ -231,11 +248,12 @@ void nonblockingRadio() {
         int rxState = radio.startReceive(radio.calculateRxTimeout(HOP_RX_TIMEOUT_MS * 1000UL));
         if (rxState == RADIOLIB_ERR_NONE) {
           radioState = RADIO_RX_LISTENING;
+          dio1Fired = false;
         } else {
-          Serial.print("RX win start fail: "); Serial.println(rxState);
+          Serial.print("  RX start fail: "); Serial.println(rxState);
+          radio.standby();
           radioState = RADIO_OFF;
         }
-        dio1Fired = false;
       }
     }
     return;

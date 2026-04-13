@@ -502,22 +502,21 @@ void bsSendSetHopping() {
 // Opens a receive window at each 420ms boundary when synced.
 // Called from loop() every iteration.
 
+static uint32_t bsLastOpenedWin = 0xFFFFFFFF;  // reset on each re-bootstrap
+
 void bsScheduleHopRx() {
   if (!bsHopEnabled || logDl.active || cmdTx.active) return;
 
   uint32_t now = millis();
   // Next window boundary, rounded up from current time.
-  // Use the window index of the *next* window so we open just before it starts.
   uint32_t currentWinIdx = (now - bsSyncOffsetMs) / HOP_WINDOW_MS;
   uint32_t nextWinIdx    = currentWinIdx + 1;
   uint32_t nextWinStart  = bsSyncOffsetMs + nextWinIdx * HOP_WINDOW_MS;
 
   // Open listen window 10ms before the expected boundary.
-  // Use signed comparison so this works correctly even if now is slightly ahead.
-  static uint32_t lastOpenedWin = 0xFFFFFFFF;
-  if (nextWinIdx != lastOpenedWin && !bsHopRxOpen &&
+  if (nextWinIdx != bsLastOpenedWin && !bsHopRxOpen &&
       (int32_t)(now + 10 - nextWinStart) >= 0) {
-    lastOpenedWin = nextWinIdx;
+    bsLastOpenedWin = nextWinIdx;
     bsHopRxOpen = true;
 #if FLASH_SYNC_TIMING
     ledcWrite(LED_PIN, 255);
@@ -526,10 +525,15 @@ void bsScheduleHopRx() {
     if (rxSt != RADIOLIB_ERR_NONE) {
       Serial.print("BS RX win start fail: "); Serial.println(rxSt);
       bsHopRxOpen = false;
+#if FLASH_SYNC_TIMING
       ledcWrite(LED_PIN, 0);
+#endif
+      return;
     }
-    Serial.print("BS WIN "); Serial.print(nextWinIdx); Serial.print(": RX ch=");
-    Serial.println(activeChannel);
+    Serial.print("BS WIN "); Serial.print(nextWinIdx);
+    Serial.print(": RX open, nextStart="); Serial.print(nextWinStart);
+    Serial.print(" now="); Serial.print(now);
+    Serial.print(" ch="); Serial.println(activeChannel);
   }
 }
 
@@ -539,24 +543,53 @@ void handleLoRaRx() {
   if (!rxFlag) return;
   rxFlag = false;
 
+  // Check which IRQ event fired before clearing anything.
+  uint16_t irq = (uint16_t)radio.getIrqFlags();
+  bool isTimeout = (irq & RADIOLIB_SX126X_IRQ_TIMEOUT) && !(irq & RADIOLIB_SX126X_IRQ_RX_DONE);
+  bool isTxDone  = (irq & RADIOLIB_SX126X_IRQ_TX_DONE);
+
+  if (bsHopEnabled) {
+    Serial.print("BS DIO1: irq=0x"); Serial.print(irq, HEX);
+    if (irq & RADIOLIB_SX126X_IRQ_TX_DONE)    Serial.print(" TX_DONE");
+    if (irq & RADIOLIB_SX126X_IRQ_RX_DONE)    Serial.print(" RX_DONE");
+    if (irq & RADIOLIB_SX126X_IRQ_TIMEOUT)    Serial.print(" TIMEOUT");
+    if (irq & RADIOLIB_SX126X_IRQ_CRC_ERR)    Serial.print(" CRC_ERR");
+    Serial.println();
+  }
+
+  // TX_DONE can fire here if the blocking radio.transmit() ISR set rxFlag.
+  // The blocking call already handled the transmit result — just ignore.
+  if (isTxDone) {
+    radio.standby();
+    return;
+  }
+
 #if FLASH_SYNC_TIMING
-  if (bsHopEnabled) ledcWrite(LED_PIN, 0);  // RX done — clear LED
+  if (bsHopEnabled) ledcWrite(LED_PIN, 0);  // RX window ended — clear LED
 #endif
   bsHopRxOpen = false;
+
+  if (isTimeout) {
+    // No packet this window — radio already returned to standby after timed RX.
+    if (!bsHopEnabled) radio.startReceive();
+    return;
+  }
 
   uint8_t buf[256];
   size_t len = radio.getPacketLength();
   if (len == 0 || len > sizeof(buf)) {
-    // RX timeout (len==0) or oversized. Explicit standby clears any stale SX1262
-    // command-timeout status left by the timed SetRx, so the next startReceive succeeds.
     radio.standby();
     if (!bsHopEnabled) radio.startReceive();
     return;
   }
   int state = radio.readData(buf, len);
   if (state != RADIOLIB_ERR_NONE) {
-    // Timeout is expected in hopping mode — not an error, just no packet this window.
-    if (state != RADIOLIB_ERR_RX_TIMEOUT && !bsHopEnabled) radio.startReceive();
+    if (state == RADIOLIB_ERR_CRC_MISMATCH) {
+      Serial.println("BS RX: CRC fail");
+    } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
+      Serial.print("BS RX err: "); Serial.println(state);
+    }
+    if (!bsHopEnabled) radio.startReceive();
     return;
   }
   float snrF = radio.getSNR();
@@ -615,6 +648,15 @@ void handleCmdTx() {
   unsigned long now = millis();
   if (cmdTx.sent > 0 && (now - cmdTx.lastSendMs) < cmdTx.waitMs) return;
 
+  // Standby may interrupt an open hop RX window — clear the flag so
+  // bsScheduleHopRx doesn't think a window is still in progress.
+  if (bsHopRxOpen) {
+    Serial.println("CMD TX: interrupting hop RX window");
+    bsHopRxOpen = false;
+#if FLASH_SYNC_TIMING
+    if (bsHopEnabled) ledcWrite(LED_PIN, 0);
+#endif
+  }
   radio.standby();
   int st = radio.transmit(cmdTx.pkt, cmdTx.pktLen);
   cmdTx.lastSendMs = millis();
@@ -633,19 +675,11 @@ void handleCmdTx() {
       bsSyncOffsetMs   = millis();
       bsHopEnabled     = true;
       bsLastRocketRxMs = millis();  // reset watchdog so we don't immediately re-bootstrap
-      Serial.print("HOP: sync set at "); Serial.print(bsSyncOffsetMs); Serial.println("ms");
-      // Open an initial RX window so the rocket's first TELEM after bootstrap is heard.
-      // bsHopRxOpen=true so bsScheduleHopRx doesn't open a second window on top.
-      bsHopRxOpen = true;
-#if FLASH_SYNC_TIMING
-      ledcWrite(LED_PIN, 255);
-#endif
-      int rxSt = radio.startReceive(radio.calculateRxTimeout(BS_HOP_RX_TIMEOUT_MS * 1000UL));
-      if (rxSt != RADIOLIB_ERR_NONE) {
-        Serial.print("BS initial RX fail: "); Serial.println(rxSt);
-        bsHopRxOpen = false;
-        ledcWrite(LED_PIN, 0);
-      }
+      bsHopRxOpen      = false;     // no window open yet; bsScheduleHopRx will open the first one
+      bsLastOpenedWin  = 0xFFFFFFFF; // reset so scheduler doesn't think a window was already opened
+      Serial.print("HOP: sync set, bsSyncOffsetMs="); Serial.println(bsSyncOffsetMs);
+      // Do NOT open an RX window here — bsScheduleHopRx will open it 10ms before the
+      // first window boundary. Opening one here would be misaligned with the window grid.
       return;
     }
 
@@ -1137,6 +1171,10 @@ void handleHopBootstrap() {
 
   uint32_t interval = (bsLastBootstrapMs == 0) ? 2000 : 60000;
   if ((now - bsLastBootstrapMs) >= interval) {
+    Serial.print("HOP bootstrap: now="); Serial.print(now);
+    Serial.print(" lastBootstrap="); Serial.print(bsLastBootstrapMs);
+    Serial.print(" hopEnabled="); Serial.print(bsHopEnabled);
+    Serial.print(" sinceLastRx="); Serial.println(bsHopEnabled ? (now - bsLastRocketRxMs) : 0);
     bsSendSetHopping();
     bsLastBootstrapMs = now;
   }
