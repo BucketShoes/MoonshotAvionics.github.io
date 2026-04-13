@@ -99,6 +99,7 @@
 #define CMD_FIRE_PYRO     0x03
 #define CMD_SET_TX_RATE   0x10
 #define CMD_SET_RADIO     0x12
+#define CMD_SET_HOPPING   0x13
 #define CMD_LOG_DOWNLOAD  0x20
 #define CMD_OTA_BEGIN     0x50  // Open OTA write session (erases inactive partition)
 #define CMD_OTA_FINALIZE  0x51  // Verify image HMAC, set boot partition, reboot
@@ -169,6 +170,16 @@
 
 // Overflow buffer size for BLE multi-PDU captures
 #define BLE_OVF_BUF_SIZE       4096
+
+// ===================== TIMED WINDOW / HOPPING =====================
+// Window duration: 420ms. Even windows = RX for commands; odd = TX telemetry.
+// hopSyncOffsetUs is the micros() value at which window 0 occurred.
+// FLASH_SYNC_TIMING: when true, LED is on during TX (rocket) and RX window (base).
+
+#define HOP_WINDOW_MS       420UL
+#define HOP_WINDOW_US       (HOP_WINDOW_MS * 1000UL)
+#define FLASH_SYNC_TIMING   true
+#define HOP_RX_TIMEOUT_MS   40     // rocket RX window timeout (ms)
 
 // ===================== TX RATE UTILITY =====================
 // TX rate encoding: positive = Hz, negative = seconds-between-packets, 0 = disabled.

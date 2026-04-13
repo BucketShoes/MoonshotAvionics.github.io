@@ -35,6 +35,11 @@ unsigned long keepoutUntilUs = 0;
 bool          preambleActive = false;
 bool          txDeferredThisSlot = false;
 
+// ===================== TIMED WINDOWS / HOPPING =====================
+
+bool     hopEnabled      = false;
+uint64_t hopSyncOffsetUs = 0;
+
 // ===================== RSSI EMA =====================
 
 double        rssiEma           = -120.0;
@@ -62,6 +67,16 @@ static unsigned long randomKeepout() {
 void updateActiveFreqBw() {
   activeFreqMHz = channelToFreqMHz(activeChannel);
   activeBwKHz = (activeChannel < 64) ? 125.0f : 500.0f;
+}
+
+uint32_t hopCurrentWindowIndex() {
+  uint64_t elapsed = (uint64_t)micros() - hopSyncOffsetUs;
+  return (uint32_t)(elapsed / HOP_WINDOW_US);
+}
+
+WindowType hopCurrentWindowType() {
+  uint32_t idx = hopCurrentWindowIndex();
+  return (idx & 1) ? WIN_TELEM : WIN_RX;
 }
 
 // ===================== RADIO CONFIG =====================
@@ -113,21 +128,118 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
 
 // ===================== MAIN RADIO STATE MACHINE =====================
 //
-// TX uses a fixed schedule (t=0, t=interval, t=2*interval, ...).
-// Deferred TX (channel busy) does not drift the schedule.
-// Hard ceiling: TX anyway after TX_MAX_DEFER_US regardless of blockers.
+// Two modes:
 //
-// Deferral reasons:
-//   1. Preamble detected (matching modulation — no processing gain)
-//   2. Post-TX keepout active
-//   3. High RSSI within last RSSI_HIGH_HOLDOFF_US (non-matching signal — polite defer)
+// CSMA mode (hopEnabled == false, default):
+//   TX uses a fixed schedule (t=0, t=interval, t=2*interval, ...).
+//   Deferred TX (channel busy) does not drift the schedule.
+//   Hard ceiling: TX anyway after TX_MAX_DEFER_US regardless of blockers.
+//   Deferral reasons:
+//     1. Preamble detected (matching modulation — no processing gain)
+//     2. Post-TX keepout active
+//     3. High RSSI within last RSSI_HIGH_HOLDOFF_US (non-matching signal — polite defer)
+//   RSSI EMA: samples ALL non-preamble time, including high-RSSI from non-matching signals.
 //
-// RSSI EMA: samples ALL non-preamble time, including high-RSSI from non-matching signals.
+// Timed window mode (hopEnabled == true):
+//   420ms windows. Even index = WIN_RX (40ms timeout). Odd index = WIN_TELEM.
+//   Window transitions are detected by comparing hopCurrentWindowIndex() to lastWindowIndex.
+//   On WIN_TELEM: build and TX packet immediately. LED on if FLASH_SYNC_TIMING.
+//   On WIN_RX: open 40ms RX window. LED on if FLASH_SYNC_TIMING.
+//   DIO1 in WIN_RX: packet received, clear LED, restart standby (next window picks up).
+//   DIO1 in WIN_TELEM: TX complete, clear LED, go to standby (not back to RX).
+
+static void hopLedSet(bool on) {
+#if FLASH_SYNC_TIMING
+  ledcWrite(LED_PIN, on ? 255 : 0);
+#endif
+  (void)on;
+}
 
 void nonblockingRadio() {
   if (!loraReady) return;
 
   unsigned long now = micros();
+
+  // ===================== TIMED WINDOW MODE =====================
+  if (hopEnabled) {
+    static uint32_t lastWindowIndex = 0xFFFFFFFF;
+    uint32_t winIdx = hopCurrentWindowIndex();
+
+    switch (radioState) {
+      case RADIO_TX_ACTIVE:
+        if (dio1Fired) {
+          dio1Fired = false;
+          hopLedSet(false);
+          radio.standby();
+          radioState = RADIO_OFF;  // standby; next window boundary will set proper mode
+        }
+        return;  // always return here — window boundary handled below after switch
+
+      case RADIO_RX_LISTENING:
+        // Check for a received packet (command during RX window, or timeout)
+        if (dio1Fired) {
+          dio1Fired = false;
+          hopLedSet(false);
+
+          uint8_t rxBuf[64];
+          int state = radio.readData(rxBuf, sizeof(rxBuf));
+          if (state == RADIOLIB_ERR_NONE) {
+            size_t rxLen = radio.getPacketLength();
+            float pktRssi = radio.getRSSI(true);
+            float pktSnr  = radio.getSNR();
+            processReceivedPacket(rxBuf, rxLen, (int8_t)pktRssi, (int8_t)pktSnr);
+          } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
+            Serial.println("RX: CRC fail");
+            invalidRxCount++;
+          } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
+            Serial.print("RX err: "); Serial.println(state);
+            invalidRxCount++;
+          }
+          preambleActive = false;
+          radio.standby();
+          radioState = RADIO_OFF;  // standby; next window boundary will set proper mode
+        }
+        break;
+
+      default:
+        break;
+    }
+
+    // Window boundary check — act on new window
+    if (winIdx != lastWindowIndex) {
+      lastWindowIndex = winIdx;
+      WindowType wt = hopCurrentWindowType();
+
+      if (wt == WIN_TELEM) {
+        Serial.print("WIN "); Serial.print(winIdx);
+        Serial.print(": TELEM ch="); Serial.println(activeChannel);
+
+        uint8_t pkt[32];
+        size_t len = buildTelemetryPacket(pkt);
+        hopLedSet(true);
+        radioStartTx(pkt, len);
+
+      } else {  // WIN_RX
+        Serial.print("WIN "); Serial.print(winIdx);
+        Serial.print(": RX ch="); Serial.println(activeChannel);
+
+        radio.standby();
+        hopLedSet(true);
+        // startReceive with timeout. RadioLib timeout unit is ms for SX126x.
+        int rxState = radio.startReceive(HOP_RX_TIMEOUT_MS);
+        if (rxState == RADIOLIB_ERR_NONE) {
+          radioState = RADIO_RX_LISTENING;
+        } else {
+          Serial.print("RX win start fail: "); Serial.println(rxState);
+          radioState = RADIO_OFF;
+        }
+        dio1Fired = false;
+      }
+    }
+    return;
+  }
+
+  // ===================== CSMA MODE (pre-bootstrap) =====================
 
   switch (radioState) {
 
