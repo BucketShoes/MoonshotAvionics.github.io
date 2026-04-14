@@ -265,7 +265,7 @@ void nonblockingRadio() {
       // Clear stale IRQ flags first so the previous slot's flags don't trigger immediately.
       radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
       dio1Fired = false;
-      int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
+      int st = radio.startReceive(BS_RX_TIMEOUT_RAW);
       if (st == RADIOLIB_ERR_NONE) {
         radioState = RADIO_RX_ACTIVE;
       } else {

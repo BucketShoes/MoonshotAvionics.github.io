@@ -72,8 +72,9 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 
 // Base station listens this many µs before the expected slot start.
 #define BS_RX_EARLY_US     200000UL
-// Base station RX timeout in ms (how long radio stays awake if no preamble detected).
-#define BS_RX_TIMEOUT_MS   400
+// Base station RX timeout. startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
+// 400ms = 400000µs / 15.625 = 25600 units.
+#define BS_RX_TIMEOUT_RAW  25600UL
 
 // ===================== TX SCHEDULING (legacy, used pre-sync) =====================
 

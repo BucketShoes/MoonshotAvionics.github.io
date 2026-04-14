@@ -76,7 +76,9 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define SLOT_SEQUENCE_LEN   2
 #define SLOT_DURATION_US    1000000UL   // 1 second per slot
 #define BS_RX_EARLY_US      200000UL    // start RX this far before slot start
-#define BS_RX_TIMEOUT_MS    400         // RX timeout if no preamble detected
+// startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
+// 400ms = 400000µs / 15.625 = 25600 units.
+#define BS_RX_TIMEOUT_RAW   25600UL
 
 #define CMD_SET_SYNC           0x41    // sync command ID (matches rocket config.h)
 // HMAC_KEY_LEN and HMAC_TRUNC_LEN come from secrets.h (already included above)
@@ -1066,7 +1068,7 @@ static void bsStartListening(const char* label) {
   // otherwise a leftover flag fires DIO1 immediately after startReceive.
   radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
   dio1Fired = false;
-  int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
+  int st = radio.startReceive(BS_RX_TIMEOUT_RAW);
   if (st == RADIOLIB_ERR_NONE) {
     bsRadioState   = BS_RADIO_RX_ACTIVE;
     bsEarlyRxArmed = true;
