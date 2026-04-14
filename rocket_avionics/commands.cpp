@@ -1,4 +1,4 @@
-// commands.cpp — HMAC authentication, command dispatch, and log download.
+// commands.cpp — HMAC authentication and command dispatch.
 // See commands.h for the public API.
 
 #include <Arduino.h>
@@ -63,7 +63,6 @@ static int expectedParamLen(uint8_t cmdId) {
     case CMD_FIRE_PYRO:     return 3;   // channel(1) + duration(2)
     case CMD_SET_TX_RATE:   return 1;   // rate(1)
     case CMD_SET_RADIO:     return 3;   // channel(1) + SF(1) + power(1)
-    case CMD_LOG_DOWNLOAD:  return 10;  // start(4)+count(2)+ch(1)+SF(1)+BW(1)+power(1)
     case CMD_OTA_BEGIN:     return 0;
     case CMD_OTA_FINALIZE:  return 36;  // fwSize(4) + fwHmac(32)
     case CMD_OTA_CONFIRM:   return 0;
@@ -73,231 +72,6 @@ static int expectedParamLen(uint8_t cmdId) {
     case CMD_LOG_ERASE:     return 0;
     default:                return -1;
   }
-}
-
-// ===================== LOG DOWNLOAD =====================
-// Blocking transfer of log records as 0xCA chunks over LoRa.
-// Only called while disarmed. Takes over the radio completely.
-
-static float bwCodeToKHz(uint8_t bwCode) {
-  switch (bwCode & 0x0F) {
-    case 0: return 500.0f;
-    case 1: return 250.0f;
-    case 2: return 125.0f;
-    case 3: return 62.5f;
-    case 4: return 41.7f;
-    case 5: return 31.25f;
-    case 6: return 20.8f;
-    case 7: return 15.6f;
-    case 8: return 10.4f;
-    case 9: return 7.8f;
-    default: return 0.0f;
-  }
-}
-
-#define LORA_MAX_PAYLOAD  255
-#define CHUNK_HDR_SIZE    7       // type(1)+deviceId(1)+startRecIdx(4)+count(1)
-#define DOWNLOAD_IDLE_TIMEOUT_MS  5000
-
-static bool sendLogChunk(uint32_t startRecIdx, uint8_t count,
-                         const uint8_t* recordData, size_t recordDataLen) {
-  uint8_t pkt[LORA_MAX_PAYLOAD];
-  if (CHUNK_HDR_SIZE + recordDataLen > LORA_MAX_PAYLOAD) return false;
-
-  size_t pos = 0;
-  pkt[pos++] = PKT_LOG_CHUNK;
-  pkt[pos++] = DEVICE_ID;
-  pkt[pos++] = startRecIdx & 0xFF;
-  pkt[pos++] = (startRecIdx >> 8) & 0xFF;
-  pkt[pos++] = (startRecIdx >> 16) & 0xFF;
-  pkt[pos++] = (startRecIdx >> 24) & 0xFF;
-  pkt[pos++] = count;
-  memcpy(pkt + pos, recordData, recordDataLen);
-  pos += recordDataLen;
-
-  int state = radio.transmit(pkt, pos);
-  Serial.println("sent chunk");
-  if (state != RADIOLIB_ERR_NONE) {
-    Serial.print("DL TX err: "); Serial.println(state);
-    return false;
-  }
-  return true;
-}
-
-static bool listenForDownloadRequest(uint32_t timeoutMs,
-                                     uint8_t* outParams, size_t* outParamsLen,
-                                     uint32_t* outNonce) {
-  unsigned long deadline = millis() + timeoutMs;
-
-  dio1Fired = false;
-  radio.startReceive();
-
-  while ((long)(deadline - millis()) > 0) {
-    if (!dio1Fired) { delay(1); continue; }
-    dio1Fired = false;
-
-    uint8_t rxBuf[64];
-    int state = radio.readData(rxBuf, sizeof(rxBuf));
-    if (state != RADIOLIB_ERR_NONE) { radio.startReceive(); continue; }
-    size_t rxLen = radio.getPacketLength();
-
-    if (rxLen < 17 || rxBuf[0] != PKT_COMMAND || rxBuf[1] != DEVICE_ID) {
-      radio.startReceive(); continue;
-    }
-    if (!verifyCommandHMAC(rxBuf, rxLen)) {
-      lastAck.invalidHmacCount++;
-      radio.startReceive(); continue;
-    }
-
-    uint32_t nonce = readU32(&rxBuf[3]);
-    if (nonce <= highestNonce) { radio.startReceive(); continue; }
-
-    highestNonce = nonce;
-    nvs.putUInt("nonce", highestNonce);
-
-    lastAck.rssi = (int8_t)radio.getRSSI(true);
-    lastAck.snr  = (int8_t)(radio.getSNR() * 4);
-
-    uint8_t cmdId = rxBuf[2];
-    size_t paramsLen = rxLen - 7 - HMAC_TRUNC_LEN;
-
-    if (cmdId == CMD_LOG_DOWNLOAD && paramsLen == 10) {
-      memcpy(outParams, &rxBuf[7], paramsLen);
-      *outParamsLen = paramsLen;
-      *outNonce = nonce;
-      return true;
-    }
-
-    // Not a download request — ack refused, continue listening
-    lastAck.nonce = nonce;
-    lastAck.result = CMD_ERR_REFUSED;
-    lastAck.pending = true;
-    radio.startReceive();
-  }
-  return false;
-}
-
-static uint32_t resolveRecordIndex(int32_t relStart, uint32_t armRec, uint32_t currentRec) {
-  int64_t absIdx = (int64_t)armRec + (int64_t)relStart;
-  if (absIdx < 0) absIdx = 0;
-  if (absIdx > (int64_t)currentRec) absIdx = currentRec;
-  return (uint32_t)absIdx;
-}
-
-static void streamRecords(uint32_t absStart, uint32_t absEnd) {
-  uint32_t recIdx = absStart;
-  while (recIdx < absEnd) {
-    uint8_t recordBuf[LORA_MAX_PAYLOAD];
-    size_t dataPos = 0;
-    uint8_t recsInChunk = 0;
-    uint32_t chunkStartRec = recIdx;
-    size_t maxDataBytes = LORA_MAX_PAYLOAD - CHUNK_HDR_SIZE;
-
-    while (recIdx < absEnd) {
-      uint8_t tmpRec[LOG_HDR_SIZE + LOG_MAX_PAYLOAD];
-      int recSize = logStore.readRecordRaw(recIdx, tmpRec, sizeof(tmpRec));
-      if (recSize < 0) { recIdx++; continue; }
-      if (dataPos + (size_t)recSize > maxDataBytes) break;
-      memcpy(recordBuf + dataPos, tmpRec, recSize);
-      dataPos += recSize;
-      recsInChunk++;
-      recIdx++;
-    }
-
-    if (recsInChunk > 0) {
-      if (!sendLogChunk(chunkStartRec, recsInChunk, recordBuf, dataPos)) {
-        Serial.println("DL: TX fail, aborting");
-        return;
-      }
-      Serial.print("DL: sent "); Serial.print(recsInChunk);
-      Serial.print(" recs from #"); Serial.println(chunkStartRec);
-    }
-  }
-}
-
-static void executeLogDownload(uint32_t cmdNonce, const uint8_t* params) {
-  int32_t  relStart  = (int32_t)readU32(&params[0]);
-  uint16_t reqCount  = (uint16_t)(params[4] | (params[5] << 8));
-  uint8_t  dlChannel = params[6];
-  uint8_t  dlSF      = params[7];
-  uint8_t  dlBWcode  = params[8];
-  int8_t   dlPower   = (int8_t)params[9];
-
-  float dlBW = bwCodeToKHz(dlBWcode);
-  if (dlBW == 0.0f) {
-    lastAck.nonce = cmdNonce; lastAck.result = CMD_ERR_BAD_PARAMS; lastAck.pending = true;
-    return;
-  }
-  if (dlSF < 5 || dlSF > 12) {
-    lastAck.nonce = cmdNonce; lastAck.result = CMD_ERR_BAD_PARAMS; lastAck.pending = true;
-    return;
-  }
-  float dlFreq = channelToFreqMHz(dlChannel);
-  if (dlFreq == 0.0f) {
-    lastAck.nonce = cmdNonce; lastAck.result = CMD_ERR_BAD_PARAMS; lastAck.pending = true;
-    return;
-  }
-
-  uint32_t currentRec = logStore.getRecordCounter();
-  uint32_t absStart = resolveRecordIndex(relStart, armRecordCounter, currentRec);
-  uint32_t absEnd = absStart + reqCount;
-  if (absEnd > currentRec) absEnd = currentRec;
-
-  Serial.print("DL: rec "); Serial.print(absStart);
-  Serial.print("-"); Serial.print(absEnd);
-  Serial.print(" ch"); Serial.print(dlChannel);
-  Serial.print(" "); Serial.print(dlFreq, 1); Serial.print("MHz");
-  Serial.print(" SF"); Serial.print(dlSF);
-  Serial.print(" BW"); Serial.print((int)dlBW);
-  Serial.print(" pwr="); Serial.println(dlPower);
-
-  lastAck.nonce = cmdNonce;
-  lastAck.result = CMD_OK;
-  lastAck.pending = true;
-
-  if (!radioSetDownloadConfig(dlFreq, dlSF, dlBW, dlPower)) {
-    Serial.println("DL: radio config fail, aborting");
-    radioRestoreNormalConfig();
-    radioStartRx();
-    return;
-  }
-
-  delayMicroseconds(2000);  // allow both sides to switch (per spec) - NOTE: this is a blocking delay - this is allowed specifically in log download, which is blocking - this (and others) is the main reason log download in this form isnt allowed while armed
-
-  streamRecords(absStart, absEnd);
-
-  Serial.println("DL: batch done, listening for more requests");
-
-  for (;;) {
-    uint8_t nextParams[12];
-    size_t nextParamsLen = 0;
-    uint32_t nextNonce = 0;
-
-    if (!listenForDownloadRequest(DOWNLOAD_IDLE_TIMEOUT_MS, nextParams, &nextParamsLen, &nextNonce)) {
-      break;
-    }
-
-    int32_t  nextRelStart = (int32_t)readU32(&nextParams[0]);
-    uint16_t nextReqCount = (uint16_t)(nextParams[4] | (nextParams[5] << 8));
-
-    uint32_t nextAbsStart = resolveRecordIndex(nextRelStart, armRecordCounter, logStore.getRecordCounter());
-    uint32_t nextAbsEnd = nextAbsStart + nextReqCount;
-    if (nextAbsEnd > logStore.getRecordCounter()) nextAbsEnd = logStore.getRecordCounter();
-
-    lastAck.nonce = nextNonce;
-    lastAck.result = CMD_OK;
-    lastAck.pending = true;
-
-    Serial.print("DL: follow-up rec "); Serial.print(nextAbsStart);
-    Serial.print("-"); Serial.println(nextAbsEnd);
-
-    streamRecords(nextAbsStart, nextAbsEnd);
-    Serial.println("DL: follow-up batch done");
-  }
-
-  Serial.println("DL: reverting to normal radio");
-  radioRestoreNormalConfig();
-  radioStartRx();
 }
 
 // ===================== COMMAND DISPATCH =====================
@@ -378,7 +152,9 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       nvs.putUChar("radio_sf", activeSF);
       nvs.putChar("radio_pwr", activePower);
 
-      radioRestoreNormalConfig();
+      // Apply new config. Radio must be in standby; radioApplyConfig() keeps it there.
+      radioStandby();
+      radioApplyConfig();
       radioStartRx();
 
       Serial.print("Radio set: ch"); Serial.print(ch);
@@ -388,12 +164,6 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       result = CMD_OK;
       break;
     }
-
-    case CMD_LOG_DOWNLOAD:
-      if (isArmed)     { result = CMD_ERR_REFUSED; break; }
-      if (!logStoreOk) { result = CMD_ERR_REFUSED; break; }
-      executeLogDownload(nonce, params);
-      return;  // executeLogDownload handles ack internally
 
     case CMD_OTA_BEGIN:
       if (isArmed) {

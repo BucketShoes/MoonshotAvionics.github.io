@@ -8,7 +8,6 @@
 // For bench testing, User button (GPIO0) toggles TX sending on/off (radio always listens). LED shows TX state.
 //
 // Board: "Heltec Wireless Tracker" in Arduino IDE
-// Library: RadioLib (install via Library Manager)
 //
 // *** CRITICAL SAFETY REQUIREMENT ***
 // This main loop runs avionics for a rocket. While armed, the loop controls
@@ -28,7 +27,6 @@
 //     (incoming command), and the delayed TX count is tracked for stats.
 
 #include <Arduino.h>
-#include <RadioLib.h>
 #include <Preferences.h>
 #include <mbedtls/md.h>
 #include "log_store.h"
@@ -117,19 +115,12 @@ void nonblockingInit() {
       loraSPI.begin(LORA_SCK_PIN, LORA_MISO_PIN, LORA_MOSI_PIN, LORA_NSS_PIN);
       Serial.print("LoRa init... ");
       updateActiveFreqBw();
-      int state = radio.begin(activeFreqMHz, activeBwKHz, activeSF, LORA_CR,
-                              LORA_SYNCWORD, activePower, LORA_PREAMBLE);
-      if (state == RADIOLIB_ERR_NONE) {
+      if (radioInit()) {
         Serial.println("ok");
         loraReady = true;
       } else {
-        Serial.print("FAIL: "); Serial.println(state);
+        Serial.println("FAIL");
       }
-      radio.setDio2AsRfSwitch(true);
-      radio.setDio1Action(dio1ISR);
-      // startReceive(timeout) auto-enables RxTimeout on DIO1 when timeout != INF.
-      // Clearing IRQ flags now ensures no stale flag from init triggers a spurious DIO1.
-      radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
       initState = INIT_NVS;
       break;
     }
@@ -187,7 +178,10 @@ void nonblockingInit() {
         activePower = DEFAULT_POWER;
       }
       updateActiveFreqBw();
-      radioRestoreNormalConfig();
+      // Re-apply config with NVS values if radio is ready (radioInit already called).
+      if (loraReady) {
+        radioApplyConfig();
+      }
       Serial.print("Radio config: ch"); Serial.print(activeChannel);
       Serial.print(" "); Serial.print(activeFreqMHz, 1); Serial.print("MHz SF");
       Serial.print(activeSF); Serial.print(" BW"); Serial.print((int)activeBwKHz);

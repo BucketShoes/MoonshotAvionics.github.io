@@ -1,37 +1,37 @@
 // radio.h — LoRa radio hardware, TX/RX state machine, and active channel config.
-// Owns the SX1262 object, all radio state, RSSI EMA, TX scheduling, and active
-// channel/SF/power settings. Changes to radio protocol, CSMA, or channel plan
-// only touch radio.h + radio.cpp.
+// Owns the SX1262 via sx126x_driver, all radio state, and slot-clock sync.
+// Changes to radio protocol or channel plan only touch radio.h + radio.cpp.
 
 #ifndef RADIO_H
 #define RADIO_H
 
-#include <RadioLib.h>
+#include <SPI.h>
+#include "sx126x_hal.h"   // sx126x_hal_context_t, dio1Fired, dio1TimestampUs()
+#include "sx126x.h"        // sx126x_driver API
 #include "config.h"
 
 // ===================== RADIO STATE =====================
 
 enum RadioState {
-  RADIO_OFF,        // radio not yet initialised
-  RADIO_IDLE,       // standby (WIN_OFF or between operations)
-  RADIO_RX_ACTIVE,  // startReceive() called, waiting for RxDone or timeout via DIO1
-  RADIO_TX_ACTIVE,  // startTransmit() called, waiting for TxDone via DIO1
+  RADIO_OFF,         // not yet initialised
+  RADIO_STANDBY,     // sx126x in STDBY_RC, BUSY low, ready for commands
+  RADIO_RX_ACTIVE,   // sx126x_set_rx called, waiting for DIO1
+  RADIO_TX_ACTIVE,   // sx126x_set_tx called, waiting for DIO1
 };
 
 // ===================== HARDWARE OBJECTS =====================
 
-extern SX1262 radio;
-extern SPIClass loraSPI;
+extern SPIClass             loraSPI;
+extern sx126x_hal_context_t radioCtx;
 
 // ===================== RADIO STATE =====================
 
-extern bool loraReady;
+extern bool       loraReady;
 extern RadioState radioState;
-extern volatile bool dio1Fired;
 
 // ===================== ACTIVE RADIO CONFIG =====================
 // Loaded from NVS at boot, updated by CMD_SET_RADIO.
-// BW is derived from channel index (ch<64 = 125kHz, ch>=64 = 500kHz).
+// BW is derived from channel index (ch<64 = 125 kHz, ch>=64 = 500 kHz).
 
 extern uint8_t activeChannel;
 extern uint8_t activeSF;
@@ -40,17 +40,13 @@ extern float   activeFreqMHz;
 extern float   activeBwKHz;
 
 // ===================== SLOT CLOCK STATE =====================
-// Managed by radioSetSynced(). Both rocket and base anchor their slot clock
-// to RxDone/TxDone of the CMD_SET_SYNC packet.
 
-extern bool          radioSynced;         // false = bootstrap (continuous RX)
-extern unsigned long syncAnchorUs;        // micros() at the sync event
-extern uint32_t      syncSlotIndex;       // absolute slot index at anchor (= 1 after sync)
-extern uint32_t      lastHandledSlotNum;  // last slot number acted on (prevents re-entry)
+extern bool          radioSynced;
+extern unsigned long syncAnchorUs;
+extern uint32_t      syncSlotIndex;
+extern uint32_t      lastHandledSlotNum;
 
 // ===================== RSSI EMA (stub) =====================
-// No longer sampled continuously; kept so telemetry page 0x0C still compiles.
-// Will read as 0 (no estimate available) until re-implemented.
 
 extern double rssiEma;
 
@@ -66,34 +62,42 @@ extern uint16_t invalidRxCount;
 static inline float channelToFreqMHz(uint8_t ch) {
   if (ch < 64) return 915.2f + ch * 0.2f;
   if (ch < 72) return 915.9f + (ch - 64) * 1.6f;
-  return 0.0f;  // invalid channel
+  return 0.0f;
 }
 
 // ===================== PUBLIC API =====================
 
-// DIO1 interrupt handler (attach via radio.setDio1Action).
-void IRAM_ATTR dio1ISR();
-
-// Recompute activeFreqMHz and activeBwKHz from activeChannel.
+// Derive activeFreqMHz and activeBwKHz from activeChannel.
 void updateActiveFreqBw();
 
-// Enter continuous RX mode (used during bootstrap and log download).
+// Initialise radio hardware (SX126x reset, standby, configure modulation/packet
+// params, DIO2 RF switch, IRQ mask, MCPWM capture on DIO1).
+// Called from the INIT_LORA state in nonblockingInit().
+// Returns true on success.
+bool radioInit();
+
+// Apply a new set of radio parameters (frequency, SF, BW, power) from NVS or
+// a CMD_SET_RADIO command. Radio must be in RADIO_STANDBY.
+void radioApplyConfig();
+
+// Start continuous RX (bootstrap mode, no timeout).
 void radioStartRx();
 
-// Start async TX. Returns true if TX started; falls back to idle on failure.
+// Start windowed RX with a timeout in raw RTC steps (15.625 µs per tick).
+void radioStartRxTimeout(uint32_t timeoutRtcSteps);
+
+// Start async TX. Returns true if TX started.
 bool radioStartTx(const uint8_t* pkt, size_t len);
 
-// Set the slot clock sync point. Called from CMD_SET_SYNC handler at RxDone.
-// anchorUs = micros() at the sync event, slotIdx = slot index that starts now.
+// Put radio in standby.
+void radioStandby();
+
+// Set the slot clock sync point. Called from CMD_SET_SYNC handler.
+// anchorUs  = micros() at the sync event
+// slotIdx   = slot index that is current at that anchor
 void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx);
 
-// Reconfigure radio hardware to the download settings specified.
-bool radioSetDownloadConfig(float freqMHz, uint8_t sf, float bwKHz, int8_t power);
-
-// Restore radio hardware to normal operating config (activeChannel/SF/power).
-void radioRestoreNormalConfig();
-
-// Main non-blocking radio update: slot-based TX/RX scheduling (or bootstrap continuous RX).
+// Main non-blocking radio update: slot-based TX/RX scheduling or bootstrap RX.
 void nonblockingRadio();
 
 #endif // RADIO_H

@@ -66,31 +66,10 @@ Base station/relay commands (acted on by bases and relays, rockets dont implemen
 
 Commands for any device type (rockets and bases/relays both handle):
 ```
-0x20  LOG DOWNLOAD
-      Params: 
-      int32 start record index 
-              0 = arm protection reference point on rocket / 0 = boot reference point on relay,
-              negative = that many records before the reference point, positive is after this boot/this prot
-      uint16 requested record count,
-      uint8 download channel index,
-      uint8 download SF,
-      uint8 download BwCode/Modulation
-            Values up to 15 are LoRa Bandwidth: 0=500kHz,1=250,2=125,3=62.5,4=41.7, 5=31.25, 6=20.8, 7=15.6, 8=10.4, 9=7.8
-            (values 16+ reserved for other modulations, 16=FSK on max speed settings BW467Khz, 300kbps, 150kHz deviation, gaussian shaping BT=0.5)
-      int8 download TX power dBm
-Effect: target device switches to download radio settings, waits 10ms (both sides need time to switch) then begins sending log chunks (0xCA) as fast as possible in multiple packets.
-      Sends requested records in multiple chunks sized to fit multiple whole records in each radio packet. After sending all requested records, 
-      waits for more 0x20 requests on download channel, then reverts to normal radio after a few seconds of silence (no further LOG DOWNLOAD commands received on the download channel) - Rocket reverts after 3 seconds, base/relay reverts after 2 seconds, or may revert sooner if known all recieved.
-      Telemetry is paused during download session, and will resume afterwards (this also means no command ack page until completion - if multiple requests are sent, only the last will get an ack, in normal telemetry after download session finishes)
-      During a session, modulation must not be changed. the 10ms wait is only on starting a session. 
-      On the sender's side (base station): after transmitting this command on primary, immediately switches own radio to the download settings to listen for chunks then reverts or sends more commands on the download channel.
-      Other commands are blocked during this mode.
-      Refused if target is armed (rocket only) - this interupts the main system for too long, and is bandwidth heavy. base station reciever needs to be careful of http/tcp limits (gated by JS requesting more only after recieving each piece).
-      Note: Typically sent on primary at SF7/125 at normal power, switch to SF12/BW500 in low power - used for short-range downloads. Low power due to high airtime, should usually be short range only.
-      Usually only request approx 400ms worth of logs at a time.
-      Other BwCodes should be ignored if unknown.
-      
-      
+0x20  LOG DOWNLOAD — REMOVED
+      Superseded by BLE log fetch (char 0005). No longer implemented on rocket or base station.
+      Command ID is reserved; devices will return CMD_ERR_UNKNOWN if received.
+
 0x40  PING
       Params: none
       Effect: rocket target includes an ack data page (0x0A) in its next telemetry packets (rocket does no special action, commands cause the ack anyway)
@@ -100,21 +79,23 @@ Effect: target device switches to download radio settings, waits 10ms (both side
 0x41  SET SYNC
       Params: none
       Source: base station (self-originates; not sent from JS in normal operation)
-      Effect: establishes the slot clock sync point on the rocket.
-        - The RxDone moment on the rocket (end of this packet's reception) is the sync anchor.
-        - The TxDone moment on the base station (end of transmitting this packet) is the base's anchor.
-        - Both sides set their slot index to 1 (WIN_RX begins now; this packet occupied slot 0 = WIN_TELEM).
+      Effect: establishes the slot clock sync point on both sides.
+        - The RxDone moment on the rocket (end of this packet's reception) is the rocket's sync anchor.
+        - The TxDone moment on the base station (hardware-captured via MCPWM DIO1 edge) is the base's anchor.
+        - Both sides set their slot index to 1 (WIN_CMD begins now; this packet occupied slot 0 = WIN_TELEM).
         - After sync, both sides enter the slot-based radio schedule:
             WIN_TELEM (slot 0): rocket TX telemetry / base RX
-            WIN_RX    (slot 1): base TX commands / rocket RX
-        - Each slot is 1 second. Sequence repeats.
+            WIN_CMD   (slot 1): base TX commands / rocket RX
+        - Each slot is 2 seconds. Sequence repeats.
         - Base station auto-sends this 2s after boot.
         - Base resends automatically if too many consecutive WIN_TELEM slots arrive with no telemetry (sync loss detection).
         - JS or BLE can also trigger a resync at any time.
         - Before sync: rocket runs continuous RX (bootstrap). Base runs continuous RX.
         - Nonce and HMAC apply as normal (base station signs with shared key, increments nonce in NVS).
         - Acknowledged by rocket in the normal 0x0A ack page.
-        - Phase 1 (current): single channel only, 1-second slots, 200ms early listen, 400ms timeout.
+        - CMD_SET_SYNC is queued as a normal command (same path as any other command). The sync anchor
+          is derived from the hardware-latched TxDone timestamp (MCPWM capture), not a blocking transmit.
+        - Phase 1 (current): single channel only, 2-second slots, 10ms early listen, 40ms timeout.
         - Future: frequency/SF/timing parameters may be added as params when frequency hopping is implemented.
 
 0xF0  REBOOT

@@ -1,5 +1,5 @@
 // config.h — All compile-time constants for rocket avionics.
-// No variables, no non-inline functions. Pure #defines and one inline utility.
+// No variables, no non-inline functions. Pure #defines, enums, structs, and inline utilities.
 // Change hardware pins, protocol constants, or timing here without touching anything else.
 
 #ifndef CONFIG_H
@@ -55,7 +55,8 @@
 // ===================== SLOT TIMING SYNC =====================
 // Slot-based scheduling for time-sync between rocket and base station.
 // Both sides share the same slot sequence and duration.
-// After CMD_SET_SYNC, both boards anchor their slot clock to RxDone/TxDone of that packet.
+// After CMD_SET_SYNC, the base anchors to TxDone of that packet; the rocket
+// anchors to RxDone. Both compute slot position from that anchor.
 
 enum WindowMode : uint8_t {
   WIN_TELEM  = 0,  // rocket TX telemetry / base RX
@@ -70,19 +71,26 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN  2
 #define SLOT_DURATION_US   2'000'000UL  // µs
 
-// Rocket WIN_CMD listen window duration.
-#define ROCKET_RX_TIMEOUT_US  100'000UL     // us
-#define ROCKET_RX_TIMEOUT_RAW (ROCKET_RX_TIMEOUT_US / 15.625f)
+// Rocket WIN_CMD listen window — timeout in SX1262 RTC steps (15.625 µs each).
+#define ROCKET_RX_TIMEOUT_US  100'000UL
+#define ROCKET_RX_TIMEOUT_RAW ((uint32_t)((ROCKET_RX_TIMEOUT_US) / 15.625f))
 
-// ===================== TX SCHEDULING (legacy, used pre-sync) =====================
+// ===================== SLOT CONFIG =====================
+// Per-slot radio parameters. Enables per-slot frequency, SF, BW, and header mode.
+// All slots currently use the same config (populated from activeChannel/SF/power).
+// SlotConfig is used by radioApplySlotConfig() when parameters differ between slots.
 
-// If TX is delayed >5ms past its scheduled time, count it as a delayed TX for stats.
-#define TX_LATE_THRESHOLD_US  5000UL
-// Hard ceiling: TX anyway after 1000ms of deferral regardless of channel state.
-#define TX_MAX_DEFER_US       1000000UL
-// Post-TX keepout: random gap before next TX to listen for incoming commands.
-#define TX_KEEPOUT_MIN_US     10000UL
-#define TX_KEEPOUT_RANGE_US   10000UL
+#include "sx126x.h"  // sx126x_lora_sf_t, sx126x_lora_bw_t, etc.
+
+struct SlotConfig {
+  uint32_t              freqHz;
+  sx126x_lora_sf_t      sf;
+  sx126x_lora_bw_t      bw;
+  sx126x_lora_cr_t      cr;
+  uint16_t              preambleSymbols;
+  sx126x_lora_pkt_len_modes_t headerType;  // explicit or implicit
+  uint8_t               payloadLen;        // used when implicit header
+};
 
 // ===================== TIMING =====================
 
@@ -100,13 +108,6 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define HMAC_TRUNC_LEN  10   // truncated HMAC in command packets
 #define NVS_NAMESPACE   "rocket"
 
-// ===================== RSSI EMA =====================
-
-#define RSSI_EMA_TAU_US         60000000UL  // 60 seconds
-#define RSSI_BUSY_THRESHOLD_DB  20.0        // dB above EMA = channel busy
-#define RSSI_SAMPLE_INTERVAL_US 500UL       // max sample rate
-#define RSSI_HIGH_HOLDOFF_US    10000UL     // holdoff after high-RSSI event
-
 // ===================== PACKET TYPE CONSTANTS =====================
 
 #define PKT_TELEMETRY  0xAF
@@ -121,7 +122,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define CMD_FIRE_PYRO     0x03
 #define CMD_SET_TX_RATE   0x10
 #define CMD_SET_RADIO     0x12
-#define CMD_LOG_DOWNLOAD  0x20
+// CMD 0x20 (LOG_DOWNLOAD) removed — superseded by BLE log fetch
 #define CMD_OTA_BEGIN     0x50  // Open OTA write session (erases inactive partition)
 #define CMD_OTA_FINALIZE  0x51  // Verify image HMAC, set boot partition, reboot
 #define CMD_OTA_CONFIRM   0x52  // After reboot: confirm new firmware, cancel rollback

@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "radio.h"
+#include "sx126x.h"
 #include "telemetry.h"
 #include "commands.h"
 #include "globals.h"
@@ -10,10 +11,15 @@
 // ===================== HARDWARE OBJECTS =====================
 
 SPIClass loraSPI(FSPI);
-SX1262 radio = new Module(LORA_NSS_PIN, LORA_DIO1_PIN, LORA_RST_PIN, LORA_BUSY_PIN, loraSPI);
+
+sx126x_hal_context_t radioCtx = {
+  .spi  = &loraSPI,
+  .nss  = LORA_NSS_PIN,
+  .busy = LORA_BUSY_PIN,
+  .rst  = LORA_RST_PIN,
+};
 
 // ===================== ACTIVE RADIO CONFIG =====================
-// Loaded from NVS in INIT_NVS; updateActiveFreqBw() derives freq/BW from channel.
 
 uint8_t activeChannel = DEFAULT_CHANNEL;
 uint8_t activeSF      = DEFAULT_SF;
@@ -25,72 +31,149 @@ float   activeBwKHz   = 500.0f;
 
 bool        loraReady  = false;
 RadioState  radioState = RADIO_OFF;
-volatile bool dio1Fired = false;
 
 // ===================== SLOT CLOCK STATE =====================
 
 bool          radioSynced        = false;
 unsigned long syncAnchorUs       = 0;
 uint32_t      syncSlotIndex      = 0;
-uint32_t      lastHandledSlotNum = 0xFFFFFFFF;  // invalid sentinel
+uint32_t      lastHandledSlotNum = 0xFFFFFFFF;
 
 // ===================== RSSI EMA (stub) =====================
 
-double rssiEma = 0.0;  // not sampled in slot-sync mode; kept for telemetry page 0x0C
+double rssiEma = 0.0;
 
 // ===================== STATS =====================
 
 uint16_t delayedTxCount = 0;
 uint16_t invalidRxCount = 0;
 
-// ===================== DIO1 ISR =====================
+// ===================== HeaderValid capture (base-station drift logging) =====================
+// Captured on HEADER_VALID IRQ, consumed/discarded on RX_DONE or TIMEOUT.
 
-void IRAM_ATTR dio1ISR() {
-  dio1Fired = true;
-}
+static uint64_t pendingHeaderValidUs = 0;
 
 // ===================== HELPERS =====================
 
 void updateActiveFreqBw() {
   activeFreqMHz = channelToFreqMHz(activeChannel);
-  activeBwKHz = (activeChannel < 64) ? 125.0f : 500.0f;
+  activeBwKHz   = (activeChannel < 64) ? 125.0f : 500.0f;
 }
 
-// LED is configured as PWM via ledcAttach in setup(). Use ledcWrite, not digitalWrite.
-// 255 = 100% duty = full brightness (short flashes, no time for PWM dimming to matter).
+static sx126x_lora_bw_t bwKHzToEnum(float bwKHz) {
+  if (bwKHz >= 490.0f) return SX126X_LORA_BW_500;
+  if (bwKHz >= 240.0f) return SX126X_LORA_BW_250;
+  return SX126X_LORA_BW_125;  // default; narrower BW not used in current channel plan
+}
+
+static sx126x_lora_sf_t sfToEnum(uint8_t sf) {
+  // SX126X_LORA_SF5..SF12 enum values equal 0x05..0x0C which matches the SF integer
+  return (sx126x_lora_sf_t)sf;
+}
+
 static void ledOn()  { ledcWrite(LED_PIN, 255); }
 static void ledOff() { ledcWrite(LED_PIN, 0);   }
 
-// ===================== RADIO CONFIG =====================
+// ===================== INIT =====================
 
-bool radioSetDownloadConfig(float freqMHz, uint8_t sf, float bwKHz, int8_t power) {
-  radio.standby();
-  if (radio.setFrequency(freqMHz)       != RADIOLIB_ERR_NONE) return false;
-  if (radio.setSpreadingFactor(sf)      != RADIOLIB_ERR_NONE) return false;
-  if (radio.setBandwidth(bwKHz)         != RADIOLIB_ERR_NONE) return false;
-  if (radio.setOutputPower(power)       != RADIOLIB_ERR_NONE) return false;
+bool radioInit() {
+  // SPI must already be started (loraSPI.begin) before calling this.
+  // Pin modes for NSS and RST are set here; BUSY is input-only.
+  pinMode(LORA_NSS_PIN,  OUTPUT);
+  digitalWrite(LORA_NSS_PIN, HIGH);
+  pinMode(LORA_BUSY_PIN, INPUT);
+
+  // Reset: HAL holds RST low 1 ms then releases. Chip needs ~3 ms to be ready.
+  // After reset we poll BUSY in a short spin — this is init only, acceptable.
+  sx126x_hal_reset(&radioCtx);
+  unsigned long t0 = millis();
+  while (digitalRead(LORA_BUSY_PIN) && (millis() - t0) < 100) {}
+  if (digitalRead(LORA_BUSY_PIN)) {
+    Serial.println("LoRa init: BUSY stuck after reset");
+    return false;
+  }
+
+  // Standby (RC oscillator)
+  if (sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC) != SX126X_STATUS_OK) {
+    Serial.println("LoRa init: set_standby failed");
+    return false;
+  }
+
+  // Packet type: LoRa
+  if (sx126x_set_pkt_type(&radioCtx, SX126X_PKT_TYPE_LORA) != SX126X_STATUS_OK) {
+    Serial.println("LoRa init: set_pkt_type failed");
+    return false;
+  }
+
+  // DIO2 as RF switch control (replaces radio.setDio2AsRfSwitch(true))
+  sx126x_set_dio2_as_rf_sw_ctrl(&radioCtx, true);
+
+  // Sync word (0x12 = private network). Write directly to register.
+  // SX126x LoRa sync word register: 0x0740 (MSB), 0x0741 (LSB).
+  // Private = 0x1424 per datasheet §4.2.1.
+  {
+    const uint8_t syncWord[2] = { 0x14, 0x24 };
+    sx126x_write_register(&radioCtx, 0x0740, syncWord, 2);
+  }
+
+  // Modulation and packet parameters are applied by radioApplyConfig() below.
+  radioApplyConfig();
+
+  // IRQ mask: TX_DONE | RX_DONE | TIMEOUT | HEADER_VALID — all on DIO1, none on DIO2/DIO3.
+  sx126x_set_dio_irq_params(&radioCtx,
+    SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
+    SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
+    SX126X_IRQ_NONE,
+    SX126X_IRQ_NONE);
+
+  sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
+
+  // MCPWM hardware capture on DIO1 — replaces attachInterrupt / setDio1Action.
+  radioMcpwmInit(LORA_DIO1_PIN);
+
+  radioState = RADIO_STANDBY;
   return true;
 }
 
-void radioRestoreNormalConfig() {
-  radio.standby();
-  radio.setFrequency(activeFreqMHz);
-  radio.setSpreadingFactor(activeSF);
-  radio.setBandwidth(activeBwKHz);
-  radio.setOutputPower(activePower);
+void radioApplyConfig() {
+  // Call from RADIO_STANDBY only. No explicit standby call needed — we're already there.
+  sx126x_mod_params_lora_t modParams = {};
+  modParams.sf = sfToEnum(activeSF);
+  modParams.bw = bwKHzToEnum(activeBwKHz);
+  modParams.cr = SX126X_LORA_CR_4_5;
+  modParams.ldro = 0;  // low data rate optimise: set to 1 for SF11/SF12 + BW125; off otherwise
+  sx126x_set_lora_mod_params(&radioCtx, &modParams);
+
+  sx126x_pkt_params_lora_t pktParams = {};
+  pktParams.preamble_len_in_symb = LORA_PREAMBLE;
+  pktParams.header_type          = SX126X_LORA_PKT_EXPLICIT;
+  pktParams.pld_len_in_bytes     = 255;  // max for variable-length explicit-header packets
+  pktParams.crc_is_on            = true;
+  pktParams.invert_iq_is_on      = false;
+  sx126x_set_lora_pkt_params(&radioCtx, &pktParams);
+
+  // Frequency (Hz)
+  uint32_t freqHz = (uint32_t)(activeFreqMHz * 1e6f + 0.5f);
+  sx126x_set_rf_freq(&radioCtx, freqHz);
+
+  // TX power and ramp time
+  sx126x_set_tx_params(&radioCtx, activePower, SX126X_RAMP_200_US);
+
+  // PA config for SX1262 (device_sel=0 = SX1262, hp_max=7, pa_lut=1 per datasheet §13.1.14)
+  sx126x_pa_cfg_params_t paCfg = { .pa_duty_cycle = 0x04, .hp_max = 0x07, .device_sel = 0x00, .pa_lut = 0x01 };
+  sx126x_set_pa_cfg(&radioCtx, &paCfg);
 }
 
 // ===================== SYNC =====================
 
 void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
-  // Force radio to standby so the slot machine starts from a clean idle state.
-  // (We may be in RADIO_RX_ACTIVE from the bootstrap RX that received this very packet.)
-  radio.standby();
+  radioStandby();
   dio1Fired          = false;
-  radioState         = RADIO_IDLE;
+  pendingHeaderValidUs = 0;
+  radioState         = RADIO_STANDBY;
   syncAnchorUs       = anchorUs;
   syncSlotIndex      = slotIdx;
-  lastHandledSlotNum = 0xFFFFFFFF;  // force re-entry on next slot
+  lastHandledSlotNum = 0xFFFFFFFF;
   radioSynced        = true;
   Serial.print("SYNC: anchor="); Serial.print(anchorUs);
   Serial.print("us slot="); Serial.println(slotIdx);
@@ -99,157 +182,204 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
 // ===================== RX / TX =====================
 
 void radioStartRx() {
-  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+  if (digitalRead(LORA_BUSY_PIN)) {
+    Serial.println("RX: BUSY — skip");
+    return;
+  }
+  sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
-  int state = radio.startReceive();
-  if (state == RADIOLIB_ERR_NONE) {
+  // Continuous RX (SX126X_RX_CONTINUOUS = no timeout)
+  if (sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, SX126X_RX_CONTINUOUS) == SX126X_STATUS_OK) {
     radioState = RADIO_RX_ACTIVE;
   } else {
-    Serial.print("RX start fail: ");
-    Serial.println(state);
-    radioState = RADIO_IDLE;
+    Serial.println("RX start fail");
+    radioState = RADIO_STANDBY;
+  }
+}
+
+void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
+  if (digitalRead(LORA_BUSY_PIN)) {
+    Serial.println("RX(timeout): BUSY — skip");
+    return;
+  }
+  sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
+  dio1Fired = false;
+  if (sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRtcSteps) == SX126X_STATUS_OK) {
+    radioState = RADIO_RX_ACTIVE;
+  } else {
+    Serial.println("RX(timeout) start fail");
+    radioState = RADIO_STANDBY;
   }
 }
 
 bool radioStartTx(const uint8_t* pkt, size_t len) {
-  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-  dio1Fired = false;
-  int state = radio.startTransmit(pkt, len);
-  if (state == RADIOLIB_ERR_NONE) {
-    radioState = RADIO_TX_ACTIVE;
-    return true;
-  } else {
-    Serial.print("TX start fail: ");
-    Serial.println(state);
-    radio.standby();
-    radioState = RADIO_IDLE;
+  if (digitalRead(LORA_BUSY_PIN)) {
+    Serial.println("TX: BUSY — skip");
     return false;
   }
+  sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
+  dio1Fired = false;
+  // Load FIFO then start TX (0 ms timeout = single packet, no timeout)
+  if (sx126x_write_buffer(&radioCtx, 0, pkt, (uint8_t)len) != SX126X_STATUS_OK) {
+    Serial.println("TX: write_buffer fail");
+    return false;
+  }
+  if (sx126x_set_tx(&radioCtx, 0) == SX126X_STATUS_OK) {
+    radioState = RADIO_TX_ACTIVE;
+    return true;
+  }
+  Serial.println("TX start fail");
+  radioState = RADIO_STANDBY;
+  return false;
 }
 
-// ===================== RX PACKET HANDLER =====================
+void radioStandby() {
+  sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
+  radioState = RADIO_STANDBY;
+}
+
+// ===================== IRQ / RX PACKET HANDLER =====================
 
 static void handleRxDone() {
-  // Capture IRQ flags before readData clears them — used to log HeaderValid time.
-  uint32_t irqAtDone = radio.getIrqFlags();
+  sx126x_rx_buffer_status_t bufStatus = {};
+  if (sx126x_get_rx_buffer_status(&radioCtx, &bufStatus) != SX126X_STATUS_OK) {
+    Serial.println("RX: get_rx_buffer_status fail");
+    invalidRxCount++;
+    pendingHeaderValidUs = 0;
+    return;
+  }
 
-  uint8_t rxBuf[64];
-  int state = radio.readData(rxBuf, sizeof(rxBuf));
+  uint8_t rxBuf[255];
+  uint8_t rxLen = bufStatus.pld_len_in_bytes;
+  if (rxLen == 0 || rxLen > sizeof(rxBuf)) {
+    Serial.print("RX: bad length "); Serial.println(rxLen);
+    invalidRxCount++;
+    pendingHeaderValidUs = 0;
+    return;
+  }
 
-  if (state == RADIOLIB_ERR_NONE) {
-    size_t rxLen = radio.getPacketLength();
-    float pktRssi = radio.getRSSI(true);
-    float pktSnr  = radio.getSNR();
-    // Log whether HeaderValid was set (confirms preamble+header were detected cleanly)
-    if (irqAtDone & 0x02) {  // RADIOLIB_SX126X_IRQ_HEADER_VALID
-      unsigned long posInSlot = (micros() - syncAnchorUs) % SLOT_DURATION_US;
-      Serial.print("RX: HeaderValid+RxDone pos="); Serial.print(posInSlot); Serial.println("us");
+  if (sx126x_read_buffer(&radioCtx, bufStatus.buffer_start_pointer, rxBuf, rxLen) != SX126X_STATUS_OK) {
+    Serial.println("RX: read_buffer fail");
+    invalidRxCount++;
+    pendingHeaderValidUs = 0;
+    return;
+  }
+
+  sx126x_pkt_status_lora_t pktStatus = {};
+  sx126x_get_lora_pkt_status(&radioCtx, &pktStatus);
+  int8_t pktRssi = pktStatus.rssi_pkt_in_dbm;
+  int8_t pktSnr  = pktStatus.snr_pkt_in_db;
+
+  // Basic structural validation before using the HeaderValid timestamp.
+  // Telemetry has no HMAC — check minimum length and known packet type byte.
+  bool structOk = (rxLen >= 2) && (rxBuf[0] == PKT_TELEMETRY || rxBuf[0] == PKT_COMMAND ||
+                                    rxBuf[0] == PKT_BACKHAUL);
+  if (!structOk) {
+    Serial.print("RX: unknown type 0x"); Serial.println(rxBuf[0], HEX);
+    invalidRxCount++;
+    pendingHeaderValidUs = 0;
+    return;
+  }
+
+  // Log HeaderValid position if captured.
+  if (pendingHeaderValidUs != 0) {
+    if (radioSynced) {
+      unsigned long posInSlot = (unsigned long)(pendingHeaderValidUs - syncAnchorUs) % SLOT_DURATION_US;
+      Serial.print("RX: HeaderValid posInSlot="); Serial.print(posInSlot); Serial.println("us");
     }
-    processReceivedPacket(rxBuf, rxLen, (int8_t)pktRssi, (int8_t)pktSnr);
-  } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
-    Serial.println("RX: CRC fail");
+    pendingHeaderValidUs = 0;
+  }
+
+  processReceivedPacket(rxBuf, rxLen, pktRssi, pktSnr);
+}
+
+// Called from nonblockingRadio() when dio1Fired is set.
+static void radioHandleIrq() {
+  uint64_t eventUs = dio1TimestampUs();  // hardware-latched capture time
+  dio1Fired = false;
+
+  sx126x_irq_mask_t irqFlags = 0;
+  sx126x_get_and_clear_irq_status(&radioCtx, &irqFlags);
+
+  if (irqFlags & SX126X_IRQ_HEADER_VALID) {
+    // Hold until RX_DONE confirms a valid packet; discard on TIMEOUT or bad packet.
+    pendingHeaderValidUs = eventUs;
+  }
+
+  if (irqFlags & SX126X_IRQ_TX_DONE) {
+    ledOff();
+    radioState = RADIO_STANDBY;
+    unsigned long posInSlot = radioSynced ?
+      (unsigned long)((micros() - syncAnchorUs) % SLOT_DURATION_US) : 0;
+    Serial.print("SLOT TxDone posInSlot="); Serial.println(posInSlot);
+  }
+
+  if (irqFlags & SX126X_IRQ_RX_DONE) {
+    ledOff();
+    handleRxDone();
+    radioState = RADIO_STANDBY;
+    unsigned long posInSlot = radioSynced ?
+      (unsigned long)((micros() - syncAnchorUs) % SLOT_DURATION_US) : 0;
+    Serial.print("SLOT RxDone posInSlot="); Serial.println(posInSlot);
+  }
+
+  if (irqFlags & SX126X_IRQ_TIMEOUT) {
+    ledOff();
+    pendingHeaderValidUs = 0;
+    radioState = RADIO_STANDBY;
+  }
+
+  // CRC_ERROR or HEADER_ERROR: discard and return to standby.
+  if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
+    pendingHeaderValidUs = 0;
+    radioState = RADIO_STANDBY;
     invalidRxCount++;
-  } else if (state == RADIOLIB_ERR_RX_TIMEOUT) {
-    // normal timeout — no log spam
-  } else {
-    Serial.print("RX err: ");
-    Serial.println(state);
-    invalidRxCount++;
+    Serial.println("RX: CRC/header error");
   }
 }
 
 // ===================== MAIN RADIO STATE MACHINE =====================
-//
-// Bootstrap (radioSynced == false):
-//   Continuous RX — waiting for CMD_SET_SYNC.
-//   Any received packet is dispatched via processReceivedPacket().
-//
-// Synced (radioSynced == true):
-//   Slot clock drives behaviour. One action per slot.
-//   WIN_TELEM: rocket TX telemetry, LED on during TX.
-//   WIN_CMD:    rocket RX commands, LED on during RX window.
-//   WIN_OFF:   radio standby, LED off.
 
 void nonblockingRadio() {
   if (!loraReady) return;
+
+  // Always process DIO1 first, regardless of slot.
+  if (dio1Fired) {
+    radioHandleIrq();
+    // After handling IRQ, fall through to slot logic only if now in STANDBY.
+  }
 
   unsigned long now = micros();
 
   // ---- Bootstrap mode: continuous RX ----
   if (!radioSynced) {
-    switch (radioState) {
-      case RADIO_OFF:
-        radioStartRx();
-        break;
-
-      case RADIO_IDLE:
-        radioStartRx();
-        break;
-
-      case RADIO_TX_ACTIVE:
-        if (dio1Fired) {
-          dio1Fired = false;
-          radioStartRx();
-        }
-        break;
-
-      case RADIO_RX_ACTIVE:
-        if (dio1Fired) {
-          dio1Fired = false;
-          handleRxDone();
-          // After CMD_SET_SYNC, radioSynced may now be true.
-          // If still not synced, keep listening.
-          if (!radioSynced) {
-            radioStartRx();
-          }
-        }
-        break;
+    if (radioState == RADIO_STANDBY) {
+      radioStartRx();
     }
     return;
   }
 
   // ---- Synced mode: slot-based scheduling ----
 
-  unsigned long elapsed    = now - syncAnchorUs;
-  uint32_t      slotNum    = (uint32_t)(elapsed / SLOT_DURATION_US);
-  uint32_t      posInSlot  = (uint32_t)(elapsed % SLOT_DURATION_US);
-  uint8_t       seqIdx     = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
-  WindowMode    win        = SLOT_SEQUENCE[seqIdx];
-
-  // Handle DIO1 completion for any in-progress TX/RX first,
-  // regardless of which slot we're currently in.
-  if (dio1Fired) {
-    dio1Fired = false;
-    if (radioState == RADIO_TX_ACTIVE) {
-      ledOff();
-      radio.finishTransmit();  // clears IRQ flags then standby — prevents DIO1 re-firing
-      radioState = RADIO_IDLE;
-      Serial.print("SLOT TxDone posInSlot="); Serial.println(posInSlot);
-    } else if (radioState == RADIO_RX_ACTIVE) {
-      ledOff();
-      handleRxDone();
-      // handleRxDone may have set radioSynced=true again if re-sync happened
-      radio.finishReceive();  // clears IRQ flags then standby — prevents DIO1 re-firing
-      radioState = RADIO_IDLE;
-      Serial.print("SLOT RxDone posInSlot="); Serial.println(posInSlot);
-    }
-    return;
-  }
+  unsigned long elapsed   = now - syncAnchorUs;
+  uint32_t      slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+  uint32_t      posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+  uint8_t       seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+  WindowMode    win       = SLOT_SEQUENCE[seqIdx];
 
   // Only act once per slot transition.
   if (slotNum == lastHandledSlotNum) return;
 
-  // Don't preempt an in-progress operation from a previous slot.
+  // Don't preempt an in-progress operation — packet may run over its slot boundary.
+  // Just miss this slot; the operation completes naturally.
   if (radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE) return;
 
-  // New slot — act.
   lastHandledSlotNum = slotNum;
 
   switch (win) {
 
     case WIN_TELEM: {
       if (!txSendingEnabled) {
-        // TX suppressed by user (button toggle). Skip this slot.
         Serial.println("SLOT WIN_TELEM skipped (TX disabled)");
         break;
       }
@@ -269,26 +399,13 @@ void nonblockingRadio() {
     case WIN_CMD: {
       Serial.print("SLOT WIN_CMD RX pos="); Serial.print(posInSlot); Serial.println("us");
       ledOn();
-      // short listen window (ROCKET_RX_TIMEOUT_RAW). Base transmits slightly after this window starts in case of drift (although we might not detect it until its had several preamble symbols, so even perfect sync needs some time during listen)
-      radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-      dio1Fired = false;
-      int st = radio.startReceive(ROCKET_RX_TIMEOUT_RAW);
-      if (st == RADIOLIB_ERR_NONE) {
-        radioState = RADIO_RX_ACTIVE;
-      } else {
-        ledOff();
-        Serial.print("WIN_CMD startReceive fail: "); Serial.println(st);
-        radioState = RADIO_IDLE;
-      }
+      radioStartRxTimeout(ROCKET_RX_TIMEOUT_RAW);
       break;
     }
 
     case WIN_OFF:
     default:
-      if (radioState != RADIO_IDLE) {
-        radio.standby();
-        radioState = RADIO_IDLE;
-      }
+      radioStandby();
       ledOff();
       break;
   }

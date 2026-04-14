@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
-#include <RadioLib.h>
 #include <Preferences.h>
 #include <mbedtls/md.h>
 #include <NimBLEDevice.h>
@@ -12,15 +11,8 @@
 #include <esp_ota_ops.h>
 #include "log_store.h"
 #include "esp_wifi.h"
+#include "radio.h"
 
-#define LORA_NSS_PIN  8
-#define LORA_SCK_PIN  9
-#define LORA_MOSI_PIN 10
-#define LORA_MISO_PIN 11
-#define LORA_RST_PIN  12
-#define LORA_BUSY_PIN 13
-#define LORA_DIO1_PIN 14
-#define LED_PIN       18
 #define VEXT_CTRL_PIN 3
 #define VBAT_ADC_PIN      1
 #define VBAT_ADC_CTRL_PIN 2
@@ -30,21 +22,14 @@
 #include "secrets.h"  // gitignored — copy secrets_example.h to secrets.h
 #define WIFI_CHANNEL  1
 
-#define LORA_CR       5
-#define LORA_PREAMBLE 6
-#define LORA_SYNCWORD 0x12
-
 #define DEVICE_ID     157
 
 // ===================== OTA COMMAND IDs (matching rocket_avionics/config.h) =====================
-#define CMD_OTA_BEGIN     0x50  // Open OTA write session (erases inactive partition)
-#define CMD_OTA_FINALIZE  0x51  // Verify image HMAC, set boot partition, reboot
-#define CMD_OTA_CONFIRM   0x52  // After reboot: confirm new firmware, cancel rollback
+#define CMD_OTA_BEGIN     0x50
+#define CMD_OTA_FINALIZE  0x51
+#define CMD_OTA_CONFIRM   0x52
 
 // ===================== TRANSPORT FLAGS (for 0x31/0x32 enable/disable) =====================
-// When 0x31/0x32 has no params, all transports are enabled/disabled together.
-// When a param byte is present, it's a bitmask of which transports to control.
-// LoRa is NOT controlled by these — use TX rate commands for LoRa.
 #define TRANSPORT_WIFI  0x01
 #define TRANSPORT_BLE   0x02
 #define TRANSPORT_USB   0x04  // reserved for future
@@ -53,93 +38,8 @@
 bool wifiEnabled = true;
 bool bleEnabled = true;
 
-// ===================== CHANNEL TABLE (AU915-aligned) =====================
-#define CHANNEL_COUNT 72
-
-static float channelToFreqMHz(uint8_t ch) {
-  if (ch < 64) return 915.2f + ch * 0.2f;
-  if (ch < 72) return 915.9f + (ch - 64) * 1.6f;
-  return 0.0f;
-}
-
-// ===================== SLOT TIMING SYNC =====================
-// Mirror of rocket_avionics/config.h. Keep in sync manually.
-
-enum WindowMode : uint8_t {
-  WIN_TELEM  = 0,  // rocket TX telemetry / base RX
-  WIN_CMD     = 1,  // base TX commands / rocket RX
-  WIN_OFF    = 2,  // radio off
-  WIN_LR     = 3,  // future: long-range low-rate TX
-  WIN_FINDME = 4,  // future: long-preamble beacon
-};
-
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
-#define SLOT_SEQUENCE_LEN   2
-#define SLOT_DURATION_US    2'000'000UL  // µs
-// startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
-// Set the _US or _MS constants; _RAW values are derived automatically.
-// Keep in sync with rocket_avionics/config.h.
-#define BS_RX_EARLY_US        10'000UL   // µs before slot boundary
-#define BS_RX_TIMEOUT_US      40'000UL      // ms
-#define BS_RX_TIMEOUT_RAW     (BS_RX_TIMEOUT_US / 15.625f)
-// Aim command TX this many µs after WIN_CMD slot start.
-// Gives rocket time to call startReceive. Also the drift calibration reference point.
-#define BS_CMD_TX_OFFSET_US   5'000UL  // µs after WIN_CMD start
-
-
-#define CMD_SET_SYNC           0x41    // sync command ID (matches rocket config.h)
-// HMAC_KEY_LEN and HMAC_TRUNC_LEN come from secrets.h (already included above)
-
-#define BS_SYNC_BOOT_DELAY_MS  2'000    // send first CMD_SET_SYNC 2s after boot
-#define BS_SYNC_LOSS_SLOTS     5       // resync if no telem for this many WIN_TELEM slots
-
-// ===================== ACTIVE RADIO CONFIG =====================
-#define DEFAULT_CHANNEL  65
-#define DEFAULT_SF       5
-#define DEFAULT_POWER    -9
-
-uint8_t activeChannel = DEFAULT_CHANNEL;
-uint8_t activeSF      = DEFAULT_SF;
-int8_t  activePower   = DEFAULT_POWER;
-float   activeFreqMHz = 917.5f;
-float   activeBwKHz   = 500.0f;
-
-#define DEFAULT_BH_CHANNEL 67
-#define DEFAULT_BH_SF      5
-#define DEFAULT_BH_POWER   -9
-
-uint8_t bhChannel = DEFAULT_BH_CHANNEL;
-uint8_t bhSF      = DEFAULT_BH_SF;
-int8_t  bhPower   = DEFAULT_BH_POWER;
-
-static void updateActiveFreqBw() {
-  activeFreqMHz = channelToFreqMHz(activeChannel);
-  activeBwKHz = (activeChannel < 64) ? 125.0f : 500.0f;
-}
-
-#include "secrets.h"  // gitignored — copy secrets_example.h to secrets.h and fill in your key
-
-bool verifyCommandHMAC(const uint8_t* pkt, size_t pktLen) {
-  if (pktLen < HMAC_TRUNC_LEN + 7) return false;
-  size_t dataLen = pktLen - HMAC_TRUNC_LEN;
-  uint8_t fullHmac[32];
-  mbedtls_md_context_t ctx;
-  mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, HMAC_KEY, HMAC_KEY_LEN);
-  mbedtls_md_hmac_update(&ctx, pkt, dataLen);
-  mbedtls_md_hmac_finish(&ctx, fullHmac);
-  mbedtls_md_free(&ctx);
-  uint8_t diff = 0;
-  for (int i = 0; i < HMAC_TRUNC_LEN; i++) diff |= fullHmac[i] ^ pkt[dataLen + i];
-  return (diff == 0);
-}
-
 // ===================== HARDWARE =====================
 
-SPIClass loraSPI(FSPI);
-SX1262 radio = new Module(LORA_NSS_PIN, LORA_DIO1_PIN, LORA_RST_PIN,
-                          LORA_BUSY_PIN, loraSPI);
 AsyncWebServer httpServer(80);
 AsyncWebSocket ws("/ws");
 LogStore logStore;
@@ -157,62 +57,7 @@ void readBaseBattery() {
 Preferences bsNvs;
 uint32_t highestNonce = 0;
 
-volatile bool dio1Fired = false;
-void IRAM_ATTR onDio1() { dio1Fired = true; }
-
-// ===================== BASE SLOT CLOCK STATE =====================
-
-bool          bsSynced           = false;
-unsigned long bsSyncAnchorUs     = 0;
-uint32_t      bsSyncSlotIndex    = 0;
-uint32_t      bsLastHandledSlot  = 0xFFFFFFFF;
-
-// Radio state for slot machine
-enum BsRadioState { BS_RADIO_IDLE, BS_RADIO_RX_ACTIVE, BS_RADIO_TX_ACTIVE };
-BsRadioState bsRadioState = BS_RADIO_IDLE;
-
-// Sync auto-send bookkeeping
-unsigned long bsSyncBootMs    = 0;   // millis() at boot (set in setup())
-bool          bsSyncSent      = false;
-unsigned long bsMissedTelemSlots = 0; // consecutive WIN_TELEM slots with no RX (for resync)
-
-// Pending sync send (deferred until slot machine can TX it)
-bool          bsSyncPending   = false;
-
-// Set true once the command TX window has been attempted in the current WIN_CMD slot,
-// so we don't attempt again in the same slot.
-bool          bsCmdSentThisSlot = false;
-
-// Set true when we've called startReceive for the early-listen window,
-// so we don't spam startReceive every loop until DIO1 fires.
-// Also set true after a telem-fallback listen is started, to prevent
-// restarting RX within the same WIN_TELEM slot after a timeout.
-bool          bsEarlyRxStarted  = false;
-
-// LED helpers — base station uses ledcAttach, so must use ledcWrite
-static void bsLedOn()  { ledcWrite(LED_PIN, 255); }
-static void bsLedOff() { ledcWrite(LED_PIN, 0);   }
-
-struct { uint8_t data[256]; size_t len; int8_t snr4; uint32_t timestamp; bool valid;
-} latestTelem = {.len=0,.snr4=0,.timestamp=0,.valid=false};
-
 // ===================== BLE GATT SERVER =====================
-// One service with 4 characteristics:
-//   Telemetry Notify (0x0001): subscribe for real-time LoRa packets
-//     Push format: [float32 snr LE][float32 rssi LE][int32 recNum LE][raw packet]
-//     Uses BLE notify (unreliable/fast). JS tracks record numbers for gap detection.
-//   Command Write (0x0002): write-with-response (reliable) to queue LoRa TX
-//     Write format: [uint16 waitMs LE][uint8 sends][uint8 pktLen][packet bytes]
-//     Same body format as POST /api/command.
-//   Status Read (0x0003): read to get status JSON (same as GET /api/status)
-//   Log Fetch (0x0004): write request, receive records via notify (fast/unreliable)
-//   OTA Chunks (0x0006): WRITE|WRITE_NR raw firmware chunks; NOTIFY for errors/progress
-//     Chunk format: [offset u32 LE][data: up to 512 bytes, must not cross 512B sector boundary]
-//     Errors and progress reported via notify (see OTA_STATUS_* defines)
-//     Write format: [uint32 startRec LE][uint16 count LE]
-//     Notify format: concatenated records, same as /api/logs response binary.
-//     Empty notify = end marker.
-//     JS drives flow control: request a batch, receive it, request more.
 
 #define BLE_SERVICE_UUID        "4d4f4f4e-5348-4f54-4253-000000000000"
 #define BLE_TELEM_CHAR_UUID     "4d4f4f4e-5348-4f54-4253-000000000001"
@@ -231,7 +76,6 @@ NimBLECharacteristic* bleOtaChar = nullptr;
 bool bleClientConnected = false;
 
 // ===================== OTA STATE MACHINE =====================
-// Status codes (same as rocket ota.h for consistency)
 #define OTA_STATUS_OK            0x00
 #define OTA_STATUS_NOT_ACTIVE    0x01
 #define OTA_STATUS_WRITE_FAIL    0x02
@@ -297,7 +141,7 @@ static uint8_t otaHandleBegin() {
     if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &imgState) == ESP_OK
         && imgState == ESP_OTA_IMG_PENDING_VERIFY) {
       Serial.println("OTA: begin refused — boot pending confirmation (send 0x52 first)");
-      return 0x07;  // OTA_STATUS_REFUSED
+      return 0x07;
     }
   }
   if (bsOta.state != OTA_LOCKED) {
@@ -327,7 +171,7 @@ static uint8_t otaHandleBegin() {
   bsOta.chunkCount = 0;
   bsOta.state = OTA_RECEIVING;
   Serial.println("OTA: session open");
-  return 0x00;  // CMD_OK
+  return 0x00;
 }
 
 static uint8_t otaHandleFinalize(uint32_t expectedSize, const uint8_t* firmwareHmac) {
@@ -336,7 +180,7 @@ static uint8_t otaHandleFinalize(uint32_t expectedSize, const uint8_t* firmwareH
   if (bsOta.bytesWritten != expectedSize) {
     esp_ota_abort(bsOta.handle);
     bsOta.state = OTA_LOCKED;
-    return 0x03;  // CMD_ERR_BAD_PARAMS
+    return 0x03;
   }
   uint8_t computed[32];
   mbedtls_md_context_t ctx;
@@ -405,6 +249,22 @@ struct CmdTxState {
   bool active;
 } cmdTx = {.pktLen=0,.sends=0,.sent=0,.waitMs=0,.lastSendMs=0,.queuedMs=0,.active=false};
 
+bool verifyCommandHMAC(const uint8_t* pkt, size_t pktLen) {
+  if (pktLen < HMAC_TRUNC_LEN + 7) return false;
+  size_t dataLen = pktLen - HMAC_TRUNC_LEN;
+  uint8_t fullHmac[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, HMAC_KEY, HMAC_KEY_LEN);
+  mbedtls_md_hmac_update(&ctx, pkt, dataLen);
+  mbedtls_md_hmac_finish(&ctx, fullHmac);
+  mbedtls_md_free(&ctx);
+  uint8_t diff = 0;
+  for (int i = 0; i < HMAC_TRUNC_LEN; i++) diff |= fullHmac[i] ^ pkt[dataLen + i];
+  return (diff == 0);
+}
+
 // Returns true on success. On failure, errorMsg is set.
 bool queueCommandTx(const uint8_t* body, size_t bodyLen, String& errorMsg) {
   if (bodyLen < 5) { errorMsg = "too short"; return false; }
@@ -450,47 +310,11 @@ bool queueCommandTx(const uint8_t* body, size_t bodyLen, String& errorMsg) {
   errorMsg = ""; return true;
 }
 
-// ===================== LOG DOWNLOAD RADIO STATE =====================
-
-static float bwCodeToFloat(uint8_t code) {
-  switch (code) {
-    case 0: return 500.0; case 1: return 250.0; case 2: return 125.0;
-    case 3: return 62.5;  case 4: return 41.7;  case 5: return 31.25;
-    case 6: return 20.8;  case 7: return 15.6;  case 8: return 10.4;
-    case 9: return 7.8;   default: return 125.0;
-  }
-}
-
-struct LogDlState {
-  bool active;
-  unsigned long lastRxMs;
-  unsigned long enteredMs;
-  static const unsigned long TIMEOUT_MS = 2000;
-} logDl = {.active=false, .lastRxMs=0, .enteredMs=0};
-
-void switchToDownloadRadio(float freqMHz, uint8_t sf, float bw, int8_t pwr) {
-  radio.standby();
-  radio.setFrequency(freqMHz);
-  radio.setSpreadingFactor(sf);
-  radio.setBandwidth(bw);
-  radio.setOutputPower(pwr);
-  radio.startReceive();
-}
-
-void revertToNormalRadio() {
-  radio.standby();
-  radio.setFrequency(activeFreqMHz);
-  radio.setSpreadingFactor(activeSF);
-  radio.setBandwidth(activeBwKHz);
-  radio.setOutputPower(activePower);
-  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-  radio.startReceive();
-  logDl.active = false;
-  logDl.enteredMs = 0;
-  Serial.println("DL radio reverted");
-}
-
 // ===================== PUSH TELEMETRY TO ALL TRANSPORTS =====================
+
+struct {
+  uint8_t data[256]; size_t len; int8_t snr4; uint32_t timestamp; bool valid;
+} latestTelem = {.len=0,.snr4=0,.timestamp=0,.valid=false};
 
 void pushToAllTransports(const uint8_t* wsBuf, size_t wsLen) {
   if (wifiEnabled) {
@@ -501,61 +325,15 @@ void pushToAllTransports(const uint8_t* wsBuf, size_t wsLen) {
   }
 }
 
-// ===================== SYNC PACKET BUILDER =====================
-// Builds a CMD_SET_SYNC (0x41) command packet signed with HMAC.
-// Returns packet length. Target device ID = rocket's DEVICE_ID (0x92 per config.h).
-// Uses highestNonce++ (stored to NVS) same as all other commands.
+// ===================== PACKET RECEIVED CALLBACK =====================
+// Invoked from radio.cpp bsHandleRxDone() for every valid received packet.
 
-#define ROCKET_DEVICE_ID  0x92   // must match rocket config.h DEVICE_ID
-
-static size_t buildSyncCmdPacket(uint8_t* buf) {
-  // Packet format: [type(1)][targetId(1)][cmdId(1)][nonce(4)][HMAC(10)]
-  // = 17 bytes, 0 param bytes.
-  highestNonce++;
-  bsNvs.putUInt("nonce", highestNonce);
-
-  buf[0] = 0x9A;               // PKT_COMMAND
-  buf[1] = ROCKET_DEVICE_ID;
-  buf[2] = CMD_SET_SYNC;
-  buf[3] = (uint8_t)(highestNonce);
-  buf[4] = (uint8_t)(highestNonce >> 8);
-  buf[5] = (uint8_t)(highestNonce >> 16);
-  buf[6] = (uint8_t)(highestNonce >> 24);
-
-  // HMAC-SHA256 over bytes 0..6, truncated to 10 bytes
-  uint8_t fullHmac[32];
-  mbedtls_md_context_t ctx;
-  mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, HMAC_KEY, HMAC_KEY_LEN);
-  mbedtls_md_hmac_update(&ctx, buf, 7);
-  mbedtls_md_hmac_finish(&ctx, fullHmac);
-  mbedtls_md_free(&ctx);
-  memcpy(buf + 7, fullHmac, HMAC_TRUNC_LEN);
-
-  return 17;
-}
-
-// ===================== LoRa RX HANDLER =====================
-
-void handleLoRaRx() {
-  if (!dio1Fired) return;
-  dio1Fired    = false;
-  bsRadioState = BS_RADIO_IDLE;
-  uint8_t buf[256];
-  size_t len = radio.getPacketLength();
-  if (len == 0 || len > sizeof(buf)) { radio.startReceive(); return; }
-  int state = radio.readData(buf, len);
-  if (state != RADIOLIB_ERR_NONE) { radio.startReceive(); return; }
-  float snrF = radio.getSNR();
-  float rssiF = radio.getRSSI(true);
+void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF) {
   int8_t snr4 = (int8_t)(snrF * 4);
   uint32_t nowMs = millis();
 
   int32_t recNum = -1;
-  if (logStoreOk) recNum = logStore.writeRecord(buf, len, snr4, nowMs);
-
-  if (logDl.active) logDl.lastRxMs = nowMs;
+  if (logStoreOk) recNum = logStore.writeRecord(buf, (uint8_t)len, snr4, nowMs);
 
   if (len >= 10 && buf[0] == 0xAF) {
     memcpy(latestTelem.data, buf, len);
@@ -574,60 +352,78 @@ void handleLoRaRx() {
   Serial.print("B snr:"); Serial.print(snrF, 1);
   Serial.print(" rssi:"); Serial.print(rssiF, 0);
   Serial.print(" #"); Serial.println(recNum);
-  // Note: radio.startReceive() is called by the slot machine (or bootstrap path) after this returns.
 }
 
-// ===================== COMMAND TX STATE MACHINE =====================
+// ===================== SYNC PACKET BUILDER =====================
+// Builds a CMD_SET_SYNC (0x41) command packet signed with HMAC.
+// Returns packet length (always 17).
 
-void handleCmdTx() {
-  if (!cmdTx.active) return;
-  unsigned long now = millis();
-  if (cmdTx.sent > 0 && (now - cmdTx.lastSendMs) < cmdTx.waitMs) return;
+size_t bsBuildSyncCmdPacket(uint8_t* buf) {
+  highestNonce++;
+  bsNvs.putUInt("nonce", highestNonce);
 
-  radio.standby();
-  int st = radio.transmit(cmdTx.pkt, cmdTx.pktLen);
-  cmdTx.lastSendMs = millis();
-  cmdTx.sent++;
+  buf[0] = 0x9A;               // PKT_COMMAND
+  buf[1] = ROCKET_DEVICE_ID;
+  buf[2] = 0x41;               // CMD_SET_SYNC
+  buf[3] = (uint8_t)(highestNonce);
+  buf[4] = (uint8_t)(highestNonce >> 8);
+  buf[5] = (uint8_t)(highestNonce >> 16);
+  buf[6] = (uint8_t)(highestNonce >> 24);
 
-  Serial.print("CMD TX #"); Serial.print(cmdTx.sent);
+  uint8_t fullHmac[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, HMAC_KEY, HMAC_KEY_LEN);
+  mbedtls_md_hmac_update(&ctx, buf, 7);
+  mbedtls_md_hmac_finish(&ctx, fullHmac);
+  mbedtls_md_free(&ctx);
+  memcpy(buf + 7, fullHmac, HMAC_TRUNC_LEN);
+
+  return 17;
+}
+
+// ===================== CMD TX DISPATCH =====================
+// Called from loop() when the slot machine signals WIN_CMD is ready (bsWinCmdReady)
+// or when the wait window expires (out-of-turn fallback).
+
+static void dispatchCmdTx() {
+  if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) return;
+  if (bsRadioState != BS_RADIO_STANDBY) return;
+
+  Serial.print("CMD TX "); Serial.print(cmdTx.sent + 1);
   Serial.print("/"); Serial.print(cmdTx.sends);
-  Serial.print(" st="); Serial.println(st);
+  Serial.print(" len="); Serial.println(cmdTx.pktLen);
+
+  bool isSyncPkt = (cmdTx.pktLen == 17 && cmdTx.pkt[2] == 0x41);
+  if (isSyncPkt) bsSyncTxInFlight = true;
+
+  if (!bsRadioStartTx(cmdTx.pkt, cmdTx.pktLen)) {
+    bsSyncTxInFlight = false;
+    Serial.println("CMD TX start fail");
+    return;
+  }
+
+  cmdTx.sent++;
+  cmdTx.lastSendMs = millis();
 
   if (cmdTx.sent >= cmdTx.sends) {
     cmdTx.active = false;
     if (logStoreOk) logStore.writeRecord(cmdTx.pkt, cmdTx.pktLen, 0x7F, millis());
 
-    // LOG DOWNLOAD (0x20) — switch to download radio
-    if (cmdTx.pktLen >= 17 && cmdTx.pkt[2] == 0x20) {
-      uint8_t dlCh  = cmdTx.pkt[7 + 6];
-      uint8_t dlSF  = cmdTx.pkt[7 + 7];
-      uint8_t dlBw  = cmdTx.pkt[7 + 8];
-      int8_t  dlPwr = (int8_t)cmdTx.pkt[7 + 9];
-      float dlFreq = channelToFreqMHz(dlCh);
-      if (dlFreq == 0.0f) dlFreq = activeFreqMHz;
-      switchToDownloadRadio(dlFreq, dlSF, bwCodeToFloat(dlBw), dlPwr);
-      logDl.active = true;
-      if (logDl.enteredMs == 0) logDl.enteredMs = millis();
-      logDl.lastRxMs = millis();
-    }
-
-    // OTA commands (0x50/0x51/0x52) targeted at us — apply locally, do not forward over LoRa
+    // OTA commands (0x50/0x51/0x52) targeted at this base station — apply locally
     if (cmdTx.pkt[1] == DEVICE_ID &&
         (cmdTx.pkt[2] == CMD_OTA_BEGIN || cmdTx.pkt[2] == CMD_OTA_FINALIZE || cmdTx.pkt[2] == CMD_OTA_CONFIRM)) {
-      uint8_t r = 0x00;
       if (cmdTx.pkt[2] == CMD_OTA_BEGIN) {
-        r = otaHandleBegin();
-      } else if (cmdTx.pkt[2] == CMD_OTA_FINALIZE && cmdTx.pktLen >= 7 + 36 + 10) {
-        // params start at pkt[7]: [fwSize u32 LE][fwHmac 32 bytes]
+        otaHandleBegin();
+      } else if (cmdTx.pkt[2] == CMD_OTA_FINALIZE && cmdTx.pktLen >= 7 + 36 + HMAC_TRUNC_LEN) {
         uint32_t fwSize = (uint32_t)cmdTx.pkt[7] | ((uint32_t)cmdTx.pkt[8] << 8)
                         | ((uint32_t)cmdTx.pkt[9] << 16) | ((uint32_t)cmdTx.pkt[10] << 24);
         const uint8_t* fwHmac = &cmdTx.pkt[11];
-        r = otaHandleFinalize(fwSize, fwHmac);
+        otaHandleFinalize(fwSize, fwHmac);
       } else if (cmdTx.pkt[2] == CMD_OTA_CONFIRM) {
-        r = otaHandleConfirm();
+        otaHandleConfirm();
       }
-      (void)r;
-      revertToNormalRadio();
       return;
     }
 
@@ -640,27 +436,27 @@ void handleCmdTx() {
       uint8_t bhSf_  = cmdTx.pkt[11];
       int8_t  bhPwr_ = (int8_t)cmdTx.pkt[12];
 
-      float priFreq = channelToFreqMHz(priCh);
+      float priFreq = bsChannelToFreqMHz(priCh);
       if (priFreq != 0.0f && priSf >= 5 && priSf <= 12 && priPwr >= -9 && priPwr <= 22) {
         activeChannel = priCh; activeSF = priSf; activePower = priPwr;
-        updateActiveFreqBw();
+        bsUpdateActiveFreqBw();
         bsNvs.putUChar("radio_ch", activeChannel);
         bsNvs.putUChar("radio_sf", activeSF);
         bsNvs.putChar("radio_pwr", activePower);
       }
-      float bhFreq_ = channelToFreqMHz(bhCh_);
+      float bhFreq_ = bsChannelToFreqMHz(bhCh_);
       if (bhFreq_ != 0.0f && bhSf_ >= 5 && bhSf_ <= 12 && bhPwr_ >= -9 && bhPwr_ <= 22) {
         bhChannel = bhCh_; bhSF = bhSf_; bhPower = bhPwr_;
         bsNvs.putUChar("bh_ch", bhChannel);
         bsNvs.putUChar("bh_sf", bhSF);
         bsNvs.putChar("bh_pwr", bhPower);
       }
-      revertToNormalRadio();
+      bsRadioStandby();
+      bsRadioApplyConfig();
+      bsRadioStartRx();
       return;
     }
   }
-
-  radio.startReceive();
 }
 
 // ===================== BUILD STATUS JSON =====================
@@ -669,7 +465,7 @@ size_t buildStatusJson(char* json, size_t maxLen) {
   readBaseBattery();
   return snprintf(json, maxLen,
     "{\"uptimeMs\":%lu,\"records\":%lu,\"oldest\":%lu,\"ringSize\":%lu,\"vpos\":%lu,"
-    "\"logOk\":%s,\"nonce\":%lu,\"dlActive\":%s,\"deviceId\":%d,\"baseBattMv\":%u,"
+    "\"logOk\":%s,\"nonce\":%lu,\"deviceId\":%d,\"baseBattMv\":%u,"
     "\"wifiOn\":%s,\"bleOn\":%s}",
     (unsigned long)millis(),
     (unsigned long)logStore.getRecordCounter(),
@@ -678,7 +474,6 @@ size_t buildStatusJson(char* json, size_t maxLen) {
     (unsigned long)logStore.getVirtualPos(),
     logStoreOk ? "true" : "false",
     (unsigned long)highestNonce,
-    logDl.active ? "true" : "false",
     DEVICE_ID,
     (unsigned)baseBattMv,
     wifiEnabled ? "true" : "false",
@@ -699,16 +494,12 @@ void handleApiCommand(AsyncWebServerRequest *req, uint8_t *data, size_t len, siz
   }
 }
 
-// PUT /api/ota/chunk — body: [offset u32 LE][data: up to 512 bytes]
-// No authentication on individual chunks; authentication is on the finalize command.
-// Returns single-byte status or 4xx on bad request.
 void handleApiOtaChunk(AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
   if (index != 0) return;
   if (len < total) { req->send(400, "text/plain", "fragmented"); return; }
   if (len < 5) { req->send(400, "text/plain", "too short"); return; }
   uint32_t offset = (uint32_t)data[0] | ((uint32_t)data[1] << 8)
                   | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
-  // Call handler and flush the queued notify as the HTTP response
   bsOta.notifyPending = false;
   otaHandleChunk(offset, data + 4, len - 4);
   uint8_t status = bsOta.notifyPending ? bsOta.notifyBuf[0] : OTA_STATUS_OK;
@@ -769,10 +560,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     bleClientConnected = true;
     Serial.print("BLE+ addr:"); Serial.println(connInfo.getAddress().toString().c_str());
-
-    //TODO: @@@ force 2m phy - is this the right place?
-    //NimBLEConnection::setPhy(BLE_GAP_LE_PHY_2M, BLE_GAP_LE_PHY_2M)
-
+    //TODO: @@@ force 2m phy
   }
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
     bleClientConnected = false;
@@ -840,7 +628,7 @@ class BleLogFetchCallbacks : public NimBLECharacteristicCallbacks {
 class BleOtaCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& connInfo) override {
     NimBLEAttValue val = chr->getValue();
-    if (val.size() < 5) return;  // need at least offset(4) + 1 data byte
+    if (val.size() < 5) return;
     uint32_t offset = (uint32_t)val.data()[0] | ((uint32_t)val.data()[1] << 8)
                     | ((uint32_t)val.data()[2] << 16) | ((uint32_t)val.data()[3] << 24);
     otaHandleChunk(offset, val.data() + 4, val.size() - 4);
@@ -848,8 +636,6 @@ class BleOtaCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 // ===================== BLE LOG FETCH STATE MACHINE =====================
-// Sends one MTU-full of records per main loop iteration (fast, no delay).
-// Uses same binary format as /api/logs: [recNum u32][pLen u8][snr i8][ts u32][payload]
 
 void handleBleLogFetch() {
   if (!bleLogFetch.active || !bleClientConnected || !bleLogFetchChar) return;
@@ -887,28 +673,7 @@ void handleBleLogFetch() {
 
 // ===================== BLE INIT / DEINIT =====================
 
-void basicNimbleSetup() {
-    NimBLEDevice::init("Moonshot");
-    
-    NimBLEServer *pServer = NimBLEDevice::createServer();
-    NimBLEService *pService = pServer->createService("ABCD");
-    NimBLECharacteristic *pCharacteristic = pService->createCharacteristic("1234");
-    
-    pService->start();
-    pCharacteristic->setValue("Hello BLE");
-    //TODO: @@@ switching to NimBLEDevice::setOwnAddrType and negotiating 2M PHY via setPreferredPhy is worth trying.
-    
-    NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-    pAdvertising->addServiceUUID("ABCD"); // advertise the UUID of our service
-    pAdvertising->setName("NimBLE"); // advertise the device name
-    pAdvertising->start(); 
-    Serial.println("basicNimbleSetup started");
-}
-
 void initBLE() {
-  //basicNimbleSetup();
-  //return;
-
   NimBLEDevice::init(WIFI_SSID);
   NimBLEDevice::setMTU(517);
 
@@ -936,11 +701,8 @@ void initBLE() {
   bleAdvert->addServiceUUID(BLE_SERVICE_UUID);
   bleAdvert->setName("NimBLE");
   bleAdvert->enableScanResponse(true);
-
-  // Ensure service UUID is in the main advertisement (not just scan response)
-  // so Web Bluetooth filters can find it
-  bleAdvert->setMinInterval(0x20);  // 20ms * 0.625 = 12.5ms
-  bleAdvert->setMaxInterval(0x40);  // 40ms * 0.625 = 25ms
+  bleAdvert->setMinInterval(0x20);
+  bleAdvert->setMaxInterval(0x40);
   bleAdvert->start();
 
   Serial.println("BLE GATT started");
@@ -960,283 +722,6 @@ void deinitBLE() {
   Serial.println("BLE deinited");
 }
 
-// ===================== SYNC SEND =====================
-// Sends CMD_SET_SYNC 2s after boot (and on demand / resync).
-// In the slot machine, the actual TX is deferred to the slot machine's
-// IDLE state so we don't interrupt an active WIN_TELEM RX.
-
-void triggerSyncSend() {
-  bsSyncPending = true;
-}
-
-// Called from loop() — fires the sync TX when the radio is idle and
-// there is no currently active slot RX/TX.
-// This runs as a blocking transmit so we can capture the exact TxDone time.
-static void doSendSync() {
-  uint8_t pkt[17];
-  size_t len = buildSyncCmdPacket(pkt);
-
-  Serial.print("SYNC TX: sending CMD_SET_SYNC nonce="); Serial.println(highestNonce);
-  radio.standby();
-  unsigned long t0 = micros();
-  int st = radio.transmit(pkt, len);
-  unsigned long txDoneUs = micros();
-
-  if (st == RADIOLIB_ERR_NONE) {
-    // Anchor the base slot clock to TxDone.
-    bsSyncAnchorUs    = txDoneUs;
-    bsSyncSlotIndex   = 1;  // WIN_CMD starts now (sync pkt was slot 0 = WIN_TELEM)
-    bsLastHandledSlot = 0xFFFFFFFF;
-    bsSynced          = true;
-    bsSyncSent        = true;
-    bsMissedTelemSlots = 0;
-    Serial.print("SYNC anchor="); Serial.print(txDoneUs);
-    Serial.print("us (tx took "); Serial.print(txDoneUs - t0); Serial.println("us)");
-  } else {
-    Serial.print("SYNC TX fail: "); Serial.println(st);
-  }
-
-  // Leave radio idle — the slot machine will start RX at the right time.
-  // Clear IRQ flags left by the blocking transmit before handing off to slot machine.
-  radio.standby();
-  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-  dio1Fired    = false;
-  bsRadioState = BS_RADIO_IDLE;
-}
-
-void handleSyncSend() {
-  unsigned long now = millis();
-
-  // Auto-send 2s after boot
-  if (!bsSyncSent && (now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS) {
-    bsSyncPending = true;
-  }
-
-  // Resync if too many missed telem slots
-  if (bsSynced && bsMissedTelemSlots >= BS_SYNC_LOSS_SLOTS) {
-    Serial.println("SYNC: too many missed telem slots, resyncing");
-    bsSyncPending = true;
-    bsMissedTelemSlots = 0;
-  }
-
-  if (!bsSyncPending) return;
-
-  // Only fire when the radio is idle (not mid-RX or mid-TX in a slot)
-  if (bsRadioState != BS_RADIO_IDLE && bsRadioState != BS_RADIO_RX_ACTIVE) return;
-
-  bsSyncPending = false;
-  doSendSync();
-}
-
-// ===================== SYNCED RADIO SLOT MACHINE =====================
-// Replaces handleLoRaRx() and handleCmdTx() when bsSynced == true.
-// Called from loop() every iteration.
-//
-// Slot layout (base station view):
-//   WIN_TELEM: rocket is TX-ing; base listens. Early-listen started from prior WIN_CMD.
-//   WIN_CMD:    base may TX a queued command; rocket is listening.
-//              200ms before WIN_CMD ends, start early-listen for the next WIN_TELEM.
-
-static void bsHandleRxDone() {
-  // Called when DIO1 fires while in BS_RADIO_RX_ACTIVE.
-  // readData returns RADIOLIB_ERR_NONE on good packet, RADIOLIB_ERR_RX_TIMEOUT on timeout.
-  size_t len = radio.getPacketLength();
-  uint8_t buf[256];
-  int st = radio.readData(buf, (len > 0 && len <= sizeof(buf)) ? len : sizeof(buf));
-
-  if (st == RADIOLIB_ERR_NONE) {
-    float snrF  = radio.getSNR();
-    float rssiF = radio.getRSSI(true);
-    int8_t snr4 = (int8_t)(snrF * 4);
-    uint32_t nowMs = millis();
-
-    int32_t recNum = -1;
-    if (logStoreOk) recNum = logStore.writeRecord(buf, len, snr4, nowMs);
-
-    if (len >= 10 && buf[0] == 0xAF) {
-      memcpy(latestTelem.data, buf, len);
-      latestTelem.len = len; latestTelem.snr4 = snr4;
-      latestTelem.timestamp = nowMs; latestTelem.valid = true;
-      bsMissedTelemSlots = 0;
-    }
-
-    uint8_t wsBuf[268];
-    memcpy(wsBuf, &snrF, 4);
-    memcpy(wsBuf + 4, &rssiF, 4);
-    memcpy(wsBuf + 8, &recNum, 4);
-    memcpy(wsBuf + 12, buf, len);
-    pushToAllTransports(wsBuf, 12 + len);
-
-    Serial.print("SLOT RX "); Serial.print(len);
-    Serial.print("B snr:"); Serial.print(snrF, 1);
-    Serial.print(" rssi:"); Serial.print(rssiF, 0);
-    Serial.print(" #"); Serial.println(recNum);
-  } else if (st == RADIOLIB_ERR_RX_TIMEOUT) {
-    Serial.println("SLOT RX timeout");
-  } else {
-    Serial.print("SLOT RX err: "); Serial.println(st);
-  }
-}
-
-static void bsStartListening(const char* label) {
-  // Clear any stale IRQ flags on the SX1262 before starting RX,
-  // otherwise a leftover flag fires DIO1 immediately after startReceive.
-  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-  dio1Fired = false;
-  int st = radio.startReceive(BS_RX_TIMEOUT_RAW);
-  if (st == RADIOLIB_ERR_NONE) {
-    bsRadioState   = BS_RADIO_RX_ACTIVE;
-    bsEarlyRxStarted = true;
-    bsLedOn();
-    unsigned long nowUs = micros();
-    unsigned long posInSlot = (nowUs - bsSyncAnchorUs) % SLOT_DURATION_US;
-    Serial.print("RX start ["); Serial.print(label);
-    Serial.print("] pos="); Serial.print(posInSlot); Serial.println("us");
-  } else {
-    Serial.print("RX start fail ["); Serial.print(label);
-    Serial.print("]: "); Serial.println(st);
-  }
-}
-
-void handleSyncedRadio() {
-  unsigned long now = micros();
-
-  // ---- DIO1: handle completion of any in-progress RX or TX ----
-  if (dio1Fired) {
-    dio1Fired = false;
-
-    // Read and clear IRQ flags so we know what actually fired,
-    // and so the flags don't re-trigger DIO1 on the next startReceive.
-    uint32_t irqFlags = radio.getIrqFlags();
-    radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-
-    unsigned long posInSlot = (now - bsSyncAnchorUs) % SLOT_DURATION_US;
-    Serial.print("DIO1 irq=0x"); Serial.print(irqFlags, HEX);
-    Serial.print(" state="); Serial.print((int)bsRadioState);
-    Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
-
-    if (bsRadioState == BS_RADIO_RX_ACTIVE) {
-      bsLedOff();
-      // Note: do NOT clear bsEarlyRxStarted here. It is reset on slot transition.
-      // Keeping it true after a timeout prevents restarting RX within the same slot.
-      bsHandleRxDone();
-      // finishReceive() clears IRQ flags then calls standby() — prevents DIO1 re-firing
-      // before the next startReceive (which would also clear flags, but the gap matters).
-      radio.finishReceive();
-      bsRadioState = BS_RADIO_IDLE;
-
-    } else if (bsRadioState == BS_RADIO_TX_ACTIVE) {
-      bsLedOff();
-      // finishTransmit() clears IRQ flags then calls standby() — same reason.
-      radio.finishTransmit();
-      bsRadioState = BS_RADIO_IDLE;
-      Serial.println("SLOT TxDone");
-
-      if (cmdTx.active) {
-        cmdTx.sent++;
-        if (cmdTx.sent >= cmdTx.sends) {
-          if (logStoreOk) logStore.writeRecord(cmdTx.pkt, cmdTx.pktLen, 0x7F, millis());
-          cmdTx.active = false;
-        }
-      }
-    }
-    return;
-  }
-
-  // ---- Compute current slot ----
-  unsigned long elapsed    = now - bsSyncAnchorUs;
-  uint32_t      slotNum    = (uint32_t)(elapsed / SLOT_DURATION_US);
-  uint32_t      posInSlot  = (uint32_t)(elapsed % SLOT_DURATION_US);
-  uint8_t       seqIdx     = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
-  WindowMode    win        = SLOT_SEQUENCE[seqIdx];
-  uint32_t      timeToNext = SLOT_DURATION_US - posInSlot;
-
-  // Reset early-RX flag on slot transition so it can start again next cycle
-  if (slotNum != bsLastHandledSlot && win != WIN_TELEM) {
-    bsEarlyRxStarted = false;
-  }
-
-  switch (win) {
-
-    case WIN_TELEM: {
-      // Log slot entry once
-      if (slotNum != bsLastHandledSlot) {
-        bsLastHandledSlot = slotNum;
-        bsMissedTelemSlots++;
-        Serial.print("SLOT WIN_TELEM pos="); Serial.print(posInSlot); Serial.println("us");
-      }
-      // Start listening if: radio is idle AND we haven't already listened this slot.
-      // bsEarlyRxStarted is set by bsStartListening() and only cleared on WIN_CMD slot entry,
-      // so it remains true for the entire WIN_TELEM slot after any listen attempt.
-      if (!bsEarlyRxStarted && bsRadioState == BS_RADIO_IDLE) {
-        bsStartListening("telem-fallback");
-      }
-      break;
-    }
-
-    case WIN_CMD: {
-      // On first entry: reset per-slot flags and do idle flash if no command pending.
-      if (slotNum != bsLastHandledSlot) {
-        bsLastHandledSlot    = slotNum;
-        bsEarlyRxStarted       = false;
-        bsCmdSentThisSlot   = false;
-        if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) {
-          // No command — 5ms LED flash as proof-of-sync
-          bsLedOn();
-          delayMicroseconds(1000); //TODO: fix blocking
-          bsLedOff();
-          Serial.print("SLOT WIN_CMD idle pos="); Serial.print(posInSlot); Serial.println("us");
-        }
-      }
-
-      // Fire command TX on the first loop after BS_CMD_TX_OFFSET_US is reached.
-      // Exactly one attempt per slot: mark fired (hit or miss) the moment the offset is
-      // crossed. If the radio isn't idle at that instant, the slot is skipped entirely —
-      // no retrying later in the same slot when the rocket may no longer be listening.
-      if (!bsCmdSentThisSlot && cmdTx.active && cmdTx.sent < cmdTx.sends
-          && posInSlot >= BS_CMD_TX_OFFSET_US) {
-        bsCmdSentThisSlot = true;
-        if (bsRadioState == BS_RADIO_IDLE) {
-          Serial.print("SLOT WIN_CMD TX cmd "); Serial.print(cmdTx.sent + 1);
-          Serial.print("/"); Serial.print(cmdTx.sends);
-          Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
-          bsLedOn();
-          radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-          dio1Fired = false;
-          int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
-          if (st == RADIOLIB_ERR_NONE) {
-            bsRadioState = BS_RADIO_TX_ACTIVE;
-          } else {
-            bsLedOff();
-            Serial.print("WIN_CMD TX fail: "); Serial.println(st);
-          }
-        } else {
-          Serial.print("SLOT WIN_CMD cmd skipped (radio busy) pos="); Serial.print(posInSlot); Serial.println("us");
-        }
-      }
-
-      // Start early-listen when close to WIN_TELEM. Guard prevents restarting RX after timeout.
-      if (!bsEarlyRxStarted && bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
-        bsStartListening("early");
-      }
-      break;
-    }
-
-    case WIN_OFF:
-    default:
-      if (bsRadioState != BS_RADIO_TX_ACTIVE && bsRadioState != BS_RADIO_RX_ACTIVE) {
-        radio.standby();
-        bsRadioState = BS_RADIO_IDLE;
-        bsLedOff();
-      }
-      if (slotNum != bsLastHandledSlot) {
-        bsLastHandledSlot = slotNum;
-        Serial.println("SLOT WIN_OFF");
-      }
-      break;
-  }
-}
-
 // ===================== SETUP =====================
 
 void setup() {
@@ -1244,12 +729,10 @@ void setup() {
   delay(500);
   Serial.println("\n=== Rocket Base Station ===");
 
-  // BLE
   initBLE();
 
-  ledcAttach(LED_PIN, 1000, 8);  // pin, freq, resolution
+  ledcAttach(LED_PIN, 1000, 8);
   ledcWrite(LED_PIN, 5);
-  //pinMode(LED_PIN, OUTPUT); digitalWrite(LED_PIN, LOW);
 
   pinMode(VEXT_CTRL_PIN, OUTPUT); digitalWrite(VEXT_CTRL_PIN, HIGH);
   pinMode(VBAT_ADC_CTRL_PIN, OUTPUT); digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
@@ -1271,12 +754,12 @@ void setup() {
   highestNonce = bsNvs.getUInt("nonce", 0);
 
   // Load radio settings from NVS
-  if (bsNvs.isKey("radio_ch")) { uint8_t c = bsNvs.getUChar("radio_ch", DEFAULT_CHANNEL); activeChannel = (channelToFreqMHz(c) != 0.0f) ? c : DEFAULT_CHANNEL; }
+  if (bsNvs.isKey("radio_ch")) { uint8_t c = bsNvs.getUChar("radio_ch", DEFAULT_CHANNEL); activeChannel = (bsChannelToFreqMHz(c) != 0.0f) ? c : DEFAULT_CHANNEL; }
   if (bsNvs.isKey("radio_sf")) { uint8_t s = bsNvs.getUChar("radio_sf", DEFAULT_SF); activeSF = (s >= 5 && s <= 12) ? s : DEFAULT_SF; }
   if (bsNvs.isKey("radio_pwr")) { int8_t p = bsNvs.getChar("radio_pwr", DEFAULT_POWER); activePower = (p >= -9 && p <= 22) ? p : DEFAULT_POWER; }
-  updateActiveFreqBw();
+  bsUpdateActiveFreqBw();
 
-  if (bsNvs.isKey("bh_ch")) { uint8_t c = bsNvs.getUChar("bh_ch", DEFAULT_BH_CHANNEL); bhChannel = (channelToFreqMHz(c) != 0.0f) ? c : DEFAULT_BH_CHANNEL; }
+  if (bsNvs.isKey("bh_ch")) { uint8_t c = bsNvs.getUChar("bh_ch", DEFAULT_BH_CHANNEL); bhChannel = (bsChannelToFreqMHz(c) != 0.0f) ? c : DEFAULT_BH_CHANNEL; }
   if (bsNvs.isKey("bh_sf")) { uint8_t s = bsNvs.getUChar("bh_sf", DEFAULT_BH_SF); bhSF = (s >= 5 && s <= 12) ? s : DEFAULT_BH_SF; }
   if (bsNvs.isKey("bh_pwr")) { int8_t p = bsNvs.getChar("bh_pwr", DEFAULT_BH_POWER); bhPower = (p >= -9 && p <= 22) ? p : DEFAULT_BH_POWER; }
 
@@ -1286,7 +769,6 @@ void setup() {
   Serial.print(" BW"); Serial.print((int)activeBwKHz);
   Serial.print(" pwr="); Serial.println(activePower);
   Serial.print("Device ID: "); Serial.println(DEVICE_ID);
-
 
   // WiFi AP
   Serial.println("WiFi: setting mode...");
@@ -1325,35 +807,22 @@ void setup() {
   httpServer.addHandler(&ws);
   httpServer.begin();
 
-
   // LoRa
-  loraSPI.begin(LORA_SCK_PIN, LORA_MISO_PIN, LORA_MOSI_PIN, LORA_NSS_PIN);
-  int st = radio.begin(activeFreqMHz, activeBwKHz, activeSF, LORA_CR, LORA_SYNCWORD, activePower, LORA_PREAMBLE);
-  Serial.print("LoRa: "); Serial.println(st == RADIOLIB_ERR_NONE ? "ok" : "FAIL");
-  radio.setDio2AsRfSwitch(true);
-  radio.setDio1Action(onDio1);
-  // startReceive(timeout) automatically enables RxTimeout on DIO1 when timeout != INF.
-  // No manual IRQ mask setup needed — RadioLib handles it in startReceiveCommon().
-  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-  radio.startReceive();
-  dio1Fired      = false;
-  bsRadioState   = BS_RADIO_RX_ACTIVE;
-  bsSyncBootMs   = millis();
+  bsLoraSPI.begin(LORA_SCK_PIN, LORA_MISO_PIN, LORA_MOSI_PIN, LORA_NSS_PIN);
+  Serial.print("LoRa init... ");
+  if (bsRadioInit()) {
+    Serial.println("ok");
+    bsLoraReady = true;
+  } else {
+    Serial.println("FAIL");
+  }
 
-Serial.println("Radio Done");
+  Serial.println("=== Ready ===");
 
-
-
-    //TODO: lower power usage:
-    NimBLEDevice::getAdvertising()->setAdvertisingInterval(1600);// in 0.6125ms units
-esp_wifi_set_max_tx_power(20);//8=2dbm, 0.25dbm units 80=20dbm
-esp_wifi_set_ps(WIFI_PS_MAX_MODEM); // WIFI_PS_MIN_MODEM or WIFI_PS_MAX_MODEM for more aggressive - only wakes at DTIM beacons so drops first packet, should drop wifi from 111ma to 30ma
-setCpuFrequencyMhz(160); //tune this original 240 - rocket can also slow down - dont need speed, only need consistency, and the flash delay is our worst, not impacted by speed. clock should drop from 40-80 down by 20-30ma
-//TODO: @@@when we do hopping, also schedule recieve, at least when landed - agt least shrink it when clocks are syncd. keep 100% rx when no gps time
-
-
-
-  Serial.println("=== Ready === new3");
+  NimBLEDevice::getAdvertising()->setAdvertisingInterval(1600);
+  esp_wifi_set_max_tx_power(20);
+  esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+  setCpuFrequencyMhz(160);
 }
 
 // ===================== MAIN LOOP =====================
@@ -1363,54 +832,45 @@ void loop() {
     NimBLEDevice::getAdvertising()->start(0);
   }
 
-  // Log download mode: blocking transfer, use old handlers while active
-  if (logDl.active) {
-    handleLoRaRx();   // uses dio1Fired, pushes telem, calls radio.startReceive()
-    if ((millis() - logDl.lastRxMs) >= LogDlState::TIMEOUT_MS) {
-      revertToNormalRadio();
-      bsRadioState = BS_RADIO_RX_ACTIVE;
-      dio1Fired = false;
-    }
-  } else {
-    // Normal operation: slot-based radio machine
-    handleSyncSend();      // auto-send CMD_SET_SYNC at boot + resync
-    if (bsSynced) {
-      handleSyncedRadio();
-    } else {
-      // Bootstrap: continuous RX, waiting for sync to be sent and anchored
-      handleLoRaRx();
-      // After handleLoRaRx() consumes a packet, restart RX if radio went idle
-      if (bsRadioState == BS_RADIO_IDLE) {
-        radio.startReceive();
-        bsRadioState = BS_RADIO_RX_ACTIVE;
-        dio1Fired = false;
-      }
-    }
-  }
+  // ---- Radio state machine ----
+  if (bsLoraReady) {
+    bsHandleRadio();
 
-  // Command TX: not synced → old immediate path; synced → out-of-turn if wait expired
-  if (!logDl.active) {
-    if (!bsSynced) {
-      handleCmdTx();
-    } else if (bsSynced && cmdTx.active && cmdTx.sent < cmdTx.sends
-               && bsRadioState == BS_RADIO_IDLE
-               && (millis() - cmdTx.queuedMs) > cmdTx.waitMs) {
-      // Wait window expired — send out of turn rather than drop the command.
-      Serial.print("CMD TX out-of-turn (wait expired) pos=");
-      unsigned long posNow = (micros() - bsSyncAnchorUs) % SLOT_DURATION_US;
-      Serial.println(posNow);
-      bsLedOn();
-      radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-      dio1Fired = false;
-      int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
-      if (st == RADIOLIB_ERR_NONE) {
-        bsRadioState = BS_RADIO_TX_ACTIVE;
-        bsCmdSentThisSlot = true;
-      } else {
-        bsLedOff();
-        Serial.print("Out-of-turn TX fail: "); Serial.println(st);
+    // Auto-sync management: queue CMD_SET_SYNC at boot + resync on missed telem slots
+    bsHandleSyncSend();
+
+    // If sync needs to be queued, build and queue the packet now
+    if (bsSyncNeedsQueue) {
+      bsSyncNeedsQueue = false;
+      uint8_t syncPkt[17];
+      size_t syncLen = bsBuildSyncCmdPacket(syncPkt);
+      // Queue with waitMs=0, sends=1, bypass normal queueCommandTx HMAC re-check
+      // (we just built it with the correct HMAC above).
+      if (bsRadioState == BS_RADIO_STANDBY && !cmdTx.active) {
+        memcpy(cmdTx.pkt, syncPkt, syncLen);
+        cmdTx.pktLen  = (uint8_t)syncLen;
+        cmdTx.sends   = 1;
+        cmdTx.sent    = 0;
+        cmdTx.waitMs  = 0;
+        cmdTx.queuedMs = millis();
+        cmdTx.active  = true;
+        Serial.print("SYNC queued nonce="); Serial.println(highestNonce);
       }
-      cmdTx.queuedMs = millis();  // reset so it doesn't fire again next loop
+    }
+
+    // Slot machine signals WIN_CMD window open — attempt TX
+    if (bsWinCmdReady) {
+      bsWinCmdReady = false;
+      dispatchCmdTx();
+    }
+
+    // Out-of-turn fallback: wait window expired, send regardless of slot
+    if (cmdTx.active && cmdTx.sent < cmdTx.sends && cmdTx.waitMs > 0
+        && bsRadioState == BS_RADIO_STANDBY
+        && (millis() - cmdTx.queuedMs) > cmdTx.waitMs) {
+      Serial.println("CMD TX out-of-turn (wait expired)");
+      cmdTx.queuedMs = millis();  // reset so it doesn't fire every loop
+      dispatchCmdTx();
     }
   }
 
@@ -1429,8 +889,7 @@ void loop() {
 
 void NotUsed(){
   //led current drive strength - not good given series resistor
-   //gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-  // Try weaker drive strength
-  //gpio_set_drive_capability(LED_PIN, GPIO_DRIVE_CAP_0); // 0=weakest, 5ma, 10ma, 20ma, 40ma=GPIO_DRIVE_CAP_3  
-  //gpio_set_level(LED_PIN, 1); // LED on
+  //gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
+  //gpio_set_drive_capability(LED_PIN, GPIO_DRIVE_CAP_0);
+  //gpio_set_level(LED_PIN, 1);
 }
