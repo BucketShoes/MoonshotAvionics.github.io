@@ -83,7 +83,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define BS_RX_TIMEOUT_US      40'000UL      // ms
 #define BS_RX_TIMEOUT_RAW     (BS_RX_TIMEOUT_US / 15.625f)
 // Aim command TX this many µs after WIN_CMD slot start.
-// Gives rocket time to arm startReceive. Also the drift calibration reference point.
+// Gives rocket time to call startReceive. Also the drift calibration reference point.
 #define BS_CMD_TX_OFFSET_US   5'000UL  // µs after WIN_CMD start
 
 
@@ -996,7 +996,7 @@ static void doSendSync() {
     Serial.print("SYNC TX fail: "); Serial.println(st);
   }
 
-  // Leave radio idle — the slot machine will arm RX at the right time.
+  // Leave radio idle — the slot machine will start RX at the right time.
   // Clear IRQ flags left by the blocking transmit before handing off to slot machine.
   radio.standby();
   radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
@@ -1035,7 +1035,7 @@ void handleSyncSend() {
 // Slot layout (base station view):
 //   WIN_TELEM: rocket is TX-ing; base listens. Early-listen started from prior WIN_CMD.
 //   WIN_CMD:    base may TX a queued command; rocket is listening.
-//              200ms before WIN_CMD ends, arm early-listen for the next WIN_TELEM.
+//              200ms before WIN_CMD ends, start early-listen for the next WIN_TELEM.
 
 static void bsHandleRxDone() {
   // Called when DIO1 fires while in BS_RADIO_RX_ACTIVE.
@@ -1079,7 +1079,7 @@ static void bsHandleRxDone() {
 }
 
 static void bsStartListening(const char* label) {
-  // Clear any stale IRQ flags on the SX1262 before arming RX,
+  // Clear any stale IRQ flags on the SX1262 before starting RX,
   // otherwise a leftover flag fires DIO1 immediately after startReceive.
   radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
   dio1Fired = false;
@@ -1151,7 +1151,7 @@ void handleSyncedRadio() {
   WindowMode    win        = SLOT_SEQUENCE[seqIdx];
   uint32_t      timeToNext = SLOT_DURATION_US - posInSlot;
 
-  // Reset early-RX armed flag on slot transition so it can re-arm next cycle
+  // Reset early-RX flag on slot transition so it can start again next cycle
   if (slotNum != bsLastHandledSlot && win != WIN_TELEM) {
     bsEarlyRxStarted = false;
   }
@@ -1183,7 +1183,7 @@ void handleSyncedRadio() {
         if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) {
           // No command — 5ms LED flash as proof-of-sync
           bsLedOn();
-          delayMicroseconds(5000);
+          delayMicroseconds(5000); //TODO: fix blocking
           bsLedOff();
           Serial.print("SLOT WIN_CMD idle pos="); Serial.print(posInSlot); Serial.println("us");
         }
@@ -1215,7 +1215,7 @@ void handleSyncedRadio() {
         }
       }
 
-      // Arm early-listen when close to WIN_TELEM. Guard prevents re-arming after timeout.
+      // Start early-listen when close to WIN_TELEM. Guard prevents restarting RX after timeout.
       if (!bsEarlyRxStarted && bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
         bsStartListening("early");
       }
@@ -1379,7 +1379,7 @@ void loop() {
     } else {
       // Bootstrap: continuous RX, waiting for sync to be sent and anchored
       handleLoRaRx();
-      // After handleLoRaRx() consumes a packet, re-arm RX if radio went idle
+      // After handleLoRaRx() consumes a packet, restart RX if radio went idle
       if (bsRadioState == BS_RADIO_IDLE) {
         radio.startReceive();
         bsRadioState = BS_RADIO_RX_ACTIVE;
