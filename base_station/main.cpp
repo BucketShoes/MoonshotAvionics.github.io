@@ -1189,24 +1189,28 @@ void handleSyncedRadio() {
       }
 
       // Fire command TX on the first loop after BS_CMD_TX_OFFSET_US is reached.
-      // One attempt per slot — if the radio isn't idle at that moment, this slot is skipped
-      // and bsCmdFiredThisSlot stays false so the next WIN_RX slot will try again.
+      // Exactly one attempt per slot: mark fired (hit or miss) the moment the offset is
+      // crossed. If the radio isn't idle at that instant, the slot is skipped entirely —
+      // no retrying later in the same slot when the rocket may no longer be listening.
       if (!bsCmdFiredThisSlot && cmdTx.active && cmdTx.sent < cmdTx.sends
-          && bsRadioState == BS_RADIO_IDLE
           && posInSlot >= BS_CMD_TX_OFFSET_US) {
         bsCmdFiredThisSlot = true;
-        Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
-        Serial.print("/"); Serial.print(cmdTx.sends);
-        Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
-        bsLedOn();
-        radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-        dio1Fired = false;
-        int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
-        if (st == RADIOLIB_ERR_NONE) {
-          bsRadioState = BS_RADIO_TX_ACTIVE;
+        if (bsRadioState == BS_RADIO_IDLE) {
+          Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
+          Serial.print("/"); Serial.print(cmdTx.sends);
+          Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
+          bsLedOn();
+          radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+          dio1Fired = false;
+          int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
+          if (st == RADIOLIB_ERR_NONE) {
+            bsRadioState = BS_RADIO_TX_ACTIVE;
+          } else {
+            bsLedOff();
+            Serial.print("WIN_RX TX fail: "); Serial.println(st);
+          }
         } else {
-          bsLedOff();
-          Serial.print("WIN_RX TX fail: "); Serial.println(st);
+          Serial.print("SLOT WIN_RX cmd skipped (radio busy) pos="); Serial.print(posInSlot); Serial.println("us");
         }
       }
 
