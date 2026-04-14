@@ -74,11 +74,12 @@ enum WindowMode : uint8_t {
 
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define SLOT_SEQUENCE_LEN   2
-#define SLOT_DURATION_US    1000000UL   // 1 second per slot
+#define SLOT_DURATION_US    4000000UL   // 4 seconds per slot
 // startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
-// Formula: ms * 1000 / 15.625 = ms * 64
-#define BS_RX_EARLY_US      150000UL    // start listening 150ms before WIN_TELEM
-#define BS_RX_TIMEOUT_RAW   19200UL     // 300ms window (300000µs / 15.625)
+// Formula: us / 15.625  or  ms * 64
+// Keep in sync with rocket_avionics/config.h.
+#define BS_RX_EARLY_US      50000UL     // start listening 50ms before WIN_TELEM
+#define BS_RX_TIMEOUT_RAW   6400UL      // 100ms window (100000µs / 15.625)
 // Aim command TX this many µs after WIN_RX slot start.
 // Gives rocket time to arm startReceive. Also the drift calibration reference point.
 #define BS_CMD_TX_OFFSET_US 10000UL     // 10ms after WIN_RX start
@@ -1185,24 +1186,36 @@ void handleSyncedRadio() {
         }
       }
 
-      // Fire command TX once per slot, after BS_CMD_TX_OFFSET_US into the slot.
-      // This gives the rocket time to arm startReceive before the preamble arrives.
+      // Fire command TX once per WIN_RX slot, at BS_CMD_TX_OFFSET_US after slot start.
+      // Rocket listens for ROCKET_RX_TIMEOUT_US from slot start. If posInSlot has
+      // already passed that window (command was queued mid-slot), skip this slot —
+      // bsCmdFiredThisSlot stays false so the next WIN_RX will try again.
+      // ROCKET_RX_TIMEOUT_US = ROCKET_RX_TIMEOUT_RAW * 15.625 = 19200 * 15.625 = 300000us
+      #define ROCKET_RX_TIMEOUT_US 300000UL
       if (!bsCmdFiredThisSlot && cmdTx.active && cmdTx.sent < cmdTx.sends
-          && bsRadioState == BS_RADIO_IDLE && posInSlot >= BS_CMD_TX_OFFSET_US) {
-        bsCmdFiredThisSlot = true;
-        Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
-        Serial.print("/"); Serial.print(cmdTx.sends);
-        Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
-        bsLedOn();
-        radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-        dio1Fired = false;
-        int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
-        if (st == RADIOLIB_ERR_NONE) {
-          bsRadioState = BS_RADIO_TX_ACTIVE;
-        } else {
-          bsLedOff();
-          Serial.print("WIN_RX TX fail: "); Serial.println(st);
+          && bsRadioState == BS_RADIO_IDLE) {
+        if (posInSlot >= BS_CMD_TX_OFFSET_US && posInSlot < ROCKET_RX_TIMEOUT_US) {
+          // In window — fire now.
+          bsCmdFiredThisSlot = true;
+          Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
+          Serial.print("/"); Serial.print(cmdTx.sends);
+          Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
+          bsLedOn();
+          radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+          dio1Fired = false;
+          int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
+          if (st == RADIOLIB_ERR_NONE) {
+            bsRadioState = BS_RADIO_TX_ACTIVE;
+          } else {
+            bsLedOff();
+            Serial.print("WIN_RX TX fail: "); Serial.println(st);
+          }
+        } else if (posInSlot >= ROCKET_RX_TIMEOUT_US) {
+          // Past the rocket's listen window — skip this slot entirely.
+          bsCmdFiredThisSlot = true;
+          Serial.print("SLOT WIN_RX cmd missed window (pos="); Serial.print(posInSlot); Serial.println("us), deferring");
         }
+        // posInSlot < BS_CMD_TX_OFFSET_US: too early, keep looping until aim point reached.
       }
 
       // Arm early-listen when close to WIN_TELEM. Guard prevents re-arming after timeout.
