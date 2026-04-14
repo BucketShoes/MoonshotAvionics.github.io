@@ -84,7 +84,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define BS_CMD_TX_OFFSET_US   10000UL  // µs after WIN_RX start
 
 // Rocket WIN_RX listen window duration.
-#define ROCKET_RX_TIMEOUT_MS  300UL     // ms
+#define ROCKET_RX_TIMEOUT_MS  100UL     // ms
 #define ROCKET_RX_TIMEOUT_RAW (ROCKET_RX_TIMEOUT_MS * 1000UL / 15.625f)
 
 // ===================== TX SCHEDULING (legacy, used pre-sync) =====================
