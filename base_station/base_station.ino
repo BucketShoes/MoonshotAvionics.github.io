@@ -1100,7 +1100,8 @@ void handleSyncedRadio() {
 
     if (bsRadioState == BS_RADIO_RX_ACTIVE) {
       bsLedOff();
-      bsEarlyRxArmed = false;
+      // Note: do NOT clear bsEarlyRxArmed here. It is reset on slot transition.
+      // Keeping it true after a timeout prevents re-arming within the same slot.
       bsHandleRxDone();
       radio.standby();
       bsRadioState = BS_RADIO_IDLE;
@@ -1183,8 +1184,8 @@ void handleSyncedRadio() {
       }
 
       // Arm early-listen 200ms before this WIN_RX slot ends (= next WIN_TELEM start).
-      // Only do this once per slot (bsEarlyRxArmed guard is inside bsStartListening).
-      if (bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
+      // bsEarlyRxArmed prevents re-arming after a timeout within the same slot.
+      if (!bsEarlyRxArmed && bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
         bsStartListening("early");
       }
       break;
