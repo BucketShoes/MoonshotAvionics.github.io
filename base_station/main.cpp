@@ -90,7 +90,8 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define CMD_SET_SYNC           0x41    // sync command ID (matches rocket config.h)
 // HMAC_KEY_LEN and HMAC_TRUNC_LEN come from secrets.h (already included above)
 
-#define BS_SYNC_BOOT_DELAY_MS  2'000    // send first CMD_SET_SYNC 2s after boot (only if rocket never heard)
+#define BS_SYNC_BOOT_DELAY_MS  2'000    // send first CMD_SET_SYNC 2s after boot
+#define BS_SYNC_LOSS_SLOTS     5       // resync if no telem for this many WIN_TELEM slots
 
 // ===================== ACTIVE RADIO CONFIG =====================
 #define DEFAULT_CHANNEL  65
@@ -156,22 +157,8 @@ void readBaseBattery() {
 Preferences bsNvs;
 uint32_t highestNonce = 0;
 
-volatile bool          dio1Fired   = false;
-volatile unsigned long dio1FiredUs = 0;  // micros() at DIO1 ISR (= RxDone or TxDone time)
-
-// NOTE on HeaderValid timing:
-// RadioLib's default DIO1 mask only routes RxDone/TxDone/Timeout to DIO1 — HeaderValid
-// is enabled in the SX1262 IRQ status register (so getIrqFlags() returns its bit) but
-// does NOT pulse DIO1 separately.  To get a true HeaderValid timestamp we would need to
-// either: (a) change the DIO1 mask to also route RADIOLIB_SX126X_IRQ_HEADER_VALID, which
-// would give a separate DIO1 pulse mid-packet, requiring loop() to re-arm after detecting
-// it; or (b) wire DIO2 as a second IRQ line.  Neither is done yet — the flag-check in
-// bsHandleRxDone below confirms a clean header was received but does not give timing.
-
-void IRAM_ATTR onDio1() {
-  dio1FiredUs = micros();
-  dio1Fired   = true;
-}
+volatile bool dio1Fired = false;
+void IRAM_ATTR onDio1() { dio1Fired = true; }
 
 // ===================== BASE SLOT CLOCK STATE =====================
 
@@ -185,10 +172,9 @@ enum BsRadioState { BS_RADIO_IDLE, BS_RADIO_RX_ACTIVE, BS_RADIO_TX_ACTIVE };
 BsRadioState bsRadioState = BS_RADIO_IDLE;
 
 // Sync auto-send bookkeeping
-unsigned long bsSyncBootMs       = 0;     // millis() at boot (set in setup())
-bool          bsSyncSent         = false;
-bool          bsEverHeardRocket  = false; // set true on first good telem packet received
-unsigned long bsMissedTelemSlots = 0;     // consecutive WIN_TELEM slots with no RX (diagnostic only)
+unsigned long bsSyncBootMs    = 0;   // millis() at boot (set in setup())
+bool          bsSyncSent      = false;
+unsigned long bsMissedTelemSlots = 0; // consecutive WIN_TELEM slots with no RX (for resync)
 
 // Pending sync send (deferred until slot machine can TX it)
 bool          bsSyncPending   = false;
@@ -1021,21 +1007,17 @@ static void doSendSync() {
 void handleSyncSend() {
   unsigned long now = millis();
 
-  // Auto-send 2s after boot, but ONLY if we have never heard from the rocket.
-  // If the rocket is already synced and flying, sending an unsolicited CMD_SET_SYNC
-  // would re-anchor the rocket's slot clock to a new time and scramble the link.
-  // If we've heard from the rocket at least once, our slot clock already matches —
-  // just keep running it.  Manual resync is available via /api/sync.
-  if (!bsSyncSent && !bsEverHeardRocket && (now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS) {
+  // Auto-send 2s after boot
+  if (!bsSyncSent && (now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS) {
     bsSyncPending = true;
   }
 
-  // NOTE: automatic resync on missed telem slots has been removed.
-  // bsMissedTelemSlots is kept as a diagnostic counter only.
-  // Reasons: (1) if the rocket is flying and silent, a resync desynchronises the
-  // base without fixing the rocket; (2) once synced, crystal drift is slow — the
-  // slot window is wide enough to tolerate it for the duration of a flight.
-  // Use /api/sync for deliberate resync when the rocket is on the ground.
+  // Resync if too many missed telem slots
+  if (bsSynced && bsMissedTelemSlots >= BS_SYNC_LOSS_SLOTS) {
+    Serial.println("SYNC: too many missed telem slots, resyncing");
+    bsSyncPending = true;
+    bsMissedTelemSlots = 0;
+  }
 
   if (!bsSyncPending) return;
 
@@ -1055,30 +1037,14 @@ void handleSyncSend() {
 //   WIN_CMD:    base may TX a queued command; rocket is listening.
 //              200ms before WIN_CMD ends, start early-listen for the next WIN_TELEM.
 
-// irqAtDone: IRQ flags read (and cleared) by the caller before invoking this function.
-// Passed in rather than re-reading because clearIrqFlags() has already been called.
-static void bsHandleRxDone(uint32_t irqAtDone) {
+static void bsHandleRxDone() {
   // Called when DIO1 fires while in BS_RADIO_RX_ACTIVE.
-  // dio1FiredUs (captured in ISR) is the RxDone timestamp — used for slot-drift analysis.
   // readData returns RADIOLIB_ERR_NONE on good packet, RADIOLIB_ERR_RX_TIMEOUT on timeout.
-  unsigned long rxDoneUs = dio1FiredUs;
-
-  // HeaderValid flag (bit 4) in irqAtDone confirms preamble+header were decoded cleanly.
-  // DIO1 fires only once per packet (at RxDone) with the default RadioLib IRQ mask.
-  // For true HeaderValid timing (a separate earlier DIO1 pulse) the IRQ mask would need
-  // RADIOLIB_SX126X_IRQ_HEADER_VALID added — see note near onDio1().
-
   size_t len = radio.getPacketLength();
   uint8_t buf[256];
   int st = radio.readData(buf, (len > 0 && len <= sizeof(buf)) ? len : sizeof(buf));
 
   if (st == RADIOLIB_ERR_NONE) {
-    // Log RxDone slot position and whether HeaderValid was set (clean packet indicator).
-    unsigned long rxPos = (rxDoneUs - bsSyncAnchorUs) % SLOT_DURATION_US;
-    Serial.print("RX RxDone pos="); Serial.print(rxPos);
-    Serial.print("us hdrOk="); Serial.print((irqAtDone & RADIOLIB_SX126X_IRQ_HEADER_VALID) ? 1 : 0);
-    Serial.print(" len="); Serial.println(len);
-
     float snrF  = radio.getSNR();
     float rssiF = radio.getRSSI(true);
     int8_t snr4 = (int8_t)(snrF * 4);
@@ -1092,7 +1058,6 @@ static void bsHandleRxDone(uint32_t irqAtDone) {
       latestTelem.len = len; latestTelem.snr4 = snr4;
       latestTelem.timestamp = nowMs; latestTelem.valid = true;
       bsMissedTelemSlots = 0;
-      bsEverHeardRocket  = true;
     }
 
     uint8_t wsBuf[268];
@@ -1146,10 +1111,6 @@ void handleSyncedRadio() {
     radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
 
     unsigned long posInSlot = (now - bsSyncAnchorUs) % SLOT_DURATION_US;
-
-    // If this DIO1 fire is HeaderValid only (no RxDone/TxDone yet), it means the SX1262
-    // detected preamble+header but the packet hasn't finished arriving.  We've already
-    // latched headerValidUs in the ISR.  Log it and wait for the RxDone DIO1.
     Serial.print("DIO1 irq=0x"); Serial.print(irqFlags, HEX);
     Serial.print(" state="); Serial.print((int)bsRadioState);
     Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
@@ -1158,7 +1119,7 @@ void handleSyncedRadio() {
       bsLedOff();
       // Note: do NOT clear bsEarlyRxStarted here. It is reset on slot transition.
       // Keeping it true after a timeout prevents restarting RX within the same slot.
-      bsHandleRxDone(irqFlags);
+      bsHandleRxDone();
       // finishReceive() clears IRQ flags then calls standby() — prevents DIO1 re-firing
       // before the next startReceive (which would also clear flags, but the gap matters).
       radio.finishReceive();
@@ -1355,13 +1316,6 @@ void setup() {
     r->send(resp);
   });
   httpServer.on("/api/status", HTTP_GET, handleApiStatus);
-  // POST /api/sync — force a CMD_SET_SYNC TX on the next idle slot.
-  // Use this to deliberately (re)synchronise a rocket that is on the ground and listening.
-  // Do NOT use while the rocket is armed or in flight — it will reset its slot clock.
-  httpServer.on("/api/sync", HTTP_POST, [](AsyncWebServerRequest *req){
-    triggerSyncSend();
-    req->send(200, "text/plain", "sync queued");
-  });
   httpServer.on("/api/logs", HTTP_GET, handleApiLogs);
   httpServer.on("/api/command", HTTP_POST,
     [](AsyncWebServerRequest *req){ }, NULL, handleApiCommand);

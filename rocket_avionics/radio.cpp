@@ -140,10 +140,8 @@ static void handleRxDone() {
     size_t rxLen = radio.getPacketLength();
     float pktRssi = radio.getRSSI(true);
     float pktSnr  = radio.getSNR();
-    // Log whether HeaderValid was set (confirms preamble+header were detected cleanly).
-    // RADIOLIB_SX126X_IRQ_HEADER_VALID = 0x0010 (bit 4) per SX126x_commands.h.
-    // 0x02 would be IRQ_RX_DONE — that was a wrong constant in the original comment.
-    if (irqAtDone & RADIOLIB_SX126X_IRQ_HEADER_VALID) {
+    // Log whether HeaderValid was set (confirms preamble+header were detected cleanly)
+    if (irqAtDone & 0x02) {  // RADIOLIB_SX126X_IRQ_HEADER_VALID
       unsigned long posInSlot = (micros() - syncAnchorUs) % SLOT_DURATION_US;
       Serial.print("RX: HeaderValid+RxDone pos="); Serial.print(posInSlot); Serial.println("us");
     }
