@@ -83,6 +83,11 @@ void radioRestoreNormalConfig() {
 // ===================== SYNC =====================
 
 void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
+  // Force radio to standby so the slot machine starts from a clean idle state.
+  // (We may be in RADIO_RX_ACTIVE from the bootstrap RX that received this very packet.)
+  radio.standby();
+  dio1Fired          = false;
+  radioState         = RADIO_IDLE;
   syncAnchorUs       = anchorUs;
   syncSlotIndex      = slotIdx;
   lastHandledSlotNum = 0xFFFFFFFF;  // force re-entry on next slot

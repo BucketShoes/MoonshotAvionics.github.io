@@ -170,6 +170,10 @@ unsigned long bsMissedTelemSlots = 0; // consecutive WIN_TELEM slots with no RX 
 // Pending sync send (deferred until slot machine can TX it)
 bool          bsSyncPending   = false;
 
+// Set true when we've called startReceive for the early-listen window,
+// so we don't spam startReceive every loop until DIO1 fires.
+bool          bsEarlyRxArmed  = false;
+
 // LED helpers — base station uses ledcAttach, so must use ledcWrite
 static void bsLedOn()  { ledcWrite(LED_PIN, 255); }
 static void bsLedOff() { ledcWrite(LED_PIN, 0);   }
@@ -518,7 +522,8 @@ static size_t buildSyncCmdPacket(uint8_t* buf) {
 
 void handleLoRaRx() {
   if (!dio1Fired) return;
-  dio1Fired = false;
+  dio1Fired    = false;
+  bsRadioState = BS_RADIO_IDLE;
   uint8_t buf[256];
   size_t len = radio.getPacketLength();
   if (len == 0 || len > sizeof(buf)) { radio.startReceive(); return; }
@@ -973,10 +978,10 @@ static void doSendSync() {
     Serial.print("SYNC TX fail: "); Serial.println(st);
   }
 
-  // Return to RX for the next slot
-  radio.startReceive();
-  bsRadioState = BS_RADIO_RX_ACTIVE;
-  dio1Fired = false;
+  // Leave radio idle — the slot machine will arm RX at the right time.
+  radio.standby();
+  dio1Fired    = false;
+  bsRadioState = BS_RADIO_IDLE;
 }
 
 void handleSyncSend() {
@@ -1006,57 +1011,78 @@ void handleSyncSend() {
 // ===================== SYNCED RADIO SLOT MACHINE =====================
 // Replaces handleLoRaRx() and handleCmdTx() when bsSynced == true.
 // Called from loop() every iteration.
+//
+// Slot layout (base station view):
+//   WIN_TELEM: rocket is TX-ing; base listens. Early-listen started from prior WIN_RX.
+//   WIN_RX:    base may TX a queued command; rocket is listening.
+//              200ms before WIN_RX ends, arm early-listen for the next WIN_TELEM.
+
+static void bsHandleRxDone() {
+  // Called when DIO1 fires while in BS_RADIO_RX_ACTIVE.
+  // readData() returns RADIOLIB_ERR_NONE on packet, RADIOLIB_ERR_RX_TIMEOUT on timeout.
+  size_t len = radio.getPacketLength();  // must be read before readData()
+  uint8_t buf[256];
+  int st = (len > 0 && len <= sizeof(buf)) ? radio.readData(buf, len) : RADIOLIB_ERR_RX_TIMEOUT;
+
+  if (st == RADIOLIB_ERR_NONE) {
+    float snrF  = radio.getSNR();
+    float rssiF = radio.getRSSI(true);
+    int8_t snr4 = (int8_t)(snrF * 4);
+    uint32_t nowMs = millis();
+
+    int32_t recNum = -1;
+    if (logStoreOk) recNum = logStore.writeRecord(buf, len, snr4, nowMs);
+
+    if (len >= 10 && buf[0] == 0xAF) {
+      memcpy(latestTelem.data, buf, len);
+      latestTelem.len = len; latestTelem.snr4 = snr4;
+      latestTelem.timestamp = nowMs; latestTelem.valid = true;
+      bsMissedTelemSlots = 0;
+    }
+
+    uint8_t wsBuf[268];
+    memcpy(wsBuf, &snrF, 4);
+    memcpy(wsBuf + 4, &rssiF, 4);
+    memcpy(wsBuf + 8, &recNum, 4);
+    memcpy(wsBuf + 12, buf, len);
+    pushToAllTransports(wsBuf, 12 + len);
+
+    Serial.print("SLOT RX "); Serial.print(len);
+    Serial.print("B snr:"); Serial.print(snrF, 1);
+    Serial.print(" rssi:"); Serial.print(rssiF, 0);
+    Serial.print(" #"); Serial.println(recNum);
+  } else if (st == RADIOLIB_ERR_RX_TIMEOUT) {
+    Serial.println("SLOT RX timeout");
+  } else {
+    Serial.print("SLOT RX err: "); Serial.println(st);
+  }
+}
+
+static void bsStartEarlyRx() {
+  if (bsEarlyRxArmed) return;  // already armed this window
+  dio1Fired = false;
+  int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
+  if (st == RADIOLIB_ERR_NONE) {
+    bsRadioState  = BS_RADIO_RX_ACTIVE;
+    bsEarlyRxArmed = true;
+    bsLedOn();
+    Serial.println("SLOT: early RX armed");
+  } else {
+    Serial.print("SLOT: startReceive fail: "); Serial.println(st);
+  }
+}
 
 void handleSyncedRadio() {
   unsigned long now = micros();
 
-  // Handle DIO1 completion — fires on RxDone, RxTimeout, or TxDone.
+  // ---- DIO1: handle completion of any in-progress RX or TX ----
   if (dio1Fired) {
     dio1Fired = false;
 
     if (bsRadioState == BS_RADIO_RX_ACTIVE) {
       bsLedOff();
-      // Try to read packet
-      size_t len = radio.getPacketLength();
-      if (len > 0 && len <= 256) {
-        uint8_t buf[256];
-        int st = radio.readData(buf, len);
-        if (st == RADIOLIB_ERR_NONE) {
-          float snrF  = radio.getSNR();
-          float rssiF = radio.getRSSI(true);
-          int8_t snr4 = (int8_t)(snrF * 4);
-          uint32_t nowMs = millis();
-
-          int32_t recNum = -1;
-          if (logStoreOk) recNum = logStore.writeRecord(buf, len, snr4, nowMs);
-
-          if (len >= 10 && buf[0] == 0xAF) {
-            memcpy(latestTelem.data, buf, len);
-            latestTelem.len = len; latestTelem.snr4 = snr4;
-            latestTelem.timestamp = nowMs; latestTelem.valid = true;
-            bsMissedTelemSlots = 0;  // got a telem packet, reset miss counter
-          }
-
-          uint8_t wsBuf[268];
-          memcpy(wsBuf, &snrF, 4);
-          memcpy(wsBuf + 4, &rssiF, 4);
-          memcpy(wsBuf + 8, &recNum, 4);
-          memcpy(wsBuf + 12, buf, len);
-          pushToAllTransports(wsBuf, 12 + len);
-
-          Serial.print("SLOT RX "); Serial.print(len);
-          Serial.print("B snr:"); Serial.print(snrF, 1);
-          Serial.print(" rssi:"); Serial.print(rssiF, 0);
-          Serial.print(" #"); Serial.println(recNum);
-        } else if (st == RADIOLIB_ERR_RX_TIMEOUT) {
-          // Normal timeout — expected when no packet arrived
-        } else {
-          Serial.print("SLOT RX err: "); Serial.println(st);
-        }
-      } else {
-        // Timeout (no packet length): just drop
-      }
-
+      bsEarlyRxArmed = false;
+      bsHandleRxDone();
       radio.standby();
       bsRadioState = BS_RADIO_IDLE;
 
@@ -1066,13 +1092,10 @@ void handleSyncedRadio() {
       bsRadioState = BS_RADIO_IDLE;
       Serial.println("SLOT TxDone");
 
-      // Mark sent command as done
       if (cmdTx.active) {
         cmdTx.sent++;
-        if (logStoreOk && cmdTx.sent >= cmdTx.sends) {
-          logStore.writeRecord(cmdTx.pkt, cmdTx.pktLen, 0x7F, millis());
-        }
         if (cmdTx.sent >= cmdTx.sends) {
+          if (logStoreOk) logStore.writeRecord(cmdTx.pkt, cmdTx.pktLen, 0x7F, millis());
           cmdTx.active = false;
         }
       }
@@ -1080,63 +1103,57 @@ void handleSyncedRadio() {
     return;
   }
 
-  // Compute current slot
-  unsigned long elapsed   = now - bsSyncAnchorUs;
-  uint32_t      slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
-  uint32_t      posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
-  uint8_t       seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
-  WindowMode    win       = SLOT_SEQUENCE[seqIdx];
+  // ---- Compute current slot ----
+  unsigned long elapsed    = now - bsSyncAnchorUs;
+  uint32_t      slotNum    = (uint32_t)(elapsed / SLOT_DURATION_US);
+  uint32_t      posInSlot  = (uint32_t)(elapsed % SLOT_DURATION_US);
+  uint8_t       seqIdx     = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+  WindowMode    win        = SLOT_SEQUENCE[seqIdx];
+  uint32_t      timeToNext = SLOT_DURATION_US - posInSlot;
 
-  // Time until the *next* slot starts (for early-listen logic)
-  uint32_t timeUntilNextSlotUs = SLOT_DURATION_US - posInSlot;
+  // Reset early-RX armed flag on slot transition so it can re-arm next cycle
+  if (slotNum != bsLastHandledSlot && win != WIN_TELEM) {
+    bsEarlyRxArmed = false;
+  }
 
   switch (win) {
 
     case WIN_TELEM: {
-      // Start listening BS_RX_EARLY_US before this slot, or as soon as we enter it.
-      // We detect "approaching slot" by watching the previous slot (WIN_RX).
-      // Here win==WIN_TELEM means we're already IN the telem slot.
+      // Early-listen was started from the previous WIN_RX slot.
+      // If we're here and still IDLE (early-listen wasn't started or timed out
+      // before we got here), start listening now as a fallback.
       if (bsRadioState == BS_RADIO_IDLE) {
-        // We've entered WIN_TELEM but not yet started listening — start now.
-        int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
-        if (st == RADIOLIB_ERR_NONE) {
-          bsRadioState = BS_RADIO_RX_ACTIVE;
-          dio1Fired = false;
-          bsLedOn();
-          if (slotNum != bsLastHandledSlot) {
-            bsLastHandledSlot = slotNum;
-            bsMissedTelemSlots++;  // assume missed until packet arrives
-            Serial.print("SLOT WIN_TELEM RX started, posInSlot="); Serial.println(posInSlot);
-          }
-        } else {
-          Serial.print("WIN_TELEM startReceive fail: "); Serial.println(st);
-        }
+        bsStartEarlyRx();
       }
-      // Also start early for the *next* WIN_TELEM slot if we're in WIN_RX
-      // (handled in WIN_RX case below).
+      // Log slot entry once
+      if (slotNum != bsLastHandledSlot) {
+        bsLastHandledSlot = slotNum;
+        bsMissedTelemSlots++;
+        Serial.print("SLOT WIN_TELEM, posInSlot="); Serial.println(posInSlot);
+      }
       break;
     }
 
     case WIN_RX: {
-      // On first entry: optionally TX a queued command.
+      // On first entry into this WIN_RX slot: handle command TX or idle flash.
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot = slotNum;
+        bsEarlyRxArmed   = false;  // new slot, reset for the early-listen below
 
         if (cmdTx.active && cmdTx.sent < cmdTx.sends && bsRadioState == BS_RADIO_IDLE) {
-          // TX the command
           Serial.print("SLOT WIN_RX: TX cmd "); Serial.print(cmdTx.sent + 1);
           Serial.print("/"); Serial.println(cmdTx.sends);
           bsLedOn();
+          dio1Fired = false;
           int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
           if (st == RADIOLIB_ERR_NONE) {
             bsRadioState = BS_RADIO_TX_ACTIVE;
-            dio1Fired = false;
           } else {
             bsLedOff();
             Serial.print("WIN_RX TX fail: "); Serial.println(st);
           }
         } else {
-          // No command queued — flash LED 5ms as proof-of-sync
+          // No command — 5ms LED flash as proof-of-sync
           bsLedOn();
           delayMicroseconds(5000);
           bsLedOff();
@@ -1144,26 +1161,17 @@ void handleSyncedRadio() {
         }
       }
 
-      // Start early RX for the upcoming WIN_TELEM slot
-      if (bsRadioState == BS_RADIO_IDLE &&
-          timeUntilNextSlotUs <= BS_RX_EARLY_US) {
-        int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
-        if (st == RADIOLIB_ERR_NONE) {
-          bsRadioState = BS_RADIO_RX_ACTIVE;
-          dio1Fired = false;
-          bsLedOn();
-          Serial.print("SLOT WIN_RX: early RX for next telem, timeLeft=");
-          Serial.println(timeUntilNextSlotUs);
-        }
+      // Arm early-listen 200ms before this WIN_RX slot ends (= next WIN_TELEM start)
+      if (bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
+        Serial.print("SLOT WIN_RX: arming early RX, timeToNext="); Serial.println(timeToNext);
+        bsStartEarlyRx();
       }
       break;
     }
 
     case WIN_OFF:
     default:
-      if (bsRadioState == BS_RADIO_RX_ACTIVE || bsRadioState == BS_RADIO_TX_ACTIVE) {
-        // Let current operation finish via DIO1
-      } else {
+      if (bsRadioState != BS_RADIO_TX_ACTIVE && bsRadioState != BS_RADIO_RX_ACTIVE) {
         radio.standby();
         bsRadioState = BS_RADIO_IDLE;
         bsLedOff();
