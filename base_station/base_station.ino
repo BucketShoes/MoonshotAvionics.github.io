@@ -75,10 +75,13 @@ enum WindowMode : uint8_t {
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define SLOT_SEQUENCE_LEN   2
 #define SLOT_DURATION_US    1000000UL   // 1 second per slot
-#define BS_RX_EARLY_US      200000UL    // start RX this far before slot start
 // startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
-// Early-listen window: 400ms = 400000µs / 15.625 = 25600 units.
-#define BS_RX_TIMEOUT_RAW   25600UL
+// Formula: ms * 1000 / 15.625 = ms * 64
+#define BS_RX_EARLY_US      150000UL    // start listening 150ms before WIN_TELEM
+#define BS_RX_TIMEOUT_RAW   19200UL     // 300ms window (300000µs / 15.625)
+// Aim command TX this many µs after WIN_RX slot start.
+// Gives rocket time to arm startReceive. Also the drift calibration reference point.
+#define BS_CMD_TX_OFFSET_US 10000UL     // 10ms after WIN_RX start
 
 #define CMD_SET_SYNC           0x41    // sync command ID (matches rocket config.h)
 // HMAC_KEY_LEN and HMAC_TRUNC_LEN come from secrets.h (already included above)
@@ -171,6 +174,10 @@ unsigned long bsMissedTelemSlots = 0; // consecutive WIN_TELEM slots with no RX 
 
 // Pending sync send (deferred until slot machine can TX it)
 bool          bsSyncPending   = false;
+
+// Set true once a command TX has been fired in the current WIN_RX slot,
+// so we don't fire again in the same slot.
+bool          bsCmdFiredThisSlot = false;
 
 // Set true when we've called startReceive for the early-listen window,
 // so we don't spam startReceive every loop until DIO1 fires.
@@ -388,10 +395,11 @@ struct CmdTxState {
   uint8_t pktLen;
   uint8_t sends;
   uint8_t sent;
-  uint16_t waitMs;
+  uint16_t waitMs;       // max ms to wait for next WIN_RX before sending out of turn
   unsigned long lastSendMs;
+  unsigned long queuedMs; // millis() when command was queued (for wait expiry)
   bool active;
-} cmdTx = {.pktLen=0,.sends=0,.sent=0,.waitMs=0,.lastSendMs=0,.active=false};
+} cmdTx = {.pktLen=0,.sends=0,.sent=0,.waitMs=0,.lastSendMs=0,.queuedMs=0,.active=false};
 
 // Returns true on success. On failure, errorMsg is set.
 bool queueCommandTx(const uint8_t* body, size_t bodyLen, String& errorMsg) {
@@ -428,6 +436,7 @@ bool queueCommandTx(const uint8_t* body, size_t bodyLen, String& errorMsg) {
   cmdTx.sent = 0;
   cmdTx.waitMs = waitMs;
   cmdTx.lastSendMs = 0;
+  cmdTx.queuedMs = millis();
   cmdTx.active = true;
 
   Serial.print("CMD TX queued: "); Serial.print(pktLen);
@@ -1162,26 +1171,12 @@ void handleSyncedRadio() {
     }
 
     case WIN_RX: {
-      // On first entry into this WIN_RX slot: handle command TX or idle flash.
+      // On first entry: reset per-slot flags and do idle flash if no command pending.
       if (slotNum != bsLastHandledSlot) {
-        bsLastHandledSlot = slotNum;
-        bsEarlyRxArmed   = false;  // reset so early-listen can arm later in this slot
-
-        if (cmdTx.active && cmdTx.sent < cmdTx.sends && bsRadioState == BS_RADIO_IDLE) {
-          Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
-          Serial.print("/"); Serial.print(cmdTx.sends);
-          Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
-          bsLedOn();
-          radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
-          dio1Fired = false;
-          int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
-          if (st == RADIOLIB_ERR_NONE) {
-            bsRadioState = BS_RADIO_TX_ACTIVE;
-          } else {
-            bsLedOff();
-            Serial.print("WIN_RX TX fail: "); Serial.println(st);
-          }
-        } else {
+        bsLastHandledSlot    = slotNum;
+        bsEarlyRxArmed       = false;
+        bsCmdFiredThisSlot   = false;
+        if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) {
           // No command — 5ms LED flash as proof-of-sync
           bsLedOn();
           delayMicroseconds(5000);
@@ -1190,8 +1185,27 @@ void handleSyncedRadio() {
         }
       }
 
-      // Arm early-listen 200ms before this WIN_RX slot ends (= next WIN_TELEM start).
-      // bsEarlyRxArmed prevents re-arming after a timeout within the same slot.
+      // Fire command TX once per slot, after BS_CMD_TX_OFFSET_US into the slot.
+      // This gives the rocket time to arm startReceive before the preamble arrives.
+      if (!bsCmdFiredThisSlot && cmdTx.active && cmdTx.sent < cmdTx.sends
+          && bsRadioState == BS_RADIO_IDLE && posInSlot >= BS_CMD_TX_OFFSET_US) {
+        bsCmdFiredThisSlot = true;
+        Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
+        Serial.print("/"); Serial.print(cmdTx.sends);
+        Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
+        bsLedOn();
+        radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+        dio1Fired = false;
+        int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
+        if (st == RADIOLIB_ERR_NONE) {
+          bsRadioState = BS_RADIO_TX_ACTIVE;
+        } else {
+          bsLedOff();
+          Serial.print("WIN_RX TX fail: "); Serial.println(st);
+        }
+      }
+
+      // Arm early-listen when close to WIN_TELEM. Guard prevents re-arming after timeout.
       if (!bsEarlyRxArmed && bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
         bsStartListening("early");
       }
@@ -1364,9 +1378,30 @@ void loop() {
     }
   }
 
-  // Command TX fallback: if not synced, use old immediate-send path
-  if (!bsSynced && !logDl.active) {
-    handleCmdTx();
+  // Command TX: not synced → old immediate path; synced → out-of-turn if wait expired
+  if (!logDl.active) {
+    if (!bsSynced) {
+      handleCmdTx();
+    } else if (bsSynced && cmdTx.active && cmdTx.sent < cmdTx.sends
+               && bsRadioState == BS_RADIO_IDLE
+               && (millis() - cmdTx.queuedMs) > cmdTx.waitMs) {
+      // Wait window expired — send out of turn rather than drop the command.
+      Serial.print("CMD TX out-of-turn (wait expired) pos=");
+      unsigned long posNow = (micros() - bsSyncAnchorUs) % SLOT_DURATION_US;
+      Serial.println(posNow);
+      bsLedOn();
+      radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+      dio1Fired = false;
+      int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
+      if (st == RADIOLIB_ERR_NONE) {
+        bsRadioState = BS_RADIO_TX_ACTIVE;
+        bsCmdFiredThisSlot = true;
+      } else {
+        bsLedOff();
+        Serial.print("Out-of-turn TX fail: "); Serial.println(st);
+      }
+      cmdTx.queuedMs = millis();  // reset so it doesn't fire again next loop
+    }
   }
 
   handleBleLogFetch();

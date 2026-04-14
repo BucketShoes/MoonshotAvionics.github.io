@@ -130,6 +130,9 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
 // ===================== RX PACKET HANDLER =====================
 
 static void handleRxDone() {
+  // Capture IRQ flags before readData clears them — used to log HeaderValid time.
+  uint32_t irqAtDone = radio.getIrqFlags();
+
   uint8_t rxBuf[64];
   int state = radio.readData(rxBuf, sizeof(rxBuf));
 
@@ -137,6 +140,11 @@ static void handleRxDone() {
     size_t rxLen = radio.getPacketLength();
     float pktRssi = radio.getRSSI(true);
     float pktSnr  = radio.getSNR();
+    // Log whether HeaderValid was set (confirms preamble+header were detected cleanly)
+    if (irqAtDone & 0x02) {  // RADIOLIB_SX126X_IRQ_HEADER_VALID
+      unsigned long posInSlot = (micros() - syncAnchorUs) % SLOT_DURATION_US;
+      Serial.print("RX: HeaderValid+RxDone pos="); Serial.print(posInSlot); Serial.println("us");
+    }
     processReceivedPacket(rxBuf, rxLen, (int8_t)pktRssi, (int8_t)pktSnr);
   } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
     Serial.println("RX: CRC fail");
@@ -261,8 +269,8 @@ void nonblockingRadio() {
     case WIN_RX: {
       Serial.print("SLOT WIN_RX RX pos="); Serial.print(posInSlot); Serial.println("us");
       ledOn();
-      // Listen for most of the slot so DIO1 fires cleanly before the next slot transition.
-      // 950ms = 950000us / 15.625 = 60800 raw SX1262 timer units.
+      // 300ms listen window (ROCKET_RX_TIMEOUT_RAW). Base transmits at BS_CMD_TX_OFFSET_US
+      // (10ms) into WIN_RX, well within this window.
       radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
       dio1Fired = false;
       int st = radio.startReceive(ROCKET_RX_TIMEOUT_RAW);

@@ -70,15 +70,20 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define SLOT_SEQUENCE_LEN  2
 #define SLOT_DURATION_US   1000000UL   // 1 second per slot
 
-// Base station listens this many µs before the expected slot start.
-#define BS_RX_EARLY_US     200000UL
 // startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
-// Base early-listen window: 400ms = 400000µs / 15.625 = 25600 units.
-#define BS_RX_TIMEOUT_RAW  25600UL
-// Rocket WIN_RX listen window: 920ms = 920000µs / 15.625 = 58880 units.
-// Fires ~80ms before slot end so the timeout DIO1 clears before WIN_TELEM starts,
-// letting the rocket begin its telemetry TX right at the slot boundary.
-#define ROCKET_RX_TIMEOUT_RAW  58880UL
+// Formula: ms * 1000 / 15.625 = ms * 64
+
+// Base station starts listening this many µs before WIN_TELEM slot start.
+#define BS_RX_EARLY_US        150000UL   // 150ms early-listen
+// Base RX window: 300ms = 300000µs / 15.625 = 19200 units.
+#define BS_RX_TIMEOUT_RAW     19200UL
+// Base TX aim point: transmit this many µs after WIN_RX slot start.
+// Gives rocket time to arm startReceive before preamble arrives.
+// Also used as drift-calibration reference — aim slightly after slot boundary.
+#define BS_CMD_TX_OFFSET_US   10000UL   // 10ms after WIN_RX start
+
+// Rocket WIN_RX listen window: 300ms = 300000µs / 15.625 = 19200 units.
+#define ROCKET_RX_TIMEOUT_RAW 19200UL
 
 // ===================== TX SCHEDULING (legacy, used pre-sync) =====================
 
