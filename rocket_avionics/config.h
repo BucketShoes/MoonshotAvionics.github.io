@@ -75,9 +75,10 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 // startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
 // Base early-listen window: 400ms = 400000µs / 15.625 = 25600 units.
 #define BS_RX_TIMEOUT_RAW  25600UL
-// Rocket WIN_RX listen window: 950ms = 950000µs / 15.625 = 60800 units.
-// Slightly less than the full slot so DIO1 fires before the next slot transition.
-#define ROCKET_RX_TIMEOUT_RAW  60800UL
+// Rocket WIN_RX listen window: 920ms = 920000µs / 15.625 = 58880 units.
+// Fires ~80ms before slot end so the timeout DIO1 clears before WIN_TELEM starts,
+// letting the rocket begin its telemetry TX right at the slot boundary.
+#define ROCKET_RX_TIMEOUT_RAW  58880UL
 
 // ===================== TX SCHEDULING (legacy, used pre-sync) =====================
 
