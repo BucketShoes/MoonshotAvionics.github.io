@@ -1,0 +1,84 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // ── Upload everything ──────────────────────────────────────────────
+        // Compresses web assets, then uploads firmware + LittleFS to base
+        // station and firmware to rocket. Both boards attempted regardless
+        // of whether the other succeeds.
+        {
+            "label": "Upload All",
+            "dependsOn": ["Upload: rocket", "Upload: base_station + LittleFS"],
+            "dependsOrder": "parallel",
+            "group": { "kind": "build", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+
+        // ── Rocket ─────────────────────────────────────────────────────────
+        {
+            "label": "Upload: rocket",
+            "type": "shell",
+            "command": "pio run -e rocket -t upload",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+
+        // ── Base station ───────────────────────────────────────────────────
+        // Compress web assets first, then upload firmware, then LittleFS.
+        {
+            "label": "Upload: base_station + LittleFS",
+            "dependsOn": ["Compress web assets", "Upload: base_station firmware"],
+            "dependsOrder": "sequence",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+        {
+            "label": "Compress web assets",
+            "type": "shell",
+            "command": "powershell -ExecutionPolicy Bypass -File base_station/compress_web.ps1",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Upload: base_station firmware",
+            "dependsOn": "Upload: base_station LittleFS",
+            "dependsOrder": "sequence",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+        {
+            "label": "Upload: base_station LittleFS",
+            "type": "shell",
+            "command": "pio run -e base_station -t upload -t uploadfs",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+
+        // ── Individual tasks (run from Command Palette if needed) ──────────
+        {
+            "label": "Build: rocket",
+            "type": "shell",
+            "command": "pio run -e rocket",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build: base_station",
+            "type": "shell",
+            "command": "pio run -e base_station",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Monitor: rocket (COM13)",
+            "type": "shell",
+            "command": "pio device monitor -e rocket",
+            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Monitor: base_station (COM9)",
+            "type": "shell",
+            "command": "pio device monitor -e base_station",
+            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "problemMatcher": []
+        }
+    ]
+}
