@@ -72,9 +72,12 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 
 // Base station listens this many µs before the expected slot start.
 #define BS_RX_EARLY_US     200000UL
-// Base station RX timeout. startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
-// 400ms = 400000µs / 15.625 = 25600 units.
+// startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
+// Base early-listen window: 400ms = 400000µs / 15.625 = 25600 units.
 #define BS_RX_TIMEOUT_RAW  25600UL
+// Rocket WIN_RX listen window: 950ms = 950000µs / 15.625 = 60800 units.
+// Slightly less than the full slot so DIO1 fires before the next slot transition.
+#define ROCKET_RX_TIMEOUT_RAW  60800UL
 
 // ===================== TX SCHEDULING (legacy, used pre-sync) =====================
 

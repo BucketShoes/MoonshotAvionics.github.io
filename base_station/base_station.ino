@@ -77,7 +77,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define SLOT_DURATION_US    1000000UL   // 1 second per slot
 #define BS_RX_EARLY_US      200000UL    // start RX this far before slot start
 // startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
-// 400ms = 400000µs / 15.625 = 25600 units.
+// Early-listen window: 400ms = 400000µs / 15.625 = 25600 units.
 #define BS_RX_TIMEOUT_RAW   25600UL
 
 #define CMD_SET_SYNC           0x41    // sync command ID (matches rocket config.h)
@@ -174,6 +174,8 @@ bool          bsSyncPending   = false;
 
 // Set true when we've called startReceive for the early-listen window,
 // so we don't spam startReceive every loop until DIO1 fires.
+// Also set true after a telem-fallback listen is started, to prevent
+// re-arming within the same WIN_TELEM slot after a timeout.
 bool          bsEarlyRxArmed  = false;
 
 // LED helpers — base station uses ledcAttach, so must use ledcWrite
@@ -1150,10 +1152,10 @@ void handleSyncedRadio() {
         bsMissedTelemSlots++;
         Serial.print("SLOT WIN_TELEM pos="); Serial.print(posInSlot); Serial.println("us");
       }
-      // Early-listen was started from the previous WIN_RX slot.
-      // If we arrive here and the radio is still idle (early-listen not started,
-      // or it timed out before we got here), start listening now as fallback.
-      if (bsRadioState == BS_RADIO_IDLE) {
+      // Start listening if: radio is idle AND we haven't already listened this slot.
+      // bsEarlyRxArmed is set by bsStartListening() and only cleared on WIN_RX slot entry,
+      // so it remains true for the entire WIN_TELEM slot after any listen attempt.
+      if (!bsEarlyRxArmed && bsRadioState == BS_RADIO_IDLE) {
         bsStartListening("telem-fallback");
       }
       break;

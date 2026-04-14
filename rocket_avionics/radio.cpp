@@ -261,11 +261,11 @@ void nonblockingRadio() {
     case WIN_RX: {
       Serial.print("SLOT WIN_RX RX pos="); Serial.print(posInSlot); Serial.println("us");
       ledOn();
-      // startReceive(timeout_ms) — DIO1 fires on RxDone or RxTimeout.
-      // Clear stale IRQ flags first so the previous slot's flags don't trigger immediately.
+      // Listen for most of the slot so DIO1 fires cleanly before the next slot transition.
+      // 950ms = 950000us / 15.625 = 60800 raw SX1262 timer units.
       radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
       dio1Fired = false;
-      int st = radio.startReceive(BS_RX_TIMEOUT_RAW);
+      int st = radio.startReceive(ROCKET_RX_TIMEOUT_RAW);
       if (st == RADIOLIB_ERR_NONE) {
         radioState = RADIO_RX_ACTIVE;
       } else {
