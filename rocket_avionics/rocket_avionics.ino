@@ -126,6 +126,9 @@ void nonblockingInit() {
       }
       radio.setDio2AsRfSwitch(true);
       radio.setDio1Action(dio1ISR);
+      // startReceive(timeout) auto-enables RxTimeout on DIO1 when timeout != INF.
+      // Clearing IRQ flags now ensures no stale flag from init triggers a spurious DIO1.
+      radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
       initState = INIT_NVS;
       break;
     }

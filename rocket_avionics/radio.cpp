@@ -99,6 +99,8 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
 // ===================== RX / TX =====================
 
 void radioStartRx() {
+  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+  dio1Fired = false;
   int state = radio.startReceive();
   if (state == RADIOLIB_ERR_NONE) {
     radioState = RADIO_RX_ACTIVE;
@@ -107,14 +109,14 @@ void radioStartRx() {
     Serial.println(state);
     radioState = RADIO_IDLE;
   }
-  dio1Fired = false;
 }
 
 bool radioStartTx(const uint8_t* pkt, size_t len) {
+  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+  dio1Fired = false;
   int state = radio.startTransmit(pkt, len);
   if (state == RADIOLIB_ERR_NONE) {
     radioState = RADIO_TX_ACTIVE;
-    dio1Fired  = false;
     return true;
   } else {
     Serial.print("TX start fail: ");
@@ -257,13 +259,15 @@ void nonblockingRadio() {
     }
 
     case WIN_RX: {
-      Serial.println("SLOT WIN_RX: starting receive");
+      Serial.print("SLOT WIN_RX RX pos="); Serial.print(posInSlot); Serial.println("us");
       ledOn();
-      // startReceive with timeout (ms). DIO1 fires on RxDone or RxTimeout.
+      // startReceive(timeout_ms) — DIO1 fires on RxDone or RxTimeout.
+      // Clear stale IRQ flags first so the previous slot's flags don't trigger immediately.
+      radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+      dio1Fired = false;
       int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
       if (st == RADIOLIB_ERR_NONE) {
         radioState = RADIO_RX_ACTIVE;
-        dio1Fired  = false;
       } else {
         ledOff();
         Serial.print("WIN_RX startReceive fail: "); Serial.println(st);

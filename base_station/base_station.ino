@@ -466,6 +466,7 @@ void revertToNormalRadio() {
   radio.setSpreadingFactor(activeSF);
   radio.setBandwidth(activeBwKHz);
   radio.setOutputPower(activePower);
+  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
   radio.startReceive();
   logDl.active = false;
   logDl.enteredMs = 0;
@@ -979,7 +980,9 @@ static void doSendSync() {
   }
 
   // Leave radio idle — the slot machine will arm RX at the right time.
+  // Clear IRQ flags left by the blocking transmit before handing off to slot machine.
   radio.standby();
+  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
   dio1Fired    = false;
   bsRadioState = BS_RADIO_IDLE;
 }
@@ -1019,10 +1022,10 @@ void handleSyncSend() {
 
 static void bsHandleRxDone() {
   // Called when DIO1 fires while in BS_RADIO_RX_ACTIVE.
-  // readData() returns RADIOLIB_ERR_NONE on packet, RADIOLIB_ERR_RX_TIMEOUT on timeout.
-  size_t len = radio.getPacketLength();  // must be read before readData()
+  // readData returns RADIOLIB_ERR_NONE on good packet, RADIOLIB_ERR_RX_TIMEOUT on timeout.
+  size_t len = radio.getPacketLength();
   uint8_t buf[256];
-  int st = (len > 0 && len <= sizeof(buf)) ? radio.readData(buf, len) : RADIOLIB_ERR_RX_TIMEOUT;
+  int st = radio.readData(buf, (len > 0 && len <= sizeof(buf)) ? len : sizeof(buf));
 
   if (st == RADIOLIB_ERR_NONE) {
     float snrF  = radio.getSNR();
@@ -1058,17 +1061,23 @@ static void bsHandleRxDone() {
   }
 }
 
-static void bsStartEarlyRx() {
-  if (bsEarlyRxArmed) return;  // already armed this window
+static void bsStartListening(const char* label) {
+  // Clear any stale IRQ flags on the SX1262 before arming RX,
+  // otherwise a leftover flag fires DIO1 immediately after startReceive.
+  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
   dio1Fired = false;
   int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
   if (st == RADIOLIB_ERR_NONE) {
-    bsRadioState  = BS_RADIO_RX_ACTIVE;
+    bsRadioState   = BS_RADIO_RX_ACTIVE;
     bsEarlyRxArmed = true;
     bsLedOn();
-    Serial.println("SLOT: early RX armed");
+    unsigned long nowUs = micros();
+    unsigned long posInSlot = (nowUs - bsSyncAnchorUs) % SLOT_DURATION_US;
+    Serial.print("RX start ["); Serial.print(label);
+    Serial.print("] pos="); Serial.print(posInSlot); Serial.println("us");
   } else {
-    Serial.print("SLOT: startReceive fail: "); Serial.println(st);
+    Serial.print("RX start fail ["); Serial.print(label);
+    Serial.print("]: "); Serial.println(st);
   }
 }
 
@@ -1078,6 +1087,16 @@ void handleSyncedRadio() {
   // ---- DIO1: handle completion of any in-progress RX or TX ----
   if (dio1Fired) {
     dio1Fired = false;
+
+    // Read and clear IRQ flags so we know what actually fired,
+    // and so the flags don't re-trigger DIO1 on the next startReceive.
+    uint32_t irqFlags = radio.getIrqFlags();
+    radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+
+    unsigned long posInSlot = (now - bsSyncAnchorUs) % SLOT_DURATION_US;
+    Serial.print("DIO1 irq=0x"); Serial.print(irqFlags, HEX);
+    Serial.print(" state="); Serial.print((int)bsRadioState);
+    Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
 
     if (bsRadioState == BS_RADIO_RX_ACTIVE) {
       bsLedOff();
@@ -1119,17 +1138,17 @@ void handleSyncedRadio() {
   switch (win) {
 
     case WIN_TELEM: {
-      // Early-listen was started from the previous WIN_RX slot.
-      // If we're here and still IDLE (early-listen wasn't started or timed out
-      // before we got here), start listening now as a fallback.
-      if (bsRadioState == BS_RADIO_IDLE) {
-        bsStartEarlyRx();
-      }
       // Log slot entry once
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot = slotNum;
         bsMissedTelemSlots++;
-        Serial.print("SLOT WIN_TELEM, posInSlot="); Serial.println(posInSlot);
+        Serial.print("SLOT WIN_TELEM pos="); Serial.print(posInSlot); Serial.println("us");
+      }
+      // Early-listen was started from the previous WIN_RX slot.
+      // If we arrive here and the radio is still idle (early-listen not started,
+      // or it timed out before we got here), start listening now as fallback.
+      if (bsRadioState == BS_RADIO_IDLE) {
+        bsStartListening("telem-fallback");
       }
       break;
     }
@@ -1138,12 +1157,14 @@ void handleSyncedRadio() {
       // On first entry into this WIN_RX slot: handle command TX or idle flash.
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot = slotNum;
-        bsEarlyRxArmed   = false;  // new slot, reset for the early-listen below
+        bsEarlyRxArmed   = false;  // reset so early-listen can arm later in this slot
 
         if (cmdTx.active && cmdTx.sent < cmdTx.sends && bsRadioState == BS_RADIO_IDLE) {
-          Serial.print("SLOT WIN_RX: TX cmd "); Serial.print(cmdTx.sent + 1);
-          Serial.print("/"); Serial.println(cmdTx.sends);
+          Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
+          Serial.print("/"); Serial.print(cmdTx.sends);
+          Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
           bsLedOn();
+          radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
           dio1Fired = false;
           int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
           if (st == RADIOLIB_ERR_NONE) {
@@ -1157,14 +1178,14 @@ void handleSyncedRadio() {
           bsLedOn();
           delayMicroseconds(5000);
           bsLedOff();
-          Serial.print("SLOT WIN_RX: idle, posInSlot="); Serial.println(posInSlot);
+          Serial.print("SLOT WIN_RX idle pos="); Serial.print(posInSlot); Serial.println("us");
         }
       }
 
-      // Arm early-listen 200ms before this WIN_RX slot ends (= next WIN_TELEM start)
+      // Arm early-listen 200ms before this WIN_RX slot ends (= next WIN_TELEM start).
+      // Only do this once per slot (bsEarlyRxArmed guard is inside bsStartListening).
       if (bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
-        Serial.print("SLOT WIN_RX: arming early RX, timeToNext="); Serial.println(timeToNext);
-        bsStartEarlyRx();
+        bsStartListening("early");
       }
       break;
     }
@@ -1278,8 +1299,12 @@ void setup() {
   int st = radio.begin(activeFreqMHz, activeBwKHz, activeSF, LORA_CR, LORA_SYNCWORD, activePower, LORA_PREAMBLE);
   Serial.print("LoRa: "); Serial.println(st == RADIOLIB_ERR_NONE ? "ok" : "FAIL");
   radio.setDio2AsRfSwitch(true);
-  radio.setDio1Action(onDio1);  // fires on both RxDone/RxTimeout and TxDone
+  radio.setDio1Action(onDio1);
+  // startReceive(timeout) automatically enables RxTimeout on DIO1 when timeout != INF.
+  // No manual IRQ mask setup needed — RadioLib handles it in startReceiveCommon().
+  radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
   radio.startReceive();
+  dio1Fired      = false;
   bsRadioState   = BS_RADIO_RX_ACTIVE;
   bsSyncBootMs   = millis();
 
