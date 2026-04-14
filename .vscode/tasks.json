@@ -17,13 +17,13 @@
         {
             "label": "Upload: rocket",
             "type": "shell",
-            "command": "pio run -e rocket -t upload",
+            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e rocket -t upload",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
 
         // ── Base station ───────────────────────────────────────────────────
-        // Compress web assets first, then upload firmware, then LittleFS.
+        // Compress web assets first, then upload firmware + LittleFS.
         {
             "label": "Upload: base_station + LittleFS",
             "dependsOn": ["Compress web assets", "Upload: base_station firmware"],
@@ -39,14 +39,9 @@
         },
         {
             "label": "Upload: base_station firmware",
-            "dependsOn": "Upload: base_station LittleFS",
-            "dependsOrder": "sequence",
-            "presentation": { "reveal": "always", "panel": "shared" }
-        },
-        {
-            "label": "Upload: base_station LittleFS",
             "type": "shell",
-            "command": "pio run -e base_station -t upload -t uploadfs",
+            // Upload firmware, wait 3s for the port to recover, then upload LittleFS.
+            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e base_station -t upload && Start-Sleep 3 && C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e base_station -t uploadfs",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
@@ -55,28 +50,28 @@
         {
             "label": "Build: rocket",
             "type": "shell",
-            "command": "pio run -e rocket",
+            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e rocket",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
         {
             "label": "Build: base_station",
             "type": "shell",
-            "command": "pio run -e base_station",
+            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e base_station",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
         {
             "label": "Monitor: rocket (COM13)",
             "type": "shell",
-            "command": "pio device monitor -e rocket",
+            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe device monitor -e rocket",
             "presentation": { "reveal": "always", "panel": "dedicated" },
             "problemMatcher": []
         },
         {
             "label": "Monitor: base_station (COM9)",
             "type": "shell",
-            "command": "pio device monitor -e base_station",
+            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe device monitor -e base_station",
             "presentation": { "reveal": "always", "panel": "dedicated" },
             "problemMatcher": []
         }
