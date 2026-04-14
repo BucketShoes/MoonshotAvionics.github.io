@@ -17,7 +17,7 @@
         {
             "label": "Upload: rocket",
             "type": "shell",
-            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e rocket -t upload",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe run -e rocket -t upload",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
@@ -41,7 +41,7 @@
             "label": "Upload: base_station firmware",
             "type": "shell",
             // Upload firmware, wait 3s for the port to recover, then upload LittleFS.
-            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e base_station -t upload && Start-Sleep 3 && C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e base_station -t uploadfs",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe run -e base_station -t upload && Start-Sleep 3 && ${userHome}/.platformio/penv/Scripts/pio.exe run -e base_station -t uploadfs",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
@@ -50,28 +50,28 @@
         {
             "label": "Build: rocket",
             "type": "shell",
-            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e rocket",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe run -e rocket",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
         {
             "label": "Build: base_station",
             "type": "shell",
-            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run -e base_station",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe run -e base_station",
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
         {
             "label": "Monitor: rocket (COM13)",
             "type": "shell",
-            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe device monitor -e rocket",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe device monitor -e rocket",
             "presentation": { "reveal": "always", "panel": "dedicated" },
             "problemMatcher": []
         },
         {
             "label": "Monitor: base_station (COM9)",
             "type": "shell",
-            "command": "C:/Users/Kaldosh/.platformio/penv/Scripts/pio.exe device monitor -e base_station",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe device monitor -e base_station",
             "presentation": { "reveal": "always", "panel": "dedicated" },
             "problemMatcher": []
         }
