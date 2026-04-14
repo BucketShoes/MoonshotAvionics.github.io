@@ -1,8 +1,7 @@
-// radio.cpp — LoRa radio hardware, TX/RX state machine, RSSI EMA, TX scheduling.
+// radio.cpp — LoRa radio hardware, TX/RX state machine, slot-based scheduling.
 // See radio.h for the public API.
 
 #include <Arduino.h>
-#include <esp_random.h>
 #include "radio.h"
 #include "telemetry.h"
 #include "commands.h"
@@ -28,19 +27,16 @@ bool        loraReady  = false;
 RadioState  radioState = RADIO_OFF;
 volatile bool dio1Fired = false;
 
-// ===================== TX SCHEDULING =====================
+// ===================== SLOT CLOCK STATE =====================
 
-unsigned long nextTxDueUs    = 0;
-unsigned long keepoutUntilUs = 0;
-bool          preambleActive = false;
-bool          txDeferredThisSlot = false;
+bool          radioSynced        = false;
+unsigned long syncAnchorUs       = 0;
+uint32_t      syncSlotIndex      = 0;
+uint32_t      lastHandledSlotNum = 0xFFFFFFFF;  // invalid sentinel
 
-// ===================== RSSI EMA =====================
+// ===================== RSSI EMA (stub) =====================
 
-double        rssiEma           = -120.0;
-bool          rssiEmaInitialised = false;
-unsigned long lastRssiSampleUs  = 0;
-unsigned long lastRssiHighUs    = 0;
+double rssiEma = 0.0;  // not sampled in slot-sync mode; kept for telemetry page 0x0C
 
 // ===================== STATS =====================
 
@@ -55,14 +51,15 @@ void IRAM_ATTR dio1ISR() {
 
 // ===================== HELPERS =====================
 
-static unsigned long randomKeepout() {
-  return TX_KEEPOUT_MIN_US + (esp_random() % TX_KEEPOUT_RANGE_US);
-}
-
 void updateActiveFreqBw() {
   activeFreqMHz = channelToFreqMHz(activeChannel);
   activeBwKHz = (activeChannel < 64) ? 125.0f : 500.0f;
 }
+
+// LED is configured as PWM via ledcAttach in setup(). Use ledcWrite, not digitalWrite.
+// 255 = 100% duty = full brightness (short flashes, no time for PWM dimming to matter).
+static void ledOn()  { ledcWrite(LED_PIN, 255); }
+static void ledOff() { ledcWrite(LED_PIN, 0);   }
 
 // ===================== RADIO CONFIG =====================
 
@@ -83,16 +80,27 @@ void radioRestoreNormalConfig() {
   radio.setOutputPower(activePower);
 }
 
+// ===================== SYNC =====================
+
+void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
+  syncAnchorUs       = anchorUs;
+  syncSlotIndex      = slotIdx;
+  lastHandledSlotNum = 0xFFFFFFFF;  // force re-entry on next slot
+  radioSynced        = true;
+  Serial.print("SYNC: anchor="); Serial.print(anchorUs);
+  Serial.print("us slot="); Serial.println(slotIdx);
+}
+
 // ===================== RX / TX =====================
 
 void radioStartRx() {
   int state = radio.startReceive();
   if (state == RADIOLIB_ERR_NONE) {
-    radioState = RADIO_RX_LISTENING;
+    radioState = RADIO_RX_ACTIVE;
   } else {
     Serial.print("RX start fail: ");
     Serial.println(state);
-    radioState = RADIO_OFF;
+    radioState = RADIO_IDLE;
   }
   dio1Fired = false;
 }
@@ -101,176 +109,171 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   int state = radio.startTransmit(pkt, len);
   if (state == RADIOLIB_ERR_NONE) {
     radioState = RADIO_TX_ACTIVE;
-    dio1Fired = false;
+    dio1Fired  = false;
     return true;
   } else {
     Serial.print("TX start fail: ");
     Serial.println(state);
-    radioStartRx();
+    radio.standby();
+    radioState = RADIO_IDLE;
     return false;
+  }
+}
+
+// ===================== RX PACKET HANDLER =====================
+
+static void handleRxDone() {
+  uint8_t rxBuf[64];
+  int state = radio.readData(rxBuf, sizeof(rxBuf));
+
+  if (state == RADIOLIB_ERR_NONE) {
+    size_t rxLen = radio.getPacketLength();
+    float pktRssi = radio.getRSSI(true);
+    float pktSnr  = radio.getSNR();
+    processReceivedPacket(rxBuf, rxLen, (int8_t)pktRssi, (int8_t)pktSnr);
+  } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
+    Serial.println("RX: CRC fail");
+    invalidRxCount++;
+  } else if (state == RADIOLIB_ERR_RX_TIMEOUT) {
+    // normal timeout — no log spam
+  } else {
+    Serial.print("RX err: ");
+    Serial.println(state);
+    invalidRxCount++;
   }
 }
 
 // ===================== MAIN RADIO STATE MACHINE =====================
 //
-// TX uses a fixed schedule (t=0, t=interval, t=2*interval, ...).
-// Deferred TX (channel busy) does not drift the schedule.
-// Hard ceiling: TX anyway after TX_MAX_DEFER_US regardless of blockers.
+// Bootstrap (radioSynced == false):
+//   Continuous RX — waiting for CMD_SET_SYNC.
+//   Any received packet is dispatched via processReceivedPacket().
 //
-// Deferral reasons:
-//   1. Preamble detected (matching modulation — no processing gain)
-//   2. Post-TX keepout active
-//   3. High RSSI within last RSSI_HIGH_HOLDOFF_US (non-matching signal — polite defer)
-//
-// RSSI EMA: samples ALL non-preamble time, including high-RSSI from non-matching signals.
+// Synced (radioSynced == true):
+//   Slot clock drives behaviour. One action per slot.
+//   WIN_TELEM: rocket TX telemetry, LED on during TX.
+//   WIN_RX:    rocket RX commands, LED on during RX window.
+//   WIN_OFF:   radio standby, LED off.
 
 void nonblockingRadio() {
   if (!loraReady) return;
 
   unsigned long now = micros();
 
-  switch (radioState) {
-
-    case RADIO_OFF:
-      radioStartRx();
-      break;
-
-    case RADIO_TX_ACTIVE:
-      if (dio1Fired) {
-        dio1Fired = false;
-        keepoutUntilUs = now + randomKeepout();
+  // ---- Bootstrap mode: continuous RX ----
+  if (!radioSynced) {
+    switch (radioState) {
+      case RADIO_OFF:
         radioStartRx();
-      }
-      break;
+        break;
 
-    case RADIO_RX_LISTENING: {
+      case RADIO_IDLE:
+        radioStartRx();
+        break;
 
-      // --- Poll IRQ for preamble detection ---
-      if (!preambleActive) {
-        uint16_t irq = radio.getIrqFlags();
-        if (irq & IRQ_PREAMBLE_DETECTED) {
-          preambleActive = true;
-        }
-      }
-
-      // --- Check for header error (preamble without valid packet) ---
-      if (preambleActive && !dio1Fired) {
-        uint16_t irq = radio.getIrqFlags();
-        if (irq & IRQ_HEADER_ERR) {
-          preambleActive = false;
-          lastRssiSampleUs = now;
-          invalidRxCount++;
-          Serial.println("RX: header error (preamble without valid packet)");
-          radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
+      case RADIO_TX_ACTIVE:
+        if (dio1Fired) {
+          dio1Fired = false;
           radioStartRx();
-          break;
-        }
-      }
-
-      // --- Handle DIO1: full packet received ---
-      if (dio1Fired) {
-        dio1Fired = false;
-
-        uint8_t rxBuf[64];
-        int state = radio.readData(rxBuf, sizeof(rxBuf));
-
-        if (state == RADIOLIB_ERR_NONE) {
-          size_t rxLen = radio.getPacketLength();
-          float pktRssi = radio.getRSSI(true);
-          float pktSnr  = radio.getSNR();
-
-          processReceivedPacket(rxBuf, rxLen, (int8_t)pktRssi, (int8_t)pktSnr);
-        } else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
-          Serial.println("RX: CRC fail");
-          invalidRxCount++;
-        } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
-          Serial.print("RX err: ");
-          Serial.println(state);
-          invalidRxCount++;
-        }
-
-        preambleActive = false;
-        lastRssiSampleUs = now;
-        radioStartRx();
-        break;
-      }
-
-      // --- RSSI sampling and EMA update (excluding preamble windows) ---
-      if (!preambleActive && (now - lastRssiSampleUs) >= RSSI_SAMPLE_INTERVAL_US) {
-        double instantRssi = (double)radio.getRSSI(false);
-
-        if (!rssiEmaInitialised) {
-          rssiEma = instantRssi;
-          rssiEmaInitialised = true;
-        } else {
-          unsigned long dtUs = now - lastRssiSampleUs;
-          double alpha = (double)dtUs / (double)RSSI_EMA_TAU_US;
-          if (alpha > 1.0) alpha = 1.0;
-          rssiEma += alpha * (instantRssi - rssiEma);
-        }
-        lastRssiSampleUs = now;
-        logPages[LOGI_RADIO_HEALTH].freshMask |= 0xFF;
-
-        double busyThreshold = rssiEma + RSSI_BUSY_THRESHOLD_DB;
-        if (instantRssi > busyThreshold) {
-          lastRssiHighUs = now;
-        }
-      }
-
-      // --- TX scheduling (fixed schedule) ---
-      if (!txSendingEnabled || txIntervalUs == 0) {
-        // Keep schedule pointer moving so we don't burst-send when re-enabled
-        if (txIntervalUs > 0 && (long)(now - nextTxDueUs) >= 0) {
-          do {
-            nextTxDueUs += txIntervalUs;
-          } while ((long)(now - nextTxDueUs) >= 0);
-          txDeferredThisSlot = false;
         }
         break;
-      }
 
-      if ((long)(now - nextTxDueUs) >= 0) {
-        unsigned long overdueUs = now - nextTxDueUs;
-
-        bool blocked = false;
-        if (preambleActive)                                blocked = true;
-        if ((long)(keepoutUntilUs - now) > 0)              blocked = true;
-        if ((now - lastRssiHighUs) < RSSI_HIGH_HOLDOFF_US) blocked = true;
-
-        bool forceTx = (overdueUs >= TX_MAX_DEFER_US);
-
-        if (blocked && !forceTx) {
-          if (!txDeferredThisSlot && overdueUs >= TX_LATE_THRESHOLD_US) {
-            delayedTxCount++;
-            txDeferredThisSlot = true;
+      case RADIO_RX_ACTIVE:
+        if (dio1Fired) {
+          dio1Fired = false;
+          handleRxDone();
+          // After CMD_SET_SYNC, radioSynced may now be true.
+          // If still not synced, keep listening.
+          if (!radioSynced) {
+            radioStartRx();
           }
-          break;
         }
+        break;
+    }
+    return;
+  }
 
-        // Advance schedule to next slot
-        do {
-          nextTxDueUs += txIntervalUs;
-        } while ((long)(now - nextTxDueUs) >= 0);
-        txDeferredThisSlot = false;
+  // ---- Synced mode: slot-based scheduling ----
 
-        uint8_t pkt[32];
-        size_t len = buildTelemetryPacket(pkt);
+  unsigned long elapsed    = now - syncAnchorUs;
+  uint32_t      slotNum    = (uint32_t)(elapsed / SLOT_DURATION_US);
+  uint32_t      posInSlot  = (uint32_t)(elapsed % SLOT_DURATION_US);
+  uint8_t       seqIdx     = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+  WindowMode    win        = SLOT_SEQUENCE[seqIdx];
 
-        Serial.print("TX: ");
-        printPacketHex(pkt, len);
-        Serial.print(" (");
-        Serial.print(len);
-        Serial.print("B pg=0x");
-        Serial.print(pkt[10], HEX);
-        if (forceTx) Serial.print(" FORCED");
-        Serial.println(")");
+  // Handle DIO1 completion for any in-progress TX/RX first,
+  // regardless of which slot we're currently in.
+  if (dio1Fired) {
+    dio1Fired = false;
+    if (radioState == RADIO_TX_ACTIVE) {
+      ledOff();
+      radio.standby();
+      radioState = RADIO_IDLE;
+      Serial.print("SLOT TxDone posInSlot="); Serial.println(posInSlot);
+    } else if (radioState == RADIO_RX_ACTIVE) {
+      ledOff();
+      handleRxDone();
+      // handleRxDone may have set radioSynced=true again if re-sync happened
+      radio.standby();
+      radioState = RADIO_IDLE;
+      Serial.print("SLOT RxDone posInSlot="); Serial.println(posInSlot);
+    }
+    return;
+  }
 
-        radioStartTx(pkt, len);
+  // Only act once per slot transition.
+  if (slotNum == lastHandledSlotNum) return;
+
+  // Don't preempt an in-progress operation from a previous slot.
+  if (radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE) return;
+
+  // New slot — act.
+  lastHandledSlotNum = slotNum;
+
+  switch (win) {
+
+    case WIN_TELEM: {
+      if (!txSendingEnabled) {
+        // TX suppressed by user (button toggle). Skip this slot.
+        Serial.println("SLOT WIN_TELEM skipped (TX disabled)");
+        break;
+      }
+      uint8_t pkt[32];
+      size_t len = buildTelemetryPacket(pkt);
+      Serial.print("SLOT WIN_TELEM TX: ");
+      printPacketHex(pkt, len);
+      Serial.print(" ("); Serial.print(len); Serial.print("B pg=0x");
+      Serial.print(pkt[10], HEX); Serial.println(")");
+      ledOn();
+      if (!radioStartTx(pkt, len)) {
+        ledOff();
       }
       break;
     }
 
-    case RADIO_RX_RECEIVING:
+    case WIN_RX: {
+      Serial.println("SLOT WIN_RX: starting receive");
+      ledOn();
+      // startReceive with timeout (ms). DIO1 fires on RxDone or RxTimeout.
+      int st = radio.startReceive((uint32_t)BS_RX_TIMEOUT_MS);
+      if (st == RADIOLIB_ERR_NONE) {
+        radioState = RADIO_RX_ACTIVE;
+        dio1Fired  = false;
+      } else {
+        ledOff();
+        Serial.print("WIN_RX startReceive fail: "); Serial.println(st);
+        radioState = RADIO_IDLE;
+      }
+      break;
+    }
+
+    case WIN_OFF:
+    default:
+      if (radioState != RADIO_IDLE) {
+        radio.standby();
+        radioState = RADIO_IDLE;
+      }
+      ledOff();
       break;
   }
 }

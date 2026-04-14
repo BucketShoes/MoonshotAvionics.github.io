@@ -211,7 +211,6 @@ void nonblockingInit() {
         Serial.print(" vpos=0x"); Serial.println(logStore.getVirtualPos(), HEX);
       }
 
-      nextTxDueUs = micros() + txIntervalUs;
       initState = INIT_SENSORS;
       break;
     }
@@ -360,7 +359,6 @@ void setup() {
   setCpuFrequencyMhz(240);
   Serial.println("Rocket Telemetry - Heltec Wireless Tracker");
   loopStatStartUs = micros();
-  nextTxDueUs = micros() + txIntervalUs;
   initBLE();
 }
 

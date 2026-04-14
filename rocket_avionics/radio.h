@@ -9,20 +9,13 @@
 #include <RadioLib.h>
 #include "config.h"
 
-// ===================== SX1262 IRQ FLAGS =====================
-
-#define IRQ_PREAMBLE_DETECTED  RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED
-#define IRQ_HEADER_VALID       RADIOLIB_SX126X_IRQ_HEADER_VALID
-#define IRQ_HEADER_ERR         RADIOLIB_SX126X_IRQ_HEADER_ERR
-#define IRQ_RX_DONE            RADIOLIB_SX126X_IRQ_RX_DONE
-
 // ===================== RADIO STATE =====================
 
 enum RadioState {
-  RADIO_OFF,           // radio not yet initialised
-  RADIO_RX_LISTENING,  // continuous RX, waiting for packets or TX time
-  RADIO_TX_ACTIVE,     // async TX in progress, waiting for DIO1 TX-done
-  RADIO_RX_RECEIVING   // reserved for future explicit preamble state
+  RADIO_OFF,        // radio not yet initialised
+  RADIO_IDLE,       // standby (WIN_OFF or between operations)
+  RADIO_RX_ACTIVE,  // startReceive() called, waiting for RxDone or timeout via DIO1
+  RADIO_TX_ACTIVE,  // startTransmit() called, waiting for TxDone via DIO1
 };
 
 // ===================== HARDWARE OBJECTS =====================
@@ -46,13 +39,20 @@ extern int8_t  activePower;
 extern float   activeFreqMHz;
 extern float   activeBwKHz;
 
-// ===================== TX SCHEDULING =====================
+// ===================== SLOT CLOCK STATE =====================
+// Managed by radioSetSynced(). Both rocket and base anchor their slot clock
+// to RxDone/TxDone of the CMD_SET_SYNC packet.
 
-extern unsigned long nextTxDueUs;
+extern bool          radioSynced;         // false = bootstrap (continuous RX)
+extern unsigned long syncAnchorUs;        // micros() at the sync event
+extern uint32_t      syncSlotIndex;       // absolute slot index at anchor (= 1 after sync)
+extern uint32_t      lastHandledSlotNum;  // last slot number acted on (prevents re-entry)
 
-// ===================== RSSI EMA =====================
+// ===================== RSSI EMA (stub) =====================
+// No longer sampled continuously; kept so telemetry page 0x0C still compiles.
+// Will read as 0 (no estimate available) until re-implemented.
 
-extern double rssiEma;  // background noise floor estimate
+extern double rssiEma;
 
 // ===================== STATS =====================
 
@@ -77,11 +77,15 @@ void IRAM_ATTR dio1ISR();
 // Recompute activeFreqMHz and activeBwKHz from activeChannel.
 void updateActiveFreqBw();
 
-// Enter continuous RX mode.
+// Enter continuous RX mode (used during bootstrap and log download).
 void radioStartRx();
 
-// Start async TX. Returns true if TX started; falls back to RX on failure.
+// Start async TX. Returns true if TX started; falls back to idle on failure.
 bool radioStartTx(const uint8_t* pkt, size_t len);
+
+// Set the slot clock sync point. Called from CMD_SET_SYNC handler at RxDone.
+// anchorUs = micros() at the sync event, slotIdx = slot index that starts now.
+void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx);
 
 // Reconfigure radio hardware to the download settings specified.
 bool radioSetDownloadConfig(float freqMHz, uint8_t sf, float bwKHz, int8_t power);
@@ -89,7 +93,7 @@ bool radioSetDownloadConfig(float freqMHz, uint8_t sf, float bwKHz, int8_t power
 // Restore radio hardware to normal operating config (activeChannel/SF/power).
 void radioRestoreNormalConfig();
 
-// Main non-blocking radio update: RSSI EMA, preamble detection, TX scheduling, RX handling.
+// Main non-blocking radio update: slot-based TX/RX scheduling (or bootstrap continuous RX).
 void nonblockingRadio();
 
 #endif // RADIO_H

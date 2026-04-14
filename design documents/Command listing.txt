@@ -97,6 +97,26 @@ Effect: target device switches to download radio settings, waits 10ms (both side
       bases/relays immediately send this packet on backhaul verbatim (since it has this relay as the target, others will ignore it, and also the nonce will be invalid next time so even mis-numbered id's will stop and cannot storm)
       Mainly for link testing.
 
+0x41  SET SYNC
+      Params: none
+      Source: base station (self-originates; not sent from JS in normal operation)
+      Effect: establishes the slot clock sync point on the rocket.
+        - The RxDone moment on the rocket (end of this packet's reception) is the sync anchor.
+        - The TxDone moment on the base station (end of transmitting this packet) is the base's anchor.
+        - Both sides set their slot index to 1 (WIN_RX begins now; this packet occupied slot 0 = WIN_TELEM).
+        - After sync, both sides enter the slot-based radio schedule:
+            WIN_TELEM (slot 0): rocket TX telemetry / base RX
+            WIN_RX    (slot 1): base TX commands / rocket RX
+        - Each slot is 1 second. Sequence repeats.
+        - Base station auto-sends this 2s after boot.
+        - Base resends automatically if too many consecutive WIN_TELEM slots arrive with no telemetry (sync loss detection).
+        - JS or BLE can also trigger a resync at any time.
+        - Before sync: rocket runs continuous RX (bootstrap). Base runs continuous RX.
+        - Nonce and HMAC apply as normal (base station signs with shared key, increments nonce in NVS).
+        - Acknowledged by rocket in the normal 0x0A ack page.
+        - Phase 1 (current): single channel only, 1-second slots, 200ms early listen, 400ms timeout.
+        - Future: frequency/SF/timing parameters may be added as params when frequency hopping is implemented.
+
 0xF0  REBOOT
       Params: none
       Effect: software restart.

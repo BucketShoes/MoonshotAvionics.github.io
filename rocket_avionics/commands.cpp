@@ -67,6 +67,7 @@ static int expectedParamLen(uint8_t cmdId) {
     case CMD_OTA_BEGIN:     return 0;
     case CMD_OTA_FINALIZE:  return 36;  // fwSize(4) + fwHmac(32)
     case CMD_OTA_CONFIRM:   return 0;
+    case CMD_SET_SYNC:      return 0;
     case CMD_PING:          return 0;
     case CMD_REBOOT:        return 0;
     case CMD_LOG_ERASE:     return 0;
@@ -416,6 +417,14 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
 
     case CMD_OTA_CONFIRM:
       result = otaHandleConfirm();
+      break;
+
+    case CMD_SET_SYNC:
+      // Anchor the slot clock to this moment (RxDone = now).
+      // slotIndex=1: the sync packet itself occupies slot 0 (WIN_TELEM from base's view),
+      // so WIN_RX starts immediately after.
+      radioSetSynced(micros(), 1);
+      result = CMD_OK;
       break;
 
     case CMD_PING:

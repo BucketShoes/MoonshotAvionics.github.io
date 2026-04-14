@@ -52,7 +52,30 @@
 
 #define CHANNEL_COUNT 72
 
-// ===================== TX SCHEDULING =====================
+// ===================== SLOT TIMING SYNC =====================
+// Slot-based scheduling for time-sync between rocket and base station.
+// Both sides share the same slot sequence and duration.
+// After CMD_SET_SYNC, both boards anchor their slot clock to RxDone/TxDone of that packet.
+
+enum WindowMode : uint8_t {
+  WIN_TELEM  = 0,  // rocket TX telemetry / base RX
+  WIN_RX     = 1,  // base TX commands / rocket RX
+  WIN_OFF    = 2,  // radio off — neither side active
+  WIN_LR     = 3,  // future: long-range low-rate TX
+  WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
+};
+
+// Compile-time slot sequence. Edit here to change the pattern.
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
+#define SLOT_SEQUENCE_LEN  2
+#define SLOT_DURATION_US   1000000UL   // 1 second per slot
+
+// Base station listens this many µs before the expected slot start.
+#define BS_RX_EARLY_US     200000UL
+// Base station RX timeout in ms (how long radio stays awake if no preamble detected).
+#define BS_RX_TIMEOUT_MS   400
+
+// ===================== TX SCHEDULING (legacy, used pre-sync) =====================
 
 // If TX is delayed >5ms past its scheduled time, count it as a delayed TX for stats.
 #define TX_LATE_THRESHOLD_US  5000UL
@@ -104,6 +127,7 @@
 #define CMD_OTA_FINALIZE  0x51  // Verify image HMAC, set boot partition, reboot
 #define CMD_OTA_CONFIRM   0x52  // After reboot: confirm new firmware, cancel rollback
 #define CMD_PING          0x40
+#define CMD_SET_SYNC      0x41  // Set slot-clock sync point (0 params; anchor = RxDone of this packet)
 #define CMD_REBOOT        0xF0
 #define CMD_LOG_ERASE     0xF1
 
