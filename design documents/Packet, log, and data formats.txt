@@ -25,7 +25,7 @@ These define the over-the-air and over-WebSocket message framing. The type byte 
       (N bytes data page payload, size determined by type ID)
       --- total 10 bytes (no page) to ~21 bytes (10-byte page) ---
 
-0x9A  Command packet
+0x9A  Command packet - see command listing for details of each command.
       uint8   type (0x9A)
       uint8   target device ID
       uint8   command ID (see command list)
