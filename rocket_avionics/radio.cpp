@@ -269,8 +269,7 @@ void nonblockingRadio() {
     case WIN_RX: {
       Serial.print("SLOT WIN_RX RX pos="); Serial.print(posInSlot); Serial.println("us");
       ledOn();
-      // 300ms listen window (ROCKET_RX_TIMEOUT_RAW). Base transmits at BS_CMD_TX_OFFSET_US
-      // (10ms) into WIN_RX, well within this window.
+      // short listen window (ROCKET_RX_TIMEOUT_RAW). Base transmits slightly after this window starts in case of drift (although we might not detect it until its had several preamble symbols, so even perfect sync needs some time during listen)
       radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
       dio1Fired = false;
       int st = radio.startReceive(ROCKET_RX_TIMEOUT_RAW);

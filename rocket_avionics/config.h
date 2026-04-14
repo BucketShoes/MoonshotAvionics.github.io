@@ -70,22 +70,9 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define SLOT_SEQUENCE_LEN  2
 #define SLOT_DURATION_US   4000000UL  // µs
 
-// startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
-// Set the _US or _MS constants below; _RAW values are derived automatically.
-
-// Base station starts listening this many µs before WIN_TELEM slot start.
-#define BS_RX_EARLY_US        50000UL   // µs before slot boundary
-// Base RX window duration.
-#define BS_RX_TIMEOUT_MS      100UL      // ms
-#define BS_RX_TIMEOUT_RAW     (BS_RX_TIMEOUT_MS * 1000UL / 15.625f)
-// Base TX aim point: transmit this many µs after WIN_RX slot start.
-// Gives rocket time to arm startReceive before preamble arrives.
-// Also the drift calibration reference — aim slightly after slot boundary.
-#define BS_CMD_TX_OFFSET_US   10000UL  // µs after WIN_RX start
-
 // Rocket WIN_RX listen window duration.
-#define ROCKET_RX_TIMEOUT_MS  100UL     // ms
-#define ROCKET_RX_TIMEOUT_RAW (ROCKET_RX_TIMEOUT_MS * 1000UL / 15.625f)
+#define ROCKET_RX_TIMEOUT_US  50'000UL     // us
+#define ROCKET_RX_TIMEOUT_RAW (ROCKET_RX_TIMEOUT_US / 15.625f)
 
 // ===================== TX SCHEDULING (legacy, used pre-sync) =====================
 

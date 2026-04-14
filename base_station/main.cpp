@@ -79,12 +79,13 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 // startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
 // Set the _US or _MS constants; _RAW values are derived automatically.
 // Keep in sync with rocket_avionics/config.h.
-#define BS_RX_EARLY_US        25'000UL   // µs before slot boundary
-#define BS_RX_TIMEOUT_MS      50UL      // ms
-#define BS_RX_TIMEOUT_RAW     (BS_RX_TIMEOUT_MS * 1000UL / 15.625f)
+#define BS_RX_EARLY_US        10'000UL   // µs before slot boundary
+#define BS_RX_TIMEOUT_US      40'000UL      // ms
+#define BS_RX_TIMEOUT_RAW     (BS_RX_TIMEOUT_US / 15.625f)
 // Aim command TX this many µs after WIN_RX slot start.
 // Gives rocket time to arm startReceive. Also the drift calibration reference point.
 #define BS_CMD_TX_OFFSET_US   5'000UL  // µs after WIN_RX start
+
 
 #define CMD_SET_SYNC           0x41    // sync command ID (matches rocket config.h)
 // HMAC_KEY_LEN and HMAC_TRUNC_LEN come from secrets.h (already included above)
