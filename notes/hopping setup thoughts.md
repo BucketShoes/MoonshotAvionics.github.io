@@ -86,7 +86,7 @@ for nonblocking, index++ every time... then tx if its a value we want to send. i
 
 
 
-the "after landing" mode might be reconsidered for any idle - may add a phase for pad_ready, between idle vs armed (pad ready does calibration, etc, but not pyros, etc)
+the "after landing" mode might be reconsidered for any idle - may add a phase for pre-arming, between idle vs ready (do calibration, etc, but not arm pyros, etc; better for if we have long running procresses, like erase a block of flash before moving to armed flag)
 
 
 scanning for lost timing rocket - the find me packets have a long preamble; so the base station/relays have time to check many channels, e.g. index 0/16/32/48, spending 2 preambol symbol times per frequency, gives enough time to catch anyone transmitting a preamble on any of those - constantly cycling between those 4 channels will mean after only 15 cycles, it should catch one - hearing a preamble, and the 4-byte device id is enough to be able to follow the index to the next index, and just keep listening at the right time (it might not tx in every window, but it does tx, we know where it will do it) 
@@ -209,7 +209,7 @@ radio search packets and max range packets are sent occasionally.
 
 - option for an overall fast mode lowers all packets to sf5 for testing. except the max range, always on by default after each boot at sf11 max power every 5 minutes (physical button to turn it to sf5/low power, but reset to full after boot)
 
--now that ble is working direct to rocket, there's less chance of being unable to fix it if we do lose sync or mismatch our hop planning or change command channels, etc, we can use ble to recover.  add a disarm fallback - if an armed rocket is pointed down while in pad ready initial phase (todo: rename "armed" phase to "pad_ready" - its confusing vs the "armed" flag). we do support multiple orientations, but we lock it in when arming. (this only applies during pad ready - any other phase, including landed, stays as-is). we will likely need to disable ble during flight - so this disarm fallback allows manual override (and if it is upside down, we dont want it to launch anyway). need buzzer to indicate status.. turn upside down to disarm and re-enable ble to fix it if lost connection.
+-now that ble is working direct to rocket, there's less chance of being unable to fix it if we do lose sync or mismatch our hop planning or change command channels, etc, we can use ble to recover.  add a disarm fallback - if an armed rocket is pointed down while in pad_ready phase. we do support multiple orientations, but we lock it in when arming. (this only applies during pad_ready - any other phase, including landed, stays as-is). we will likely need to disable ble during flight - so this disarm fallback allows manual override (and if it is upside down, we dont want it to launch anyway). need buzzer to indicate status.. turn upside down to disarm and re-enable ble to fix it if lost connection.
 
 
 ## radio/packet types:
