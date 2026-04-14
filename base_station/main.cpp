@@ -186,8 +186,8 @@ bool          bsCmdSentThisSlot = false;
 // Set true when we've called startReceive for the early-listen window,
 // so we don't spam startReceive every loop until DIO1 fires.
 // Also set true after a telem-fallback listen is started, to prevent
-// re-arming within the same WIN_TELEM slot after a timeout.
-bool          bsEarlyRxArmed  = false;
+// restarting RX within the same WIN_TELEM slot after a timeout.
+bool          bsEarlyRxStarted  = false;
 
 // LED helpers — base station uses ledcAttach, so must use ledcWrite
 static void bsLedOn()  { ledcWrite(LED_PIN, 255); }
@@ -1086,7 +1086,7 @@ static void bsStartListening(const char* label) {
   int st = radio.startReceive(BS_RX_TIMEOUT_RAW);
   if (st == RADIOLIB_ERR_NONE) {
     bsRadioState   = BS_RADIO_RX_ACTIVE;
-    bsEarlyRxArmed = true;
+    bsEarlyRxStarted = true;
     bsLedOn();
     unsigned long nowUs = micros();
     unsigned long posInSlot = (nowUs - bsSyncAnchorUs) % SLOT_DURATION_US;
@@ -1117,8 +1117,8 @@ void handleSyncedRadio() {
 
     if (bsRadioState == BS_RADIO_RX_ACTIVE) {
       bsLedOff();
-      // Note: do NOT clear bsEarlyRxArmed here. It is reset on slot transition.
-      // Keeping it true after a timeout prevents re-arming within the same slot.
+      // Note: do NOT clear bsEarlyRxStarted here. It is reset on slot transition.
+      // Keeping it true after a timeout prevents restarting RX within the same slot.
       bsHandleRxDone();
       // finishReceive() clears IRQ flags then calls standby() — prevents DIO1 re-firing
       // before the next startReceive (which would also clear flags, but the gap matters).
@@ -1153,7 +1153,7 @@ void handleSyncedRadio() {
 
   // Reset early-RX armed flag on slot transition so it can re-arm next cycle
   if (slotNum != bsLastHandledSlot && win != WIN_TELEM) {
-    bsEarlyRxArmed = false;
+    bsEarlyRxStarted = false;
   }
 
   switch (win) {
@@ -1166,9 +1166,9 @@ void handleSyncedRadio() {
         Serial.print("SLOT WIN_TELEM pos="); Serial.print(posInSlot); Serial.println("us");
       }
       // Start listening if: radio is idle AND we haven't already listened this slot.
-      // bsEarlyRxArmed is set by bsStartListening() and only cleared on WIN_RX slot entry,
+      // bsEarlyRxStarted is set by bsStartListening() and only cleared on WIN_RX slot entry,
       // so it remains true for the entire WIN_TELEM slot after any listen attempt.
-      if (!bsEarlyRxArmed && bsRadioState == BS_RADIO_IDLE) {
+      if (!bsEarlyRxStarted && bsRadioState == BS_RADIO_IDLE) {
         bsStartListening("telem-fallback");
       }
       break;
@@ -1178,7 +1178,7 @@ void handleSyncedRadio() {
       // On first entry: reset per-slot flags and do idle flash if no command pending.
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot    = slotNum;
-        bsEarlyRxArmed       = false;
+        bsEarlyRxStarted       = false;
         bsCmdSentThisSlot   = false;
         if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) {
           // No command — 5ms LED flash as proof-of-sync
@@ -1216,7 +1216,7 @@ void handleSyncedRadio() {
       }
 
       // Arm early-listen when close to WIN_TELEM. Guard prevents re-arming after timeout.
-      if (!bsEarlyRxArmed && bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
+      if (!bsEarlyRxStarted && bsRadioState == BS_RADIO_IDLE && timeToNext <= BS_RX_EARLY_US) {
         bsStartListening("early");
       }
       break;
