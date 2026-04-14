@@ -178,9 +178,9 @@ unsigned long bsMissedTelemSlots = 0; // consecutive WIN_TELEM slots with no RX 
 // Pending sync send (deferred until slot machine can TX it)
 bool          bsSyncPending   = false;
 
-// Set true once a command TX has been fired in the current WIN_RX slot,
-// so we don't fire again in the same slot.
-bool          bsCmdFiredThisSlot = false;
+// Set true once the command TX window has been attempted in the current WIN_RX slot,
+// so we don't attempt again in the same slot.
+bool          bsCmdSentThisSlot = false;
 
 // Set true when we've called startReceive for the early-listen window,
 // so we don't spam startReceive every loop until DIO1 fires.
@@ -1178,7 +1178,7 @@ void handleSyncedRadio() {
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot    = slotNum;
         bsEarlyRxArmed       = false;
-        bsCmdFiredThisSlot   = false;
+        bsCmdSentThisSlot   = false;
         if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) {
           // No command — 5ms LED flash as proof-of-sync
           bsLedOn();
@@ -1192,9 +1192,9 @@ void handleSyncedRadio() {
       // Exactly one attempt per slot: mark fired (hit or miss) the moment the offset is
       // crossed. If the radio isn't idle at that instant, the slot is skipped entirely —
       // no retrying later in the same slot when the rocket may no longer be listening.
-      if (!bsCmdFiredThisSlot && cmdTx.active && cmdTx.sent < cmdTx.sends
+      if (!bsCmdSentThisSlot && cmdTx.active && cmdTx.sent < cmdTx.sends
           && posInSlot >= BS_CMD_TX_OFFSET_US) {
-        bsCmdFiredThisSlot = true;
+        bsCmdSentThisSlot = true;
         if (bsRadioState == BS_RADIO_IDLE) {
           Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
           Serial.print("/"); Serial.print(cmdTx.sends);
@@ -1404,7 +1404,7 @@ void loop() {
       int st = radio.startTransmit(cmdTx.pkt, cmdTx.pktLen);
       if (st == RADIOLIB_ERR_NONE) {
         bsRadioState = BS_RADIO_TX_ACTIVE;
-        bsCmdFiredThisSlot = true;
+        bsCmdSentThisSlot = true;
       } else {
         bsLedOff();
         Serial.print("Out-of-turn TX fail: "); Serial.println(st);

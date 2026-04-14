@@ -2,9 +2,9 @@ Voice callouts have 2 modes, the normal real mode, with real info, and "Moonshot
 The moonshot voice mode only applies to the voice callouts, not any graphs or logs, etc.
 
 The voice callouts should be:
-"Armed" (or "FTS is armed for launch" in moonshot mode) - the first time either the armed bit is true or the flight phase is armed
+"Armed" (or "FTS is armed for launch" in moonshot mode) - the first time either the armed bit is true or the flight phase is pad_ready
 
-"Ready to launch" (or "Moonshot is ready to launch" in moonshot mode) - every time a telemetry packet has flight phase=armed but only if this callout hasn't been said in the last 30 seconds
+"Ready to launch" (or "Moonshot is ready to launch" in moonshot mode) - every time a telemetry packet has flight phase=pad_ready but only if this callout hasn't been said in the last 30 seconds
 
 "Boost" (or "Max Q" in moonshot mode) - the first time flight phase is boost.
 

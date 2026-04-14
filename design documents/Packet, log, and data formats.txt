@@ -9,7 +9,7 @@ These define the over-the-air and over-WebSocket message framing. The type byte 
       uint16  GPS lon fractional (0.00002° steps, >50000 for error: GPS_FRAC_NO_FIX=65533, GPS_FRAC_INITIALISING=65534, GPS_FRAC_NOT_POWERED=65535)
       int16   Fusion altitude, meters MSL (-32768 = invalid)
       uint16  state flags
-              [3:0]   flight phase (0=idle, 1=armed, 2=boost,
+              [3:0]   flight phase (0=idle, 1=pad_ready, 2=boost,
                       3=coast, 4=apogee, 5=drogue, 
                       6=main_deploy, 7=descent, 8=landed,
                       15=error)

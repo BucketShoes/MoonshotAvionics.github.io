@@ -246,7 +246,7 @@ static void enterPhase(FlightPhase newPhase, unsigned long nowUs) {
 
   Serial.print("FLIGHT: ");
   static const char* phaseNames[] = {
-    "IDLE", "ARMED", "BOOST", "COAST", "APOGEE",
+    "IDLE", "PAD_READY", "BOOST", "COAST", "APOGEE",
     "DROGUE", "MAIN_DEPLOY", "DESCENT", "LANDED"
   };
   if (oldPhase <= 8) { Serial.print(phaseNames[oldPhase]); }
@@ -256,7 +256,7 @@ static void enterPhase(FlightPhase newPhase, unsigned long nowUs) {
   else { Serial.println(newPhase); }
 }
 
-// --- Launch detection (ARMED -> BOOST) ---
+// --- Launch detection (PAD_READY -> BOOST) ---
 // Two paths:
 //   A: Over coast altitude AGL for 4 samples / 250ms -> immediate launch
 //   B+C: High accel (5 samples/200ms) AND high altitude (4 samples/250ms) within 5s window
@@ -334,7 +334,7 @@ static void checkLaunchDetect(unsigned long nowUs) {
   }
 }
 
-// --- Coast detection (BOOST -> COAST, or ARMED -> COAST) ---
+// --- Coast detection (BOOST -> COAST, or PAD_READY -> COAST) ---
 // Brief: (in boost OR at coast altitude) AND low accel (<2000mg for 5 samples/500ms)
 
 static void checkCoastDetect(unsigned long nowUs) {
@@ -547,11 +547,11 @@ void nonblockingFlight() {
       // Nothing to do — waiting for ARM command
       break;
 
-    case PHASE_ARMED:
+    case PHASE_PAD_READY:
       // Check for launch detection
       checkLaunchDetect(nowUs);
       // Also check for direct-to-coast (skipping boost)
-      if (flightState.phase == PHASE_ARMED) {
+      if (flightState.phase == PHASE_PAD_READY) {
         checkCoastDetect(nowUs);
       }
       break;
@@ -646,7 +646,7 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   // --- ARMING ---
   flightState.config = cfg;
   flightState.armed = true;
-  flightState.phase = PHASE_ARMED;
+  flightState.phase = PHASE_PAD_READY;
   flightState.armFlags = forceArm ? 0x01 : 0x00;
 
   // Lock orientation based on current accel X axis
@@ -689,7 +689,7 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   flightState.landBaro.reset();
   flightState.landAccelEmaValid = false;
 
-  Serial.print("ARMED: boostG="); Serial.print(cfg.boostAccelMg);
+  Serial.print("PAD READY: boostG="); Serial.print(cfg.boostAccelMg);
   Serial.print(" boostAlt="); Serial.print(cfg.boostAltM);
   Serial.print(" coastAlt="); Serial.print(cfg.coastAltM);
   Serial.print(" mainAlt="); Serial.print(cfg.mainDeployAltM);

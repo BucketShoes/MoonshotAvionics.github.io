@@ -20,16 +20,16 @@ arming requires being stable for a duration.
 
 Flight phases after arming:
 
-launch detect (armed to boost) - two detect modes - either
+launch detect (pad_ready to boost) - two detect modes - either
 over coast altitude agl for alt-only trigger(A); or
 over boost acceleration trigger(B) plus over boost altitude agl trigger(C)
 accel trigger (B) needs at least 5 samples over at least 200ms duration with all samples over total g (pythagoras).
 alt triggers (A and C) need at least 4 samples over at least 250ms duration with all samples over thresholds.
 if A is triggered, launch detect immediately. if B or C is triggered, track time of last B and time of last C. if B is hit while C is within 10 sec, or C is hit while B is within 10 sec, then launch detect.
 
-coast (armed to coast, or boost to coast)- coast detection if
+coast (pad_ready to coast, or boost to coast)- coast detection if
 (in boost phase OR over coast altitude agl for at least 4 samples over at least 250ms) AND (acceleration below 2000mg Pythagoras for at least 5 samples over at least 500ms duration) - i.e. being in boost detected phase can substitute for being at coast altitude, but either way, need low accel. coast doesnt require reaching coast altitude - but being at coast altitude implies it has definitely reached coast phase regardless of earlier steps.
-coast can be reached from boost or directly from armed phase (skipping boost phase)
+coast can be reached from boost or directly from pad_ready phase (skipping boost phase)
 
 apogee phase - skipped. reserved. no longer used.
 
@@ -127,7 +127,7 @@ Let me compare your original spec against what we actually built.Your original s
 - Launch detect trigger A (coast alt, 4 samples/250ms, immediate)
 - Launch detect triggers B (5 samples/200ms accel) and C (4 samples/250ms alt)
 - Coast detection logic (in boost OR at coast alt, AND low accel <2000mg for 5 samples/500ms)
-- Coast reachable from armed directly (skipping boost)
+- Coast reachable from pad_ready directly (skipping boost)
 - Apogee = fast EMA decreased from previous value (no duration requirement)
 - Main deploy: 3 seconds after apogee AND below main deploy alt AGL
 - Landing: 120s timeout OR (10s after main deploy AND per-axis accel within ±300mg of 1s EMA for 10 samples/5s, gyro <50°/s for 5s, baro within 5m of fast EMA for 4 samples/5s)

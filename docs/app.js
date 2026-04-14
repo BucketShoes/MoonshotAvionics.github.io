@@ -156,7 +156,7 @@
   var fetchSpeedRecs = 0, fetchSpeedBytes = 0, fetchSpeedStartMs = 0;
   var fetchAutoNav = true; // auto-navigate to latest session after each batch
   var dlSpeedRecs = 0, dlSpeedBytes = 0, dlSpeedStartMs = 0;
-  var PHASES = ['idle','armed','boost','coast','apogee','drogue','main_deploy','descent','landed','9','10','11','12','13','14','error'];
+  var PHASES = ['idle','pad_ready','boost','coast','apogee','drogue','main_deploy','descent','landed','9','10','11','12','13','14','error'];
 
   function pad2(n){return n<10?'0'+n:''+n}
   function pad3(n){return n<10?'00'+n:n<100?'0'+n:''+n}
@@ -1242,14 +1242,14 @@ function initCharts() {
   function voiceOnTelem(p, ph, arm, fusAltM) {
     var moon = (voiceMode === 'moonshot');
 
-    // "Armed" — first time armed flag or phase=armed(1)
+    // "Armed" — first time armed flag is set or phase=pad_ready(1)
     if ((arm || ph === 1) && !vSaidArmed) {
       vSaidArmed = true;
       vSaidSafe = false; // now we need to watch for disarm
       voiceSay(moon ? 'Flight Termination System is armed' : 'Armed');
     }
 
-    // "Ready to launch" — phase=armed, every 30s
+    // "Ready to launch" — phase=pad_ready, every 30s
     if (ph === 1 && vSaidArmed) {
       var now = Date.now();
       if (now - vSaidReadyLast > 30000) {

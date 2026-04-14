@@ -15,7 +15,7 @@ Rocket commands (only meaningful to rockets, bases/relays just log, no implement
 ```
 0x01  ARM
       Params: none
-      Effect: transition to armed state, activate buzzer, set log protection point at 60 seconds before now (i.e. logs from then onwards wont overwrite until disarm and then re-arm at a different point. log ring buffer just stops logging when full)
+      Effect: set armed flag, transition to pad_ready phase, activate buzzer, set log protection point at 60 seconds before now (i.e. logs from then onwards wont overwrite until disarm and then re-arm at a different point. log ring buffer just stops logging when full)
 
 0x02  DISARM
       Params: none

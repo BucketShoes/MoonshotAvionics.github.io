@@ -53,7 +53,7 @@
 // These values are used in the telemetry state flags [3:0]
 enum FlightPhase : uint8_t {
   PHASE_IDLE        = 0,
-  PHASE_ARMED       = 1,
+  PHASE_PAD_READY   = 1,
   PHASE_BOOST       = 2,
   PHASE_COAST       = 3,
   PHASE_APOGEE      = 4,   // reserved/skipped — transitions straight to drogue

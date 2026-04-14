@@ -12,7 +12,7 @@
   .dg{background:#0f0} .dr{background:#f44} .dy{background:#ff0} .dd{background:#555}
   .sl{color:#888;font-size:11px} .sv{color:#eee;font-size:12px}
   .pb{font-size:13px;padding:2px 8px;border-radius:3px;background:#333;margin-left:auto}
-  .p-idle{color:#888} .p-armed{color:#ff0;background:#440!important} .p-boost{color:#f80;background:#420!important}
+  .p-idle{color:#888} .p-pad_ready{color:#ff0;background:#440!important} .p-boost{color:#f80;background:#420!important}
   .p-coast{color:#08f} .p-apogee{color:#f0f} .p-drogue{color:#ff0} .p-main_deploy{color:#0f0}
   .p-descent{color:#0ff} .p-landed{color:#0f0;background:#030!important} .p-error{color:#f00;background:#400!important}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:3px;margin-bottom:8px}
