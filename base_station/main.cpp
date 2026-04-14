@@ -1183,7 +1183,7 @@ void handleSyncedRadio() {
         if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) {
           // No command — 5ms LED flash as proof-of-sync
           bsLedOn();
-          delayMicroseconds(5000); //TODO: fix blocking
+          delayMicroseconds(1000); //TODO: fix blocking
           bsLedOff();
           Serial.print("SLOT WIN_CMD idle pos="); Serial.print(posInSlot); Serial.println("us");
         }
