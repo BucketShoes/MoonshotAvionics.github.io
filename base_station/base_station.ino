@@ -1103,12 +1103,15 @@ void handleSyncedRadio() {
       // Note: do NOT clear bsEarlyRxArmed here. It is reset on slot transition.
       // Keeping it true after a timeout prevents re-arming within the same slot.
       bsHandleRxDone();
-      radio.standby();
+      // finishReceive() clears IRQ flags then calls standby() — prevents DIO1 re-firing
+      // before the next startReceive (which would also clear flags, but the gap matters).
+      radio.finishReceive();
       bsRadioState = BS_RADIO_IDLE;
 
     } else if (bsRadioState == BS_RADIO_TX_ACTIVE) {
       bsLedOff();
-      radio.standby();
+      // finishTransmit() clears IRQ flags then calls standby() — same reason.
+      radio.finishTransmit();
       bsRadioState = BS_RADIO_IDLE;
       Serial.println("SLOT TxDone");
 

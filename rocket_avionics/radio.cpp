@@ -214,14 +214,14 @@ void nonblockingRadio() {
     dio1Fired = false;
     if (radioState == RADIO_TX_ACTIVE) {
       ledOff();
-      radio.standby();
+      radio.finishTransmit();  // clears IRQ flags then standby — prevents DIO1 re-firing
       radioState = RADIO_IDLE;
       Serial.print("SLOT TxDone posInSlot="); Serial.println(posInSlot);
     } else if (radioState == RADIO_RX_ACTIVE) {
       ledOff();
       handleRxDone();
       // handleRxDone may have set radioSynced=true again if re-sync happened
-      radio.standby();
+      radio.finishReceive();  // clears IRQ flags then standby — prevents DIO1 re-firing
       radioState = RADIO_IDLE;
       Serial.print("SLOT RxDone posInSlot="); Serial.println(posInSlot);
     }
