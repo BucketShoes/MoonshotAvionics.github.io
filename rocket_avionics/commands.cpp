@@ -422,7 +422,7 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
     case CMD_SET_SYNC:
       // Anchor the slot clock to this moment (RxDone = now).
       // slotIndex=1: the sync packet itself occupies slot 0 (WIN_TELEM from base's view),
-      // so WIN_RX starts immediately after.
+      // so WIN_CMD starts immediately after.
       radioSetSynced(micros(), 1);
       result = CMD_OK;
       break;

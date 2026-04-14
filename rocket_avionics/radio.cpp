@@ -167,7 +167,7 @@ static void handleRxDone() {
 // Synced (radioSynced == true):
 //   Slot clock drives behaviour. One action per slot.
 //   WIN_TELEM: rocket TX telemetry, LED on during TX.
-//   WIN_RX:    rocket RX commands, LED on during RX window.
+//   WIN_CMD:    rocket RX commands, LED on during RX window.
 //   WIN_OFF:   radio standby, LED off.
 
 void nonblockingRadio() {
@@ -266,8 +266,8 @@ void nonblockingRadio() {
       break;
     }
 
-    case WIN_RX: {
-      Serial.print("SLOT WIN_RX RX pos="); Serial.print(posInSlot); Serial.println("us");
+    case WIN_CMD: {
+      Serial.print("SLOT WIN_CMD RX pos="); Serial.print(posInSlot); Serial.println("us");
       ledOn();
       // short listen window (ROCKET_RX_TIMEOUT_RAW). Base transmits slightly after this window starts in case of drift (although we might not detect it until its had several preamble symbols, so even perfect sync needs some time during listen)
       radio.clearIrqFlags(RADIOLIB_SX126X_IRQ_ALL);
@@ -277,7 +277,7 @@ void nonblockingRadio() {
         radioState = RADIO_RX_ACTIVE;
       } else {
         ledOff();
-        Serial.print("WIN_RX startReceive fail: "); Serial.println(st);
+        Serial.print("WIN_CMD startReceive fail: "); Serial.println(st);
         radioState = RADIO_IDLE;
       }
       break;

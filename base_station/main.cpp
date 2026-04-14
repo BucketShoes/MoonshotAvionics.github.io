@@ -67,13 +67,13 @@ static float channelToFreqMHz(uint8_t ch) {
 
 enum WindowMode : uint8_t {
   WIN_TELEM  = 0,  // rocket TX telemetry / base RX
-  WIN_RX     = 1,  // base TX commands / rocket RX
+  WIN_CMD     = 1,  // base TX commands / rocket RX
   WIN_OFF    = 2,  // radio off
   WIN_LR     = 3,  // future: long-range low-rate TX
   WIN_FINDME = 4,  // future: long-preamble beacon
 };
 
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN   2
 #define SLOT_DURATION_US    2'000'000UL  // µs
 // startReceive(timeout) takes raw SX1262 timer units (1 unit = 15.625µs).
@@ -82,9 +82,9 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define BS_RX_EARLY_US        10'000UL   // µs before slot boundary
 #define BS_RX_TIMEOUT_US      40'000UL      // ms
 #define BS_RX_TIMEOUT_RAW     (BS_RX_TIMEOUT_US / 15.625f)
-// Aim command TX this many µs after WIN_RX slot start.
+// Aim command TX this many µs after WIN_CMD slot start.
 // Gives rocket time to arm startReceive. Also the drift calibration reference point.
-#define BS_CMD_TX_OFFSET_US   5'000UL  // µs after WIN_RX start
+#define BS_CMD_TX_OFFSET_US   5'000UL  // µs after WIN_CMD start
 
 
 #define CMD_SET_SYNC           0x41    // sync command ID (matches rocket config.h)
@@ -179,7 +179,7 @@ unsigned long bsMissedTelemSlots = 0; // consecutive WIN_TELEM slots with no RX 
 // Pending sync send (deferred until slot machine can TX it)
 bool          bsSyncPending   = false;
 
-// Set true once the command TX window has been attempted in the current WIN_RX slot,
+// Set true once the command TX window has been attempted in the current WIN_CMD slot,
 // so we don't attempt again in the same slot.
 bool          bsCmdSentThisSlot = false;
 
@@ -399,7 +399,7 @@ struct CmdTxState {
   uint8_t pktLen;
   uint8_t sends;
   uint8_t sent;
-  uint16_t waitMs;       // max ms to wait for next WIN_RX before sending out of turn
+  uint16_t waitMs;       // max ms to wait for next WIN_CMD before sending out of turn
   unsigned long lastSendMs;
   unsigned long queuedMs; // millis() when command was queued (for wait expiry)
   bool active;
@@ -985,7 +985,7 @@ static void doSendSync() {
   if (st == RADIOLIB_ERR_NONE) {
     // Anchor the base slot clock to TxDone.
     bsSyncAnchorUs    = txDoneUs;
-    bsSyncSlotIndex   = 1;  // WIN_RX starts now (sync pkt was slot 0 = WIN_TELEM)
+    bsSyncSlotIndex   = 1;  // WIN_CMD starts now (sync pkt was slot 0 = WIN_TELEM)
     bsLastHandledSlot = 0xFFFFFFFF;
     bsSynced          = true;
     bsSyncSent        = true;
@@ -1033,9 +1033,9 @@ void handleSyncSend() {
 // Called from loop() every iteration.
 //
 // Slot layout (base station view):
-//   WIN_TELEM: rocket is TX-ing; base listens. Early-listen started from prior WIN_RX.
-//   WIN_RX:    base may TX a queued command; rocket is listening.
-//              200ms before WIN_RX ends, arm early-listen for the next WIN_TELEM.
+//   WIN_TELEM: rocket is TX-ing; base listens. Early-listen started from prior WIN_CMD.
+//   WIN_CMD:    base may TX a queued command; rocket is listening.
+//              200ms before WIN_CMD ends, arm early-listen for the next WIN_TELEM.
 
 static void bsHandleRxDone() {
   // Called when DIO1 fires while in BS_RADIO_RX_ACTIVE.
@@ -1166,7 +1166,7 @@ void handleSyncedRadio() {
         Serial.print("SLOT WIN_TELEM pos="); Serial.print(posInSlot); Serial.println("us");
       }
       // Start listening if: radio is idle AND we haven't already listened this slot.
-      // bsEarlyRxStarted is set by bsStartListening() and only cleared on WIN_RX slot entry,
+      // bsEarlyRxStarted is set by bsStartListening() and only cleared on WIN_CMD slot entry,
       // so it remains true for the entire WIN_TELEM slot after any listen attempt.
       if (!bsEarlyRxStarted && bsRadioState == BS_RADIO_IDLE) {
         bsStartListening("telem-fallback");
@@ -1174,7 +1174,7 @@ void handleSyncedRadio() {
       break;
     }
 
-    case WIN_RX: {
+    case WIN_CMD: {
       // On first entry: reset per-slot flags and do idle flash if no command pending.
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot    = slotNum;
@@ -1185,7 +1185,7 @@ void handleSyncedRadio() {
           bsLedOn();
           delayMicroseconds(5000);
           bsLedOff();
-          Serial.print("SLOT WIN_RX idle pos="); Serial.print(posInSlot); Serial.println("us");
+          Serial.print("SLOT WIN_CMD idle pos="); Serial.print(posInSlot); Serial.println("us");
         }
       }
 
@@ -1197,7 +1197,7 @@ void handleSyncedRadio() {
           && posInSlot >= BS_CMD_TX_OFFSET_US) {
         bsCmdSentThisSlot = true;
         if (bsRadioState == BS_RADIO_IDLE) {
-          Serial.print("SLOT WIN_RX TX cmd "); Serial.print(cmdTx.sent + 1);
+          Serial.print("SLOT WIN_CMD TX cmd "); Serial.print(cmdTx.sent + 1);
           Serial.print("/"); Serial.print(cmdTx.sends);
           Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
           bsLedOn();
@@ -1208,10 +1208,10 @@ void handleSyncedRadio() {
             bsRadioState = BS_RADIO_TX_ACTIVE;
           } else {
             bsLedOff();
-            Serial.print("WIN_RX TX fail: "); Serial.println(st);
+            Serial.print("WIN_CMD TX fail: "); Serial.println(st);
           }
         } else {
-          Serial.print("SLOT WIN_RX cmd skipped (radio busy) pos="); Serial.print(posInSlot); Serial.println("us");
+          Serial.print("SLOT WIN_CMD cmd skipped (radio busy) pos="); Serial.print(posInSlot); Serial.println("us");
         }
       }
 

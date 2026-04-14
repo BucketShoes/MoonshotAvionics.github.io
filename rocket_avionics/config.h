@@ -59,18 +59,18 @@
 
 enum WindowMode : uint8_t {
   WIN_TELEM  = 0,  // rocket TX telemetry / base RX
-  WIN_RX     = 1,  // base TX commands / rocket RX
+  WIN_CMD     = 1,  // base TX commands / rocket RX
   WIN_OFF    = 2,  // radio off — neither side active
   WIN_LR     = 3,  // future: long-range low-rate TX
   WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
 };
 
 // Compile-time slot sequence. Edit here to change the pattern.
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN  2
 #define SLOT_DURATION_US   2'000'000UL  // µs
 
-// Rocket WIN_RX listen window duration.
+// Rocket WIN_CMD listen window duration.
 #define ROCKET_RX_TIMEOUT_US  50'000UL     // us
 #define ROCKET_RX_TIMEOUT_RAW (ROCKET_RX_TIMEOUT_US / 15.625f)
 
