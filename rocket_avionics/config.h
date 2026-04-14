@@ -68,7 +68,7 @@ enum WindowMode : uint8_t {
 // Compile-time slot sequence. Edit here to change the pattern.
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_RX };
 #define SLOT_SEQUENCE_LEN  2
-#define SLOT_DURATION_US   4000000UL  // µs
+#define SLOT_DURATION_US   2'000'000UL  // µs
 
 // Rocket WIN_RX listen window duration.
 #define ROCKET_RX_TIMEOUT_US  50'000UL     // us
