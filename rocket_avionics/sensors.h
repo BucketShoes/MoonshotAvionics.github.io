@@ -38,6 +38,7 @@
 // ===================== SENSOR DATA STRUCTS =====================
 
 //TODO:@@@ these are in units sized for tight packing in data pages, but should be in appropraite wider units like floats/doubles
+//TODO: for kalman - sensors should handle loop latency - either mcpwm/rmt/input capture for timing of irq signal, or calculated deterministic pacing from sensor into fifo. skipping a loop should fifo from sensors (unless drop), and all reads should be fed into kalman. curent structure just has a "curent" value, and the loop just consumes it. could tightly couple the reads to the kalmans, but we want to maintain a state estimation even when there's no reads (todo: check does this break kalman to update with only some new feeds?) - also want to have the ability to retroactively insert model/measurement coeections, e.g. at launch deect, we'll only decide after a fair bit of time has passed - but that means we have the assumption of a fair bit of time modeled with ground contact forces which didnt have ground contact.
 
 struct AccelData {
   int16_t x, y, z;          // raw ADC values in milli-g (after scaling)
