@@ -44,6 +44,11 @@ unsigned long bsMissedTelemSlots = 0;
 
 uint64_t      bsPendingHeaderValidUs = 0;
 
+// Background RSSI EMA — updated at RX timeout, not on received packets.
+float         bsBgRssiEma = 0.0f;
+static bool   bsBgRssiInit = false;  // true after first sample
+#define BG_RSSI_ALPHA  0.1f           // EMA smoothing factor (~10 timeouts)
+
 // ===================== SYNC BOOKKEEPING =====================
 
 static bool          bsSyncPending  = false;
@@ -288,8 +293,15 @@ static void bsRadioHandleIrq() {
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     bsLedOff();
     bsPendingHeaderValidUs = 0;
+    // Sample instantaneous RSSI for background noise EMA.
+    // Radio is still in RX at this point (timeout just fired), so the reading
+    // reflects channel noise at a random moment in the listen window.
+    int16_t rssiDbm = 0;
+    if (sx126x_get_rssi_inst(&bsRadioCtx, &rssiDbm) == SX126X_STATUS_OK) {
+      if (!bsBgRssiInit) { bsBgRssiEma = (float)rssiDbm; bsBgRssiInit = true; }
+      else bsBgRssiEma += BG_RSSI_ALPHA * ((float)rssiDbm - bsBgRssiEma);
+    }
     bsRadioState = BS_RADIO_STANDBY;
-    Serial.println("BS RX timeout");
   }
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {

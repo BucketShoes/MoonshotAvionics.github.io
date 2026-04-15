@@ -90,6 +90,11 @@ extern unsigned long bsMissedTelemSlots;
 // HeaderValid timestamp (held until RX_DONE of a valid rocket telemetry packet)
 extern uint64_t      bsPendingHeaderValidUs;
 
+// Background RSSI EMA — updated on RX timeout (no packet received).
+// Excludes packet RX windows so it reflects channel noise, not signal.
+// int8 range: reported as-is in page 12 bgRssi field.
+extern float         bsBgRssiEma;
+
 // ===================== COORDINATION FLAGS (main.cpp ↔ radio.cpp) =====================
 
 // Set by bsHandleSyncSend() when a sync packet needs to be built and queued.
