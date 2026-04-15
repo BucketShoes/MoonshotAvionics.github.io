@@ -6,7 +6,7 @@
 
 #include <Arduino.h>
 #include <SPI.h>
-#include "sx126x_hal.h"   // sx126x_hal_context_t, dio1Fired, dio1TimestampUs()
+#include "radio_hal.h"    // sx126x_hal_context_t, dio1Fired, dio1TimestampUs()
 #include "sx126x.h"        // sx126x_driver API
 
 // ===================== PIN / PROTOCOL CONSTANTS =====================
@@ -18,6 +18,8 @@
 #define LORA_RST_PIN  12
 #define LORA_BUSY_PIN 13
 #define LORA_DIO1_PIN 14
+
+#define LED_PIN       18
 
 #define LORA_CR       5      // 4/5 coding rate
 #define LORA_PREAMBLE 6      // preamble symbols

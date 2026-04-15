@@ -6,7 +6,7 @@
 #define RADIO_H
 
 #include <SPI.h>
-#include "sx126x_hal.h"   // sx126x_hal_context_t, dio1Fired, dio1TimestampUs()
+#include "radio_hal.h"    // sx126x_hal_context_t, dio1Fired, dio1TimestampUs()
 #include "sx126x.h"        // sx126x_driver API
 #include "config.h"
 

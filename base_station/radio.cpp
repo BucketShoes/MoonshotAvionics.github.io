@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include "radio.h"
 #include "sx126x.h"
+#include "sx126x_hal.h"  // sx126x_hal_reset/wakeup declarations, sx126x_hal_status_t
 
 // ===================== HARDWARE OBJECTS =====================
 

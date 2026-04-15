@@ -1,15 +1,13 @@
-// sx126x_hal.cpp — SX126x HAL implementation for ESP32-S3 (Arduino SPI).
+// radio_hal.cpp — SX126x HAL implementation for ESP32-S3 (Arduino SPI).
 // Implements the four HAL functions declared in Lora-net/sx126x_driver's sx126x_hal.h,
 // plus MCPWM hardware capture for jitter-free DIO1 timestamps.
 
 #include <Arduino.h>
 #include <SPI.h>
 #include "driver/mcpwm_prelude.h"  // ESP-IDF MCPWM capture API
-#include "sx126x_hal.h"            // our header: sx126x_hal_context_t, dio1Fired, radioMcpwmInit
-// The Lora-net driver's sx126x_hal.h (which declares sx126x_hal_status_t, SX126X_NOP,
-// and the four function prototypes we implement) is found by PlatformIO on the driver's
-// include path. Including our own sx126x_hal.h first is fine because they have different
-// include guards (RADIO_HAL_H vs SX126X_HAL_H).
+#include "radio_hal.h"             // our header: sx126x_hal_context_t, dio1Fired, radioMcpwmInit
+#include "sx126x_hal.h"            // driver's header: sx126x_hal_status_t, SX126X_NOP, and the
+                                   // four HAL function prototypes we implement here
 
 // ===================== DIO1 CAPTURE GLOBALS =====================
 

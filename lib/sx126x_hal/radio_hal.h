@@ -1,11 +1,12 @@
-// sx126x_hal.h — SX126x hardware abstraction layer for ESP32-S3 (Arduino/SPI).
-// Implements the four HAL functions required by Lora-net/sx126x_driver:
-//   sx126x_hal_write, sx126x_hal_read, sx126x_hal_reset, sx126x_hal_wakeup
-// Also owns MCPWM hardware capture on DIO1 for jitter-free timestamps.
+// radio_hal.h — ESP32-S3 HAL context and DIO1 capture for the SX126x driver.
+// The Lora-net/sx126x_driver library declares the four HAL function prototypes
+// (sx126x_hal_write/read/reset/wakeup) in its own sx126x_hal.h. This file adds
+// what the driver leaves to the user: the context struct, the MCPWM DIO1 capture
+// state, and the init function.
 //
 // Usage:
 //   1. Fill an sx126x_hal_context_t with your SPI instance and pin numbers.
-//   2. Call radioMcpwmInit(dio1Pin) once during init.
+//   2. Call radioMcpwmInit(dio1Pin) once during radio init.
 //   3. Pass &context as the first argument to all sx126x_* calls.
 //
 // BUSY handling:
@@ -16,8 +17,8 @@
 //
 // MCPWM capture:
 //   DIO1 is connected to an MCPWM capture channel at 80 MHz. On every rising
-//   edge the counter value is latched by hardware before the ISR runs, so the
-//   timestamp has ~12.5 ns resolution and zero ISR-jitter.
+//   edge the counter value is latched by hardware before the ISR runs, giving
+//   ~12.5 ns resolution and zero ISR-jitter.
 //   Read with dio1TimestampUs() after checking dio1Fired.
 
 #ifndef RADIO_HAL_H
@@ -52,7 +53,6 @@ inline uint64_t dio1TimestampUs() {
 
 // Initialise MCPWM capture timer and channel on the given DIO1 GPIO pin.
 // Call once during radio init, after SPI and pins are configured.
-// Replaces attachInterrupt / radio.setDio1Action().
 void radioMcpwmInit(uint8_t dio1Pin);
 
 #endif // RADIO_HAL_H
