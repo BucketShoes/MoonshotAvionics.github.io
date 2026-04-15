@@ -37,6 +37,8 @@
 
 // ===================== SENSOR DATA STRUCTS =====================
 
+//TODO:@@@ these are in units sized for tight packing in data pages, but should be in appropraite wider units like floats/doubles
+
 struct AccelData {
   int16_t x, y, z;          // raw ADC values in milli-g (after scaling)
   bool    valid;

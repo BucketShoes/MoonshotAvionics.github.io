@@ -40,9 +40,13 @@ unsigned long syncAnchorUs       = 0;
 uint32_t      syncSlotIndex      = 0;
 uint32_t      lastHandledSlotNum = 0xFFFFFFFF;
 
-// ===================== RSSI EMA (stub) =====================
+// ===================== RSSI EMA =====================
+// Updated at WIN_CMD timeout — channel noise sampled when no command arrives.
+// Excludes packet reception so it reflects background noise, not signal strength.
 
 double rssiEma = 0.0;
+static bool rssiEmaInit = false;
+#define RSSI_EMA_ALPHA 0.1
 
 // ===================== STATS =====================
 
@@ -327,6 +331,14 @@ static void radioHandleIrq() {
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     ledOff();
     pendingHeaderValidUs = 0;
+    // Sample background RSSI — only meaningful in WIN_CMD (rocket is RX).
+    // Instantaneous read at a random point in the listen window; good enough
+    // for a rough noise floor estimate.
+    int16_t rssiDbm = 0;
+    if (sx126x_get_rssi_inst(&radioCtx, &rssiDbm) == SX126X_STATUS_OK) {
+      if (!rssiEmaInit) { rssiEma = rssiDbm; rssiEmaInit = true; }
+      else rssiEma += RSSI_EMA_ALPHA * (rssiDbm - rssiEma);
+    }
     radioState = RADIO_STANDBY;
   }
 
