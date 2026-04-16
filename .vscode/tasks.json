@@ -69,6 +69,28 @@
             "problemMatcher": []
         },
 
+        // ── Upload + Monitor (one board at a time) ─────────────────────────
+        {
+            "label": "Upload + Monitor: rocket",
+            "dependsOn": ["Upload: rocket", "Wait for COM13", "Monitor: rocket (COM13)"],
+            "dependsOrder": "sequence",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+        {
+            "label": "Wait for COM13",
+            "type": "shell",
+            "command": "Start-Sleep",
+            "args": ["-Seconds", "4"],
+            "presentation": { "reveal": "silent", "panel": "shared" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Upload + Monitor: base_station",
+            "dependsOn": ["Upload: base_station firmware", "Wait for COM9", "Monitor: base_station (COM9)"],
+            "dependsOrder": "sequence",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+
         // ── Individual tasks (run from Command Palette if needed) ──────────
         {
             "label": "Build: rocket",

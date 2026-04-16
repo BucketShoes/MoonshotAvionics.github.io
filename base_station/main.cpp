@@ -839,14 +839,18 @@ void loop() {
     // Auto-sync management: queue CMD_SET_SYNC at boot + resync on missed telem slots
     bsHandleSyncSend();
 
-    // If sync needs to be queued, build and queue the packet now
-    if (bsSyncNeedsQueue) {
+    // If sync needs to be queued, build and queue the packet now.
+    // In bootstrap (not yet synced) the radio is in continuous RX — pull it to
+    // standby first so the TX can proceed. Pre-sync there is nothing useful to
+    // receive, so interrupting the listen window is fine.
+    if (bsSyncNeedsQueue && !cmdTx.active) {
       bsSyncNeedsQueue = false;
-      uint8_t syncPkt[17];
-      size_t syncLen = bsBuildSyncCmdPacket(syncPkt);
-      // Queue with waitMs=0, sends=1, bypass normal queueCommandTx HMAC re-check
-      // (we just built it with the correct HMAC above).
-      if (bsRadioState == BS_RADIO_STANDBY && !cmdTx.active) {
+      if (bsRadioState == BS_RADIO_RX_ACTIVE) {
+        bsRadioStandby();
+      }
+      if (bsRadioState == BS_RADIO_STANDBY) {
+        uint8_t syncPkt[17];
+        size_t syncLen = bsBuildSyncCmdPacket(syncPkt);
         memcpy(cmdTx.pkt, syncPkt, syncLen);
         cmdTx.pktLen  = (uint8_t)syncLen;
         cmdTx.sends   = 1;
@@ -864,13 +868,15 @@ void loop() {
       dispatchCmdTx();
     }
 
-    // Out-of-turn fallback: wait window expired, send regardless of slot
-    if (cmdTx.active && cmdTx.sent < cmdTx.sends && cmdTx.waitMs > 0
-        && bsRadioState == BS_RADIO_STANDBY
-        && (millis() - cmdTx.queuedMs) > cmdTx.waitMs) {
-      Serial.println("CMD TX out-of-turn (wait expired)");
-      cmdTx.queuedMs = millis();  // reset so it doesn't fire every loop
-      dispatchCmdTx();
+    // Out-of-turn fallback: wait window expired, send regardless of slot.
+    // Also fires immediately (waitMs==0) for bootstrap sync and other no-wait commands.
+    if (cmdTx.active && cmdTx.sent < cmdTx.sends && bsRadioState == BS_RADIO_STANDBY) {
+      bool waitExpired = (cmdTx.waitMs == 0) || ((millis() - cmdTx.queuedMs) > cmdTx.waitMs);
+      if (waitExpired && !bsWinCmdReady) {  // bsWinCmdReady path handled above; avoid double-fire
+        if (cmdTx.waitMs > 0) Serial.println("CMD TX out-of-turn (wait expired)");
+        cmdTx.queuedMs = millis();  // reset so it doesn't fire every loop
+        dispatchCmdTx();
+      }
     }
   }
 
