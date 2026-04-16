@@ -26,9 +26,9 @@ static bool IRAM_ATTR mcpwmCaptureIsr(mcpwm_cap_channel_handle_t /*chan*/,
 }
 
 void radioMcpwmInit(uint8_t dio1Pin) {
-    // Configure the pin as input with pull-down before handing it to MCPWM.
-    // DIO1 is active-high; pull-down ensures it reads low when idle (not floating).
-    pinMode(dio1Pin, INPUT_PULLDOWN);
+    // Do NOT call pinMode here — the Arduino peripheral manager would register
+    // this pin as GPIO and conflict with MCPWM taking ownership of it.
+    // Pull-down is applied at the MCPWM level via chanCfg.flags.pull_down below.
 
     // Capture timer at 1 MHz (1 µs resolution). resolution_hz must be set
     // explicitly — 0 is not "no divider", it is undefined behaviour in this driver.
@@ -82,9 +82,20 @@ extern "C" sx126x_hal_status_t sx126x_hal_write(
     const sx126x_hal_context_t* c = ctx_cast(context);
 
     if (digitalRead(c->busy)) {
-        // Radio still processing — missed the window. Drop, don't spin.
-        Serial.println("HAL: BUSY on write — dropped");
-        return SX126X_HAL_STATUS_ERROR;
+        if (c->initMode) {
+            // Init path: spin until BUSY clears (blocking, init only, not from armed loop)
+            unsigned long t0 = millis();
+            while (digitalRead(c->busy)) {
+                if ((millis() - t0) >= 10) {
+                    Serial.println("HAL: BUSY timeout on write (init)");
+                    return SX126X_HAL_STATUS_ERROR;
+                }
+            }
+        } else {
+            // Runtime: slot window missed — drop immediately, never spin
+            Serial.println("HAL: BUSY on write — dropped");
+            return SX126X_HAL_STATUS_ERROR;
+        }
     }
 
     c->spi->beginTransaction(SPISettings(16000000, MSBFIRST, SPI_MODE0));
@@ -119,8 +130,20 @@ extern "C" sx126x_hal_status_t sx126x_hal_read(
     const sx126x_hal_context_t* c = ctx_cast(context);
 
     if (digitalRead(c->busy)) {
-        Serial.println("HAL: BUSY on read — dropped");
-        return SX126X_HAL_STATUS_ERROR;
+        if (c->initMode) {
+            // Init path: spin until BUSY clears (blocking, init only, not from armed loop)
+            unsigned long t0 = millis();
+            while (digitalRead(c->busy)) {
+                if ((millis() - t0) >= 10) {
+                    Serial.println("HAL: BUSY timeout on read (init)");
+                    return SX126X_HAL_STATUS_ERROR;
+                }
+            }
+        } else {
+            // Runtime: slot window missed — drop immediately, never spin
+            Serial.println("HAL: BUSY on read — dropped");
+            return SX126X_HAL_STATUS_ERROR;
+        }
     }
 
     c->spi->beginTransaction(SPISettings(16000000, MSBFIRST, SPI_MODE0));

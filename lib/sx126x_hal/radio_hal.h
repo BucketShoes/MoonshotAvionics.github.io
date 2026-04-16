@@ -35,9 +35,12 @@
 
 struct sx126x_hal_context_t {
     SPIClass* spi;
-    uint8_t   nss;   // chip-select (active low, driven by HAL)
-    uint8_t   busy;  // BUSY pin — GPIO only, checked before every SPI transaction
-    uint8_t   rst;   // reset pin (active low, held low 1 ms then released)
+    uint8_t   nss;      // chip-select (active low, driven by HAL)
+    uint8_t   busy;     // BUSY pin — SX1262 output, ESP32 reads only, never writes
+    uint8_t   rst;      // reset pin (active low, held low 1 ms then released)
+    bool      initMode; // true during radio init: HAL spins on BUSY instead of dropping.
+                        // Set to false before returning from radioInit()/bsRadioInit().
+                        // NEVER set true outside of init — spinning blocks the main loop.
 };
 
 // ===================== DIO1 CAPTURE STATE =====================

@@ -11,10 +11,11 @@
 SPIClass bsLoraSPI(FSPI);
 
 sx126x_hal_context_t bsRadioCtx = {
-  .spi  = &bsLoraSPI,
-  .nss  = LORA_NSS_PIN,
-  .busy = LORA_BUSY_PIN,
-  .rst  = LORA_RST_PIN,
+  .spi      = &bsLoraSPI,
+  .nss      = LORA_NSS_PIN,
+  .busy     = LORA_BUSY_PIN,
+  .rst      = LORA_RST_PIN,
+  .initMode = true,  // cleared to false at end of bsRadioInit()
 };
 
 // ===================== ACTIVE RADIO CONFIG =====================
@@ -78,6 +79,7 @@ bool bsRadioInit() {
   digitalWrite(LORA_NSS_PIN, HIGH);
   pinMode(LORA_BUSY_PIN, INPUT);
 
+  // HAL is in initMode so it spins on BUSY between each command automatically.
   sx126x_hal_reset(&bsRadioCtx);
   if (!radioWaitBusy(&bsRadioCtx, 100)) {
     Serial.println("LoRa init: BUSY stuck after reset");
@@ -88,36 +90,32 @@ bool bsRadioInit() {
     Serial.println("LoRa init: set_standby failed");
     return false;
   }
-  radioWaitBusy(&bsRadioCtx);
 
   if (sx126x_set_pkt_type(&bsRadioCtx, SX126X_PKT_TYPE_LORA) != SX126X_STATUS_OK) {
     Serial.println("LoRa init: set_pkt_type failed");
     return false;
   }
-  radioWaitBusy(&bsRadioCtx);
 
   sx126x_set_dio2_as_rf_sw_ctrl(&bsRadioCtx, true);
-  radioWaitBusy(&bsRadioCtx);
 
   // Sync word 0x12 (private network) → register pair 0x0740/0x0741 = 0x14, 0x24
   const uint8_t syncWord[2] = { 0x14, 0x24 };
   sx126x_write_register(&bsRadioCtx, 0x0740, syncWord, 2);
-  radioWaitBusy(&bsRadioCtx);
 
   bsRadioApplyConfig();
-  radioWaitBusy(&bsRadioCtx);
 
   sx126x_set_dio_irq_params(&bsRadioCtx,
     SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
     SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
     SX126X_IRQ_NONE,
     SX126X_IRQ_NONE);
-  radioWaitBusy(&bsRadioCtx);
 
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
-  radioWaitBusy(&bsRadioCtx);
 
   radioMcpwmInit(LORA_DIO1_PIN);
+
+  // Init complete — switch HAL back to drop-on-BUSY (non-blocking, safe for armed loop)
+  bsRadioCtx.initMode = false;
 
   bsSyncBootMs = millis();
   bsRadioState = BS_RADIO_STANDBY;
