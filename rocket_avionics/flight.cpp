@@ -110,7 +110,7 @@ static void updateAccelStability(unsigned long nowUs) {
         return;
       }
     }
-    flightState.orientXPositive = currentOrientPositive;
+    flightState.orientXPositive = currentOrientPositive;//TODO: @@@ orientation should flip all handling of axies (controller can be mounted either way up; flip these based on arm orientation lock)
     flightState.orientSeen = true;
   }
 
@@ -357,7 +357,7 @@ static void checkCoastDetect(unsigned long nowUs) {
   }
 
   // Low acceleration check
-  if (totalMg < 2000) {
+    if (totalMg < 2000) {
     if (flightState.coastLowAccelTracker.qualify(nowUs, 5, 500000UL)) {
       // Low accel confirmed — check if we can transition to coast
       if (inBoost || atCoastAlt) {
