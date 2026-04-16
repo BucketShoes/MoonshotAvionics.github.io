@@ -1,19 +1,18 @@
 # flash_and_monitor_base_station.ps1
-# Kill any pio monitor holding COM9, compress web assets, upload firmware,
-# upload LittleFS, wait for port, monitor.
-# Run from repo root. Ctrl+C to stop monitoring.
+# Compress web assets, upload firmware + LittleFS to base station (COM9), then monitor.
+# To change the COM port: edit $PORT here and upload_port/monitor_port in platformio.ini.
 
 $PIO  = "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe"
 $PORT = "COM9"
 
-Write-Host "=== BASE STATION: killing any existing monitor on $PORT ==="
-Get-CimInstance Win32_Process -Filter "Name='pio.exe' OR Name='python.exe' OR Name='python3.exe'" |
+# Kill any existing monitor holding this port
+Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='python3.exe'" |
     Where-Object { $_.CommandLine -match [regex]::Escape($PORT) } |
     ForEach-Object {
-        Write-Host "  Killing PID $($_.ProcessId)"
+        Write-Host "Killing existing monitor PID $($_.ProcessId)"
         Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
     }
-Start-Sleep -Milliseconds 800
+Start-Sleep -Milliseconds 500
 
 Write-Host ""
 Write-Host "=== BASE STATION: compressing web assets ==="

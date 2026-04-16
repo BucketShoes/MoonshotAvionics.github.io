@@ -876,8 +876,10 @@ void loop() {
         if (cmdTx.waitMs > 0) Serial.println("CMD TX out-of-turn (wait expired)");
         cmdTx.queuedMs = millis();  // reset so it doesn't fire every loop
         dispatchCmdTx();
+        Serial.println("CKPT: after dispatchCmdTx");  // crash locator — remove once stable
       }
     }
+    Serial.flush();  // crash locator — remove once stable
   }
 
   handleBleLogFetch();

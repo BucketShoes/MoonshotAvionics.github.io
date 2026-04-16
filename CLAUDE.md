@@ -17,7 +17,14 @@ Most of this codebase is cosmetic or tracking-only (telemetry display, logging, 
 
 ## Non-blocking rule
 
-All functions called from `loop()` while armed **must** be non-blocking (naming convention: `nonblocking` prefix). `executeLogDownload()` is the only intentionally blocking call and is refused while armed. Sector erases in `nonblockingLogging()` block ~30–50ms (infrequent). Do not introduce blocking calls into the main loop.
+**This is a safety-critical hard requirement, not a style preference.** Pyro channels are driven by the main loop. Any block >1ms while armed risks a misfire, a late fire, or a charge staying energised too long. Active control surfaces (planned) have tighter requirements than pyro. The 1ms max is a per-iteration ceiling, not an average.
+
+All functions called from `loop()` while armed **must** be non-blocking (naming convention: `nonblocking` prefix). **Do not introduce any blocking call — even "infrequent" or "only sometimes" — without explicit approval.** Infrequency is not a justification.
+
+- `executeLogDownload()` is the only intentionally blocking call and is refused while armed.
+- Sector erases in `nonblockingLogging()` block ~30–50ms. This is a **known defect**, acceptable only because active control is not yet implemented. It is on the TODO list to fix before active control surfaces are added. Do not treat it as a precedent.
+- `radioWaitBusy()` in `radio_hal.h` blocks up to 100ms. It is **init-only** (called from `setup()` paths only) and has a prominent warning. Never call it from any code reachable while armed.
+- If radio power-cycling while armed is ever added, a non-blocking state machine must be used instead of `radioWaitBusy()`.
 
 ## System overview
 
