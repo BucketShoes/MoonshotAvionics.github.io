@@ -10,10 +10,14 @@
 //   3. Pass &context as the first argument to all sx126x_* calls.
 //
 // BUSY handling:
+//   BUSY is an OUTPUT from the SX1262 that goes high while it is processing a
+//   command. The ESP32 only reads this pin — never writes it.
 //   hal_write/hal_read check BUSY before each SPI transaction. If BUSY is high
 //   the call returns SX126X_HAL_STATUS_ERROR immediately — no spinning. The
 //   caller must ensure the radio is ready; a BUSY error means the window was
 //   missed and the operation should be dropped (logged, not retried in-place).
+//   The no-spin policy is intentional: slot windows are exact and mandatory.
+//   Missing one is correct behaviour; spinning to catch up would corrupt timing.
 //
 // MCPWM capture:
 //   DIO1 is connected to an MCPWM capture channel at 80 MHz. On every rising
@@ -55,8 +59,24 @@ inline uint64_t dio1TimestampUs() {
 // Call once during radio init, after SPI and pins are configured.
 void radioMcpwmInit(uint8_t dio1Pin);
 
-// Blocking BUSY poll — for use during init only (never call from main loop).
-// Spins until BUSY goes low or timeoutMs elapses. Returns true if ready.
+// *** BLOCKING — INIT ONLY. NEVER CALL WHILE ARMED OR FROM LOOP() ***
+//
+// radioWaitBusy() spins reading the SX1262 BUSY pin (an output from the radio,
+// read-only to the ESP32) until the radio deasserts it, or timeoutMs elapses.
+// This can block for up to timeoutMs milliseconds (default 100ms).
+//
+// WHY THIS EXISTS: the SX1262 reasserts BUSY briefly after every SPI command
+// while it processes it. During radio init, commands are sent back-to-back; each
+// one must wait for BUSY to clear before the next is sent, or the HAL will drop
+// it (BUSY=high -> immediate error return, no retry). During normal operation the
+// slot machine ensures BUSY is low before issuing any command, so this is not needed.
+//
+// SAFETY: This firmware targets >1000 Hz loop rate while armed. Pyro channels
+// are driven by the main loop; any block >1ms risks a misfire or failure to fire.
+// radioWaitBusy() can block up to 100ms — NEVER call it from any code path
+// reachable while armed=true. radioInit() and bsRadioInit() run in setup() only
+// and are safe. If radio power-cycling while armed is ever added, a non-blocking
+// approach (state machine with timeout) must be used instead.
 inline bool radioWaitBusy(const sx126x_hal_context_t* ctx, uint32_t timeoutMs = 100) {
     unsigned long t0 = millis();
     while (digitalRead(ctx->busy)) {

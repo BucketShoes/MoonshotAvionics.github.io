@@ -81,7 +81,7 @@ extern "C" sx126x_hal_status_t sx126x_hal_write(
         return SX126X_HAL_STATUS_ERROR;
     }
 
-    c->spi->beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+    c->spi->beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0));
     digitalWrite(c->nss, LOW);
 
     for (uint16_t i = 0; i < command_length; i++) {
@@ -117,7 +117,7 @@ extern "C" sx126x_hal_status_t sx126x_hal_read(
         return SX126X_HAL_STATUS_ERROR;
     }
 
-    c->spi->beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+    c->spi->beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0));
     digitalWrite(c->nss, LOW);
 
     for (uint16_t i = 0; i < command_length; i++) {
@@ -156,7 +156,7 @@ extern "C" sx126x_hal_status_t sx126x_hal_reset(const void* context) {
 extern "C" sx126x_hal_status_t sx126x_hal_wakeup(const void* context) {
     const sx126x_hal_context_t* c = ctx_cast(context);
     // A brief NSS toggle (without BUSY check) wakes the chip from sleep.
-    c->spi->beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+    c->spi->beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0));
     digitalWrite(c->nss, LOW);
     delayMicroseconds(1);
     digitalWrite(c->nss, HIGH);
