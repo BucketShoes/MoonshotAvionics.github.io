@@ -199,7 +199,9 @@ void nonblockingInit() {
       if (loraReady) {
         radioStartRx();
         ledcWrite(LED_PIN, 10);
-        Serial.println("Radio enabled (RX active, TX on)");
+        Serial.println("Radio enabled — bootstrap RX, waiting for sync");
+      } else {
+        Serial.println("Radio FAILED — no LoRa");
       }
 
       logStoreOk = logStore.begin("log_data", "log_index", "rkt_log");

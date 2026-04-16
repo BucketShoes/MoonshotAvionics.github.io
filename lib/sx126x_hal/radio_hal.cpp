@@ -16,6 +16,7 @@ volatile uint32_t dio1CaptureVal = 0;
 
 // ===================== MCPWM CAPTURE =====================
 
+// cap_value is in timer ticks. Timer is configured at 1 MHz so ticks == microseconds.
 static bool IRAM_ATTR mcpwmCaptureIsr(mcpwm_cap_channel_handle_t /*chan*/,
                                       const mcpwm_capture_event_data_t* data,
                                       void* /*user_data*/) {
@@ -25,25 +26,30 @@ static bool IRAM_ATTR mcpwmCaptureIsr(mcpwm_cap_channel_handle_t /*chan*/,
 }
 
 void radioMcpwmInit(uint8_t dio1Pin) {
-    // Capture timer at 80 MHz (APB clock, no prescaler).
+    // Configure the pin as input with pull-down before handing it to MCPWM.
+    // DIO1 is active-high; pull-down ensures it reads low when idle (not floating).
+    pinMode(dio1Pin, INPUT_PULLDOWN);
+
+    // Capture timer at 1 MHz (1 µs resolution). resolution_hz must be set
+    // explicitly — 0 is not "no divider", it is undefined behaviour in this driver.
     mcpwm_cap_timer_handle_t capTimer = nullptr;
     mcpwm_capture_timer_config_t timerCfg = {};
-    timerCfg.clk_src    = MCPWM_CAPTURE_CLK_SRC_DEFAULT;  // APB ~80 MHz
-    timerCfg.group_id   = 0;
-    timerCfg.resolution_hz = 0;  // 0 = use clock source directly (no divider)
+    timerCfg.clk_src       = MCPWM_CAPTURE_CLK_SRC_DEFAULT;  // APB 80 MHz
+    timerCfg.group_id      = 0;
+    timerCfg.resolution_hz = 1000000;  // 1 MHz → 1 µs per tick
     ESP_ERROR_CHECK(mcpwm_new_capture_timer(&timerCfg, &capTimer));
 
     // Capture channel on DIO1, rising edge only.
     mcpwm_cap_channel_handle_t capChan = nullptr;
     mcpwm_capture_channel_config_t chanCfg = {};
-    chanCfg.gpio_num      = (int)dio1Pin;
-    chanCfg.prescale      = 1;
-    chanCfg.flags.pos_edge = true;
-    chanCfg.flags.neg_edge = false;
-    chanCfg.flags.pull_up  = false;
-    chanCfg.flags.pull_down = false;
+    chanCfg.gpio_num               = (int)dio1Pin;
+    chanCfg.prescale               = 1;
+    chanCfg.flags.pos_edge         = true;
+    chanCfg.flags.neg_edge         = false;
+    chanCfg.flags.pull_up          = false;
+    chanCfg.flags.pull_down        = true;   // reinforce pull-down at MCPWM level too
     chanCfg.flags.invert_cap_signal = false;
-    chanCfg.flags.io_loop_back = false;
+    chanCfg.flags.io_loop_back     = false;
     ESP_ERROR_CHECK(mcpwm_new_capture_channel(capTimer, &chanCfg, &capChan));
 
     // Register ISR callback (runs in IRAM, no FreeRTOS heap).

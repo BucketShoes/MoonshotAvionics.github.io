@@ -47,10 +47,11 @@ extern volatile bool     dio1Fired;       // set by capture ISR on each DIO1 ris
 extern volatile uint32_t dio1CaptureVal;  // raw 80 MHz capture timer value at that edge
 
 // Microsecond timestamp of the most recent DIO1 rising edge.
+// Timer runs at 1 MHz (1 µs/tick), so captured value is already in microseconds.
 // Valid only while dio1Fired is true (or immediately after clearing it, before
 // the next edge could arrive).
 inline uint64_t dio1TimestampUs() {
-    return (uint64_t)dio1CaptureVal / 80;
+    return (uint64_t)dio1CaptureVal;
 }
 
 // ===================== PUBLIC API =====================
