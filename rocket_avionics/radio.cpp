@@ -432,6 +432,23 @@ void nonblockingRadio() {
     dio1CaptureVal = (uint32_t)micros();
     dio1Fired = true;
   }
+  static unsigned long tLastIrqPollMs = 0;
+  {
+    unsigned long npMs = millis();
+    if ((radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE) &&
+        !dio1Fired && (npMs - tLastIrqPollMs) >= 100) {
+      tLastIrqPollMs = npMs;
+      sx126x_irq_mask_t irqFlags = 0;
+      sx126x_get_irq_status(&radioCtx, &irqFlags);
+      if (irqFlags != 0) {
+        Serial.print("TEST IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
+        dio1CaptureVal = (uint32_t)micros();
+        dio1Fired = true;
+      } else {
+        Serial.print("TEST IRQ poll: 0 busy="); Serial.println(digitalRead(LORA_BUSY_PIN));
+      }
+    }
+  }
   if (dio1Fired) radioHandleIrq();
   if (radioState == RADIO_STANDBY) radioStartRx();
 }
@@ -448,12 +465,29 @@ void nonblockingRadio() {
     lastIsrCount = isrNow;
   }
 
-  // Also poll DIO1 pin directly as fallback
+  // Fallback 1: DIO1 pin polling
   if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
       (radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE)) {
-    Serial.println("DIO1 pin HIGH but ISR not set — polling fallback");
+    Serial.println("DIO1 pin HIGH (poll fallback)");
     dio1CaptureVal = (uint32_t)micros();
     dio1Fired = true;
+  }
+
+  // Fallback 2: poll IRQ register directly every 100ms when stuck in TX/RX
+  static unsigned long lastIrqPollMs = 0;
+  {
+    unsigned long npMs = millis();
+    if ((radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE) &&
+        !dio1Fired && (npMs - lastIrqPollMs) >= 100) {
+      lastIrqPollMs = npMs;
+      sx126x_irq_mask_t irqFlags = 0;
+      sx126x_get_irq_status(&radioCtx, &irqFlags);
+      if (irqFlags != 0) {
+        Serial.print("IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
+        dio1CaptureVal = (uint32_t)micros();
+        dio1Fired = true;
+      }
+    }
   }
 
   // Always process DIO1 first

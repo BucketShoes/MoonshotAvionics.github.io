@@ -458,12 +458,36 @@ void bsHandleRadio() {
     Serial.print("TEST DIO1 ISR! count="); Serial.println(isrNow);
     bsLastIsrCountT = isrNow;
   }
+
+  // Fallback 1: DIO1 pin polling
   if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
       (bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE)) {
     Serial.println("TEST DIO1 pin HIGH (poll fallback)");
     dio1CaptureVal = (uint32_t)micros();
     dio1Fired = true;
   }
+
+  // Fallback 2: poll IRQ register directly every ~500ms when stuck in TX/RX active.
+  // DIO1 may not pulse (wrong wiring or pin conflict) but the register still updates.
+  static unsigned long bsLastIrqPollMs = 0;
+  unsigned long nowPollMs = millis();
+  if ((bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE) &&
+      !dio1Fired && (nowPollMs - bsLastIrqPollMs) >= 100) {
+    bsLastIrqPollMs = nowPollMs;
+    sx126x_irq_mask_t irqFlags = 0;
+    sx126x_get_irq_status(&bsRadioCtx, &irqFlags);
+    if (irqFlags != 0) {
+      Serial.print("TEST IRQ poll: flags=0x"); Serial.print(irqFlags, HEX);
+      Serial.println(" (DIO1 never pulsed but register has flags — wiring issue)");
+      // Synthesise a DIO1 event so the IRQ handler runs
+      dio1CaptureVal = (uint32_t)micros();
+      dio1Fired = true;
+    } else {
+      Serial.print("TEST IRQ poll: flags=0 state="); Serial.print(bsRadioState);
+      Serial.print(" busy="); Serial.println(digitalRead(LORA_BUSY_PIN));
+    }
+  }
+
   if (dio1Fired) {
     bsRadioHandleIrq();  // handles TxDone/RxDone/Timeout, restarts RX after each
   }
@@ -505,13 +529,29 @@ void bsHandleRadio() {
     bsLastIsrCount = isrNow;
   }
 
-  // Also poll DIO1 pin directly as fallback — catches any ISR setup issues.
-  // If pin is high and radio is TX/RX active, treat it as a pending IRQ.
+  // Fallback 1: DIO1 pin polling
   if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
       (bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE)) {
-    Serial.println("BS DIO1 pin HIGH but ISR not set — polling fallback");
+    Serial.println("BS DIO1 pin HIGH (poll fallback)");
     dio1CaptureVal = (uint32_t)micros();
     dio1Fired = true;
+  }
+
+  // Fallback 2: poll IRQ register directly every 100ms when stuck in TX/RX
+  static unsigned long bsLastIrqPollMs2 = 0;
+  {
+    unsigned long npMs = millis();
+    if ((bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE) &&
+        !dio1Fired && (npMs - bsLastIrqPollMs2) >= 100) {
+      bsLastIrqPollMs2 = npMs;
+      sx126x_irq_mask_t irqFlags = 0;
+      sx126x_get_irq_status(&bsRadioCtx, &irqFlags);
+      if (irqFlags != 0) {
+        Serial.print("BS IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
+        dio1CaptureVal = (uint32_t)micros();
+        dio1Fired = true;
+      }
+    }
   }
 
   if (dio1Fired) {
