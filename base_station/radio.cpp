@@ -1,10 +1,9 @@
 // base_station/radio.cpp — LoRa radio, slot machine, and sync logic for base station.
-// See radio.h for the public API.
 
 #include <Arduino.h>
 #include "radio.h"
 #include "sx126x.h"
-#include "sx126x_hal.h"  // sx126x_hal_reset/wakeup declarations, sx126x_hal_status_t
+#include "sx126x_hal.h"
 
 // ===================== HARDWARE OBJECTS =====================
 
@@ -45,16 +44,15 @@ unsigned long bsMissedTelemSlots = 0;
 
 uint64_t      bsPendingHeaderValidUs = 0;
 
-// Background RSSI EMA — updated at RX timeout, not on received packets.
 float         bsBgRssiEma = 0.0f;
 static bool   bsBgRssiInit = false;
 #define BG_RSSI_ALPHA  0.1f
 
 // ===================== SYNC BOOKKEEPING =====================
 
-static unsigned long bsSyncBootMs     = 0;   // set when init completes
-static unsigned long bsLastSyncSendMs = 0;   // millis() of last sync TX attempt
-#define BS_SYNC_RETRY_MS  60000UL            // resend sync every 60 s
+static unsigned long bsSyncBootMs     = 0;
+static unsigned long bsLastSyncSendMs = 0;
+#define BS_SYNC_RETRY_MS  60000UL
 
 // ===================== HELPERS =====================
 
@@ -72,6 +70,19 @@ static sx126x_lora_bw_t bwKHzToEnum(float bwKHz) {
 static void bsLedOn()  { ledcWrite(LED_PIN, 255); }
 static void bsLedOff() { ledcWrite(LED_PIN, 0);   }
 
+// Wait for BUSY to deassert. INIT ONLY — blocks. Max ~5ms; BUSY clears in <1ms after standby.
+// Only called from dispatchCmdTx after bsRadioStandby(), never from the main loop directly.
+static bool bsWaitBusyShort() {
+  unsigned long t0 = millis();
+  while (digitalRead(LORA_BUSY_PIN)) {
+    if (millis() - t0 > 5) {
+      Serial.println("BS TX: BUSY stuck after standby");
+      return false;
+    }
+  }
+  return true;
+}
+
 // ===================== INIT =====================
 
 bool bsRadioInit() {
@@ -79,7 +90,6 @@ bool bsRadioInit() {
   digitalWrite(LORA_NSS_PIN, HIGH);
   pinMode(LORA_BUSY_PIN, INPUT);
 
-  // HAL is in initMode so it spins on BUSY between each command automatically.
   sx126x_hal_reset(&bsRadioCtx);
   if (!radioWaitBusy(&bsRadioCtx, 100)) {
     Serial.println("LoRa init: BUSY stuck after reset");
@@ -98,7 +108,6 @@ bool bsRadioInit() {
 
   sx126x_set_dio2_as_rf_sw_ctrl(&bsRadioCtx, true);
 
-  // Sync word 0x12 (private network) → register pair 0x0740/0x0741 = 0x14, 0x24
   const uint8_t syncWord[2] = { 0x14, 0x24 };
   sx126x_write_register(&bsRadioCtx, 0x0740, syncWord, 2);
 
@@ -113,13 +122,13 @@ bool bsRadioInit() {
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
 
   radioMcpwmInit(LORA_DIO1_PIN);
+  Serial.print("DIO1 interrupt attached on GPIO"); Serial.println(LORA_DIO1_PIN);
 
-  // Init complete — switch HAL back to drop-on-BUSY (non-blocking, safe for armed loop)
   bsRadioCtx.initMode = false;
 
-  bsSyncBootMs  = millis();
+  bsSyncBootMs     = millis();
   bsLastSyncSendMs = 0;
-  bsRadioState  = BS_RADIO_STANDBY;
+  bsRadioState     = BS_RADIO_STANDBY;
   return true;
 }
 
@@ -161,6 +170,7 @@ void bsRadioStartRx() {
   dio1Fired = false;
   if (sx126x_set_rx_with_timeout_in_rtc_step(&bsRadioCtx, SX126X_RX_CONTINUOUS) == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_RX_ACTIVE;
+    Serial.println("BS RX started");
   } else {
     Serial.println("BS RX start fail");
     bsRadioState = BS_RADIO_STANDBY;
@@ -180,14 +190,20 @@ void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
 }
 
 bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
-  if (digitalRead(LORA_BUSY_PIN)) { Serial.println("BS TX: BUSY — skip"); return false; }
+  if (digitalRead(LORA_BUSY_PIN)) {
+    Serial.print("BS TX: BUSY=1 before write_buffer — drop");
+    return false;
+  }
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
+  Serial.print("BS TX: writing "); Serial.print(len); Serial.println("B to FIFO...");
   if (sx126x_write_buffer(&bsRadioCtx, 0, pkt, (uint8_t)len) != SX126X_STATUS_OK) {
     Serial.println("BS TX: write_buffer fail"); return false;
   }
+  Serial.println("BS TX: starting TX...");
   if (sx126x_set_tx(&bsRadioCtx, 0) == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_TX_ACTIVE;
+    Serial.println("BS TX: active (waiting for TxDone on DIO1)");
     return true;
   }
   Serial.println("BS TX start fail");
@@ -204,11 +220,11 @@ void bsRadioStandby() {
 
 void bsSetSyncedFromTx(uint64_t anchorUs) {
   bsSyncAnchorUs     = (unsigned long)anchorUs;
-  bsSyncSlotIndex    = 1;           // WIN_CMD = slot index 1; we just transmitted in WIN_CMD
+  bsSyncSlotIndex    = 1;
   bsLastHandledSlot  = 0xFFFFFFFF;
   bsSynced           = true;
   bsMissedTelemSlots = 0;
-  Serial.print("BS SYNC anchor="); Serial.print(bsSyncAnchorUs); Serial.println("us");
+  Serial.print("BS SYNCED anchor="); Serial.print(bsSyncAnchorUs); Serial.println("us");
 }
 
 // ===================== RX PACKET HANDLER =====================
@@ -217,7 +233,6 @@ static void bsHandleRxDone() {
   sx126x_rx_buffer_status_t bufStatus = {};
   if (sx126x_get_rx_buffer_status(&bsRadioCtx, &bufStatus) != SX126X_STATUS_OK) {
     Serial.println("BS RX: get_rx_buffer_status fail");
-    bsPendingHeaderValidUs = 0;
     return;
   }
 
@@ -225,13 +240,11 @@ static void bsHandleRxDone() {
   uint8_t rxLen = bufStatus.pld_len_in_bytes;
   if (rxLen == 0 || rxLen > sizeof(buf)) {
     Serial.print("BS RX: bad length "); Serial.println(rxLen);
-    bsPendingHeaderValidUs = 0;
     return;
   }
 
   if (sx126x_read_buffer(&bsRadioCtx, bufStatus.buffer_start_pointer, buf, rxLen) != SX126X_STATUS_OK) {
     Serial.println("BS RX: read_buffer fail");
-    bsPendingHeaderValidUs = 0;
     return;
   }
 
@@ -241,10 +254,18 @@ static void bsHandleRxDone() {
   float rssiF = (float)pktStatus.rssi_pkt_in_dbm;
 
   bool isTelemetry = (rxLen >= 10 && buf[0] == 0xAF && buf[1] == ROCKET_DEVICE_ID);
-  if (isTelemetry) {
-    bsMissedTelemSlots = 0;
+  if (isTelemetry) bsMissedTelemSlots = 0;
+
+  // Print received packet bytes
+  Serial.print("BS RX "); Serial.print(rxLen); Serial.print("B snr:");
+  Serial.print(snrF, 1); Serial.print(" rssi:"); Serial.print(rssiF, 0);
+  Serial.print(" [");
+  for (uint8_t i = 0; i < rxLen && i < 8; i++) {
+    if (buf[i] < 0x10) Serial.print("0");
+    Serial.print(buf[i], HEX); Serial.print(" ");
   }
-  bsPendingHeaderValidUs = 0;
+  if (rxLen > 8) Serial.print("...");
+  Serial.println("]");
 
   bsOnPacketReceived(buf, rxLen, snrF, rssiF);
 }
@@ -256,102 +277,87 @@ static void bsRadioHandleIrq() {
   dio1Fired = false;
 
   sx126x_irq_mask_t irqFlags = 0;
-  sx126x_get_and_clear_irq_status(&bsRadioCtx, &irqFlags);
+  if (sx126x_get_and_clear_irq_status(&bsRadioCtx, &irqFlags) != SX126X_STATUS_OK) {
+    Serial.println("BS IRQ: get_and_clear failed");
+    bsRadioState = BS_RADIO_STANDBY;
+    return;
+  }
+
+  Serial.print("BS IRQ flags=0x"); Serial.println(irqFlags, HEX);
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsLedOff();
     bsRadioState = BS_RADIO_STANDBY;
     Serial.print("BS TxDone ts="); Serial.println((unsigned long)eventUs);
-    // If this was a sync TX, anchor the slot clock
     if (bsSyncTxInFlight) {
       bsSyncTxInFlight = false;
       bsSetSyncedFromTx(eventUs);
     }
+    // Restart RX immediately after TX completes
+    bsRadioStartRx();
   }
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     bsLedOn();
+    bsRadioState = BS_RADIO_STANDBY;
     bsHandleRxDone();
     bsLedOff();
-    bsRadioState = BS_RADIO_STANDBY;
+    // Restart RX
+    bsRadioStartRx();
   }
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     bsLedOff();
-    bsPendingHeaderValidUs = 0;
     int16_t rssiDbm = 0;
     if (sx126x_get_rssi_inst(&bsRadioCtx, &rssiDbm) == SX126X_STATUS_OK) {
       if (!bsBgRssiInit) { bsBgRssiEma = (float)rssiDbm; bsBgRssiInit = true; }
       else bsBgRssiEma += BG_RSSI_ALPHA * ((float)rssiDbm - bsBgRssiEma);
     }
     bsRadioState = BS_RADIO_STANDBY;
+    bsRadioStartRx();
   }
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
-    bsPendingHeaderValidUs = 0;
-    bsRadioState = BS_RADIO_STANDBY;
     Serial.println("BS RX: CRC/header error");
+    bsRadioState = BS_RADIO_STANDBY;
+    bsRadioStartRx();
   }
 }
 
 // ===================== SYNC MANAGEMENT =====================
 
-// Flag read by main.cpp to enqueue the sync packet
-bool bsSyncNeedsQueue = false;
-
-// Set by main.cpp before bsRadioStartTx for a sync packet; cleared on TxDone
-bool bsSyncTxInFlight = false;
-
-// Flag: main.cpp should attempt TX now (set in WIN_CMD at offset)
-bool bsWinCmdReady = false;
+bool bsSyncNeedsQueue  = false;
+bool bsSyncTxInFlight  = false;
+bool bsWinCmdReady     = false;
 
 void bsHandleSyncSend() {
   unsigned long now = millis();
 
-  // First sync: send 2 s after boot
   bool timeForSync = (bsLastSyncSendMs == 0) && ((now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS);
-
-  // Periodic resync every 60 s (also handles sync-loss recovery)
   if (bsLastSyncSendMs != 0 && (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_MS) {
     timeForSync = true;
   }
 
   if (!timeForSync) return;
 
-  // Check if we can send right now
-  if (bsSynced) {
-    // We're synced — queue via normal WIN_CMD slot machinery (bsWinCmdReady path)
-    Serial.println("BS SYNC: queuing via WIN_CMD slot");
-  } else {
-    // Not yet synced — send immediately (out-of-turn, no slot clock yet)
-    Serial.println("BS SYNC: queuing immediately (not synced)");
-  }
-
-  bsLastSyncSendMs = now;
-  bsSyncNeedsQueue  = true;
+  bsLastSyncSendMs = now;  // set immediately so it doesn't retrigger next loop
+  bsSyncNeedsQueue = true;
+  Serial.print("BS SYNC: time to send (synced="); Serial.print(bsSynced); Serial.println(")");
 }
 
 // ===================== MAIN RADIO UPDATE =====================
+// This function only handles IRQs and slot-clock bookkeeping.
+// TX dispatch and RX management is done in main.cpp / IRQ handler.
 
 static bool bsCmdSentThisSlot = false;
 
 void bsHandleRadio() {
-  // Always handle DIO1 first
   if (dio1Fired) {
     bsRadioHandleIrq();
   }
 
-  // Keep radio listening whenever it returns to standby
-  if (bsRadioState == BS_RADIO_STANDBY) {
-    bsRadioStartRx();
-    return;
-  }
-
-  if (!bsSynced) return;  // not synced: just keep RX running, nothing else to schedule
-
-  // ---- Synced mode: slot-based TX scheduling ----
-  // RX is always running (continuous); we only need to preempt it to transmit
-  // in WIN_CMD slots.
+  // Slot-clock bookkeeping (only when synced; RX/TX driven by main.cpp + IRQ handler)
+  if (!bsSynced) return;
 
   unsigned long now       = micros();
   unsigned long elapsed   = now - bsSyncAnchorUs;
@@ -360,25 +366,19 @@ void bsHandleRadio() {
   uint8_t       seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
   WindowMode    win       = SLOT_SEQUENCE[seqIdx];
 
-  // Reset per-slot guard on slot transition
   if (slotNum != bsLastHandledSlot) {
     bsCmdSentThisSlot = false;
+    bsLastHandledSlot = slotNum;
     if (win == WIN_TELEM) {
       bsMissedTelemSlots++;
-      if (slotNum != bsLastHandledSlot) {
-        bsLastHandledSlot = slotNum;
-        Serial.print("SLOT WIN_TELEM pos="); Serial.print(posInSlot); Serial.println("us");
-      }
+      Serial.print("SLOT WIN_TELEM #"); Serial.print(slotNum);
+      Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
     } else if (win == WIN_CMD) {
-      if (slotNum != bsLastHandledSlot) {
-        bsLastHandledSlot = slotNum;
-        Serial.print("SLOT WIN_CMD pos="); Serial.print(posInSlot); Serial.println("us");
-      }
+      Serial.print("SLOT WIN_CMD #"); Serial.print(slotNum);
+      Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
     }
-    bsLastHandledSlot = slotNum;
   }
 
-  // In WIN_CMD: raise bsWinCmdReady at the configured TX offset
   if (win == WIN_CMD && !bsCmdSentThisSlot && posInSlot >= BS_CMD_TX_OFFSET_US) {
     bsCmdSentThisSlot = true;
     bsWinCmdReady     = true;

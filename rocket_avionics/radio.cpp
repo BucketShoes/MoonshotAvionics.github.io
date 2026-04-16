@@ -119,6 +119,7 @@ bool radioInit() {
 
   // Attach GPIO interrupt on DIO1
   radioMcpwmInit(LORA_DIO1_PIN);
+  Serial.print("DIO1 interrupt attached on GPIO"); Serial.println(LORA_DIO1_PIN);
 
   // Init complete — switch HAL back to drop-on-BUSY (non-blocking, safe for armed loop)
   radioCtx.initMode = false;
@@ -183,6 +184,7 @@ void radioStartRx() {
   dio1Fired = false;
   if (sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, SX126X_RX_CONTINUOUS) == SX126X_STATUS_OK) {
     radioState = RADIO_RX_ACTIVE;
+    Serial.println("RX started");
   } else {
     Serial.println("RX start fail");
     radioState = RADIO_STANDBY;
@@ -258,6 +260,18 @@ static void handleRxDone() {
   int8_t pktRssi = pktStatus.rssi_pkt_in_dbm;
   int8_t pktSnr  = pktStatus.snr_pkt_in_db;
 
+  // Log received packet
+  Serial.print("RX "); Serial.print(rxLen);
+  Serial.print("B rssi="); Serial.print(pktRssi);
+  Serial.print(" snr="); Serial.print(pktSnr);
+  Serial.print(" [");
+  for (uint8_t i = 0; i < rxLen && i < 8; i++) {
+    if (rxBuf[i] < 0x10) Serial.print("0");
+    Serial.print(rxBuf[i], HEX); Serial.print(" ");
+  }
+  if (rxLen > 8) Serial.print("...");
+  Serial.println("]");
+
   bool structOk = (rxLen >= 2) && (rxBuf[0] == PKT_TELEMETRY || rxBuf[0] == PKT_COMMAND ||
                                     rxBuf[0] == PKT_BACKHAUL);
   if (!structOk) {
@@ -273,7 +287,13 @@ static void radioHandleIrq() {
   dio1Fired = false;
 
   sx126x_irq_mask_t irqFlags = 0;
-  sx126x_get_and_clear_irq_status(&radioCtx, &irqFlags);
+  if (sx126x_get_and_clear_irq_status(&radioCtx, &irqFlags) != SX126X_STATUS_OK) {
+    Serial.println("IRQ: get_and_clear failed");
+    radioState = RADIO_STANDBY;
+    return;
+  }
+
+  Serial.print("IRQ flags=0x"); Serial.println(irqFlags, HEX);
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     ledOff();
@@ -282,28 +302,33 @@ static void radioHandleIrq() {
   }
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
-    ledOn();  // brief flash: LED on, packet processed, then off
+    ledOn();
     handleRxDone();
     ledOff();
     radioState = RADIO_STANDBY;
-    Serial.println("RxDone");
   }
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     ledOff();
-    // Sample background RSSI on CMD window timeout (noise floor estimate)
     int16_t rssiDbm = 0;
     if (sx126x_get_rssi_inst(&radioCtx, &rssiDbm) == SX126X_STATUS_OK) {
       if (!rssiEmaInit) { rssiEma = rssiDbm; rssiEmaInit = true; }
       else rssiEma += RSSI_EMA_ALPHA * (rssiDbm - rssiEma);
     }
     radioState = RADIO_STANDBY;
+    Serial.println("RX timeout");
   }
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
     radioState = RADIO_STANDBY;
     invalidRxCount++;
     Serial.println("RX: CRC/header error");
+  }
+
+  if (irqFlags == 0) {
+    // DIO1 fired but IRQ register is empty — likely a spurious edge or ISR racing the clear
+    Serial.println("IRQ: flags=0 (spurious or race)");
+    radioState = RADIO_STANDBY;
   }
 }
 
@@ -336,7 +361,7 @@ void nonblockingRadio() {
     // ---- Bootstrap: TX telem at txIntervalUs rate, RX between ----
     if (txSendingEnabled && (now - lastTelemTxUs) >= txIntervalUs) {
       if (radioState == RADIO_RX_ACTIVE) radioStandby();
-      if (radioState == RADIO_STANDBY) {
+      if (radioState == RADIO_STANDBY && !digitalRead(LORA_BUSY_PIN)) {
         uint8_t pkt[32];
         size_t len = buildTelemetryPacket(pkt);
         Serial.print("TELEM TX (no sync) len="); Serial.println(len);
@@ -345,6 +370,8 @@ void nonblockingRadio() {
         if (!radioStartTx(pkt, len)) {
           ledOff();
         }
+      } else if (radioState == RADIO_STANDBY) {
+        Serial.println("TELEM TX: BUSY after standby, will retry next interval");
       }
     }
     return;
@@ -365,8 +392,14 @@ void nonblockingRadio() {
       Serial.println("SLOT WIN_TELEM skipped (TX disabled)");
       return;
     }
-    // Preempt RX and TX telem
+    // Preempt RX and TX telem.
+    // After standby the chip briefly asserts BUSY; if it's still high when we
+    // call radioStartTx the HAL drops the command. Skip this slot rather than spin.
     if (radioState == RADIO_RX_ACTIVE) radioStandby();
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("SLOT WIN_TELEM: BUSY after standby, skipping slot");
+      return;
+    }
     uint8_t pkt[32];
     size_t len = buildTelemetryPacket(pkt);
     Serial.print("SLOT WIN_TELEM TX len="); Serial.println(len);

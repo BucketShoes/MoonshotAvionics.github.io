@@ -389,8 +389,21 @@ size_t bsBuildSyncCmdPacket(uint8_t* buf) {
 
 static void dispatchCmdTx() {
   if (!cmdTx.active || cmdTx.sent >= cmdTx.sends) return;
-  // Stop continuous RX if needed before transmitting
-  if (bsRadioState == BS_RADIO_RX_ACTIVE) bsRadioStandby();
+  // Stop RX if running — after standby, BUSY briefly goes high while the radio
+  // transitions. We must wait for it before the TX SPI commands.
+  // This is the base station (not rocket) and is only called when we intend to TX,
+  // so a brief spin here (~300µs max) is acceptable — it is NOT in any armed path.
+  if (bsRadioState == BS_RADIO_RX_ACTIVE) {
+    bsRadioStandby();
+    // Wait for BUSY to deassert after standby command
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN)) {
+      if (micros() - t0 > 2000) {
+        Serial.println("CMD TX: BUSY stuck after standby, aborting");
+        return;
+      }
+    }
+  }
   if (bsRadioState != BS_RADIO_STANDBY) return;
 
   Serial.print("CMD TX "); Serial.print(cmdTx.sent + 1);
@@ -815,6 +828,7 @@ void setup() {
   if (bsRadioInit()) {
     Serial.println("ok");
     bsLoraReady = true;
+    bsRadioStartRx();  // start listening immediately after init
   } else {
     Serial.println("FAIL");
   }
@@ -838,61 +852,36 @@ void loop() {
   if (bsLoraReady) {
     bsHandleRadio();
 
-    // Auto-sync management: queue CMD_SET_SYNC at boot + resync on missed telem slots
+    // Auto-sync: set bsSyncNeedsQueue at 2s after boot, then every 60s
     bsHandleSyncSend();
 
-    // Sync needs queuing: if not yet synced, send immediately (radio is in continuous RX,
-    // pull to standby first). If already synced, let the normal WIN_CMD slot handle it
-    // (bsWinCmdReady path) — don't interrupt the slot machine mid-cycle.
+    // Build and load sync packet when flagged. Only load if no TX already queued.
     if (bsSyncNeedsQueue && !cmdTx.active) {
       bsSyncNeedsQueue = false;
-      if (!bsSynced) {
-        // Bootstrap: send immediately — no slot clock yet, no window to wait for
-        if (bsRadioState == BS_RADIO_RX_ACTIVE) bsRadioStandby();
-        if (bsRadioState == BS_RADIO_STANDBY) {
-          uint8_t syncPkt[17];
-          size_t syncLen = bsBuildSyncCmdPacket(syncPkt);
-          memcpy(cmdTx.pkt, syncPkt, syncLen);
-          cmdTx.pktLen   = (uint8_t)syncLen;
-          cmdTx.sends    = 1;
-          cmdTx.sent     = 0;
-          cmdTx.waitMs   = 0;
-          cmdTx.queuedMs = millis();
-          cmdTx.active   = true;
-          Serial.print("SYNC TX immediately nonce="); Serial.println(highestNonce);
-        } else {
-          Serial.println("SYNC: radio not standby, will retry next cycle");
-          bsSyncNeedsQueue = true;  // try again next loop
-        }
-      } else {
-        // Synced: load sync into cmdTx but send waitMs>0 so it waits for the next WIN_CMD
-        uint8_t syncPkt[17];
-        size_t syncLen = bsBuildSyncCmdPacket(syncPkt);
-        memcpy(cmdTx.pkt, syncPkt, syncLen);
-        cmdTx.pktLen   = (uint8_t)syncLen;
-        cmdTx.sends    = 1;
-        cmdTx.sent     = 0;
-        cmdTx.waitMs   = (uint16_t)min((unsigned long)60000UL, (unsigned long)SLOT_DURATION_US / 1000UL * 2);
-        cmdTx.queuedMs = millis();
-        cmdTx.active   = true;
-        Serial.print("SYNC queued for next WIN_CMD nonce="); Serial.println(highestNonce);
-      }
+      uint8_t syncPkt[17];
+      size_t syncLen = bsBuildSyncCmdPacket(syncPkt);
+      memcpy(cmdTx.pkt, syncPkt, syncLen);
+      cmdTx.pktLen   = (uint8_t)syncLen;
+      cmdTx.sends    = 1;
+      cmdTx.sent     = 0;
+      cmdTx.waitMs   = bsSynced ? 4000 : 0;  // if synced, wait up to 4s for WIN_CMD; else send now
+      cmdTx.queuedMs = millis();
+      cmdTx.active   = true;
+      Serial.print("SYNC loaded nonce="); Serial.print(highestNonce);
+      Serial.print(" waitMs="); Serial.println(cmdTx.waitMs);
     }
 
-    // Slot machine signals WIN_CMD window open — attempt TX
+    // Dispatch: slot machine signals WIN_CMD (synced path)
     if (bsWinCmdReady) {
       bsWinCmdReady = false;
       dispatchCmdTx();
     }
 
-    // Out-of-turn fallback for non-synced or expired-wait commands.
-    // When not synced, waitMs=0 commands (like sync) fire immediately via this path too.
-    if (cmdTx.active && cmdTx.sent < cmdTx.sends) {
-      bool waitExpired = (cmdTx.waitMs == 0) || ((millis() - cmdTx.queuedMs) > cmdTx.waitMs);
-      bool notSyncedOrExpired = !bsSynced || waitExpired;
-      if (notSyncedOrExpired && bsRadioState == BS_RADIO_STANDBY) {
-        if (cmdTx.waitMs > 0 && waitExpired) Serial.println("CMD TX out-of-turn (wait expired)");
-        cmdTx.queuedMs = millis();
+    // Dispatch: send immediately when not synced (waitMs=0) or wait expired
+    if (cmdTx.active && cmdTx.sent < cmdTx.sends && bsRadioState == BS_RADIO_STANDBY) {
+      bool waitExpired = (cmdTx.waitMs == 0) || ((millis() - cmdTx.queuedMs) >= cmdTx.waitMs);
+      if (waitExpired) {
+        if (cmdTx.waitMs > 0) Serial.println("CMD TX: wait expired, sending out-of-slot");
         dispatchCmdTx();
       }
     }
