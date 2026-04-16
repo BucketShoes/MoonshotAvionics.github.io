@@ -41,7 +41,7 @@ while ((Get-Date) -lt $deadline) {
     }
     Start-Sleep -Milliseconds 300
 }
-if (-not $found) { Write-Host "WARNING: $PORT did not appear within 15s — trying anyway." }
+if (-not $found) { Write-Host "WARNING: $PORT did not appear within 15s, trying anyway." }
 
 Write-Host ""
 Write-Host "=== ROCKET: monitor on $PORT (Ctrl+C to stop) ==="

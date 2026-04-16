@@ -47,13 +47,13 @@ while ((Get-Date) -lt $deadline) {
     }
     Start-Sleep -Milliseconds 300
 }
-if (-not $found) { Write-Host "WARNING: $PORT did not appear — trying LittleFS anyway." }
+if (-not $found) { Write-Host "WARNING: $PORT did not appear, trying LittleFS anyway." }
 
 Write-Host ""
 Write-Host "=== BASE STATION: uploading LittleFS ==="
 & $PIO run -e base_station -t uploadfs
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "LittleFS upload FAILED (exit $LASTEXITCODE) — starting monitor anyway."
+    Write-Host "LittleFS upload FAILED (exit $LASTEXITCODE), starting monitor anyway."
 }
 
 Write-Host ""
@@ -68,7 +68,7 @@ while ((Get-Date) -lt $deadline) {
     }
     Start-Sleep -Milliseconds 300
 }
-if (-not $found) { Write-Host "WARNING: $PORT did not appear — trying monitor anyway." }
+if (-not $found) { Write-Host "WARNING: $PORT did not appear, trying monitor anyway." }
 
 Write-Host ""
 Write-Host "=== BASE STATION: monitor on $PORT (Ctrl+C to stop) ==="
