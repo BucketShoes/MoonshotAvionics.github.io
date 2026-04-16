@@ -331,13 +331,14 @@ void nonblockingLoopStats() {
 
     Serial.print("Loop: "); Serial.print((int)hz);
     Serial.print(" Hz  Batt: "); Serial.print(batteryMv);
-    Serial.print("mV  DelayedTX: "); Serial.print(delayedTxCount);
+    Serial.print("mV  Sync:"); Serial.print(radioSynced ? "YES" : "NO");
+    Serial.print("  DelayedTX: "); Serial.print(delayedTxCount);
     Serial.print("  InvalidRX: "); Serial.print(invalidRxCount);
     Serial.print("  recentMaxLoopUs: "); Serial.print(recentMaxLoopUs);
     Serial.print("  runningMaxLoopUs: "); Serial.print(runningMaxLoopUs);
     Serial.print("  bleCbTotal: "); Serial.print(bleCallbackTotalUs);
     Serial.print("us  bleCbPeak: "); Serial.print(bleCallbackPeakUs);
-    Serial.println("us. new2");
+    Serial.println("us");
 
     if (recentMaxLoopUs > runningMaxLoopUs) runningMaxLoopUs = recentMaxLoopUs;
     recentMaxLoopUs = 0;

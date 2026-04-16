@@ -142,10 +142,8 @@ size_t bsBuildSyncCmdPacket(uint8_t* buf);
 // Main radio update. Call every loop iteration.
 void bsHandleRadio();
 
-// Trigger a sync send (queues CMD_SET_SYNC for normal slot TX).
-void bsTriggerSyncSend();
-
-// Auto-sync management: send at boot + resync on missed telem slots.
+// Auto-sync management: send 2s after boot, retry every 60s.
+// Sets bsSyncNeedsQueue when it is time to send. main.cpp handles the actual queuing.
 void bsHandleSyncSend();
 
 // Callback invoked from bsHandleRadio() when a good LoRa packet is received.

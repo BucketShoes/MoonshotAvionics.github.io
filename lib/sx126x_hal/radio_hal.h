@@ -1,8 +1,8 @@
-// radio_hal.h — ESP32-S3 HAL context and DIO1 capture for the SX126x driver.
+// radio_hal.h — ESP32 HAL context and DIO1 interrupt capture for the SX126x driver.
 // The Lora-net/sx126x_driver library declares the four HAL function prototypes
 // (sx126x_hal_write/read/reset/wakeup) in its own sx126x_hal.h. This file adds
-// what the driver leaves to the user: the context struct, the MCPWM DIO1 capture
-// state, and the init function.
+// what the driver leaves to the user: the context struct, the DIO1 interrupt
+// capture state, and the init function.
 //
 // Usage:
 //   1. Fill an sx126x_hal_context_t with your SPI instance and pin numbers.
@@ -18,12 +18,11 @@
 //   missed and the operation should be dropped (logged, not retried in-place).
 //   The no-spin policy is intentional: slot windows are exact and mandatory.
 //   Missing one is correct behaviour; spinning to catch up would corrupt timing.
+//   Exception: initMode=true enables spinning during radio init (setup() only).
 //
-// MCPWM capture:
-//   DIO1 is connected to an MCPWM capture channel at 80 MHz. On every rising
-//   edge the counter value is latched by hardware before the ISR runs, giving
-//   ~12.5 ns resolution and zero ISR-jitter.
-//   Read with dio1TimestampUs() after checking dio1Fired.
+// DIO1 interrupt:
+//   DIO1 is connected to a GPIO interrupt (RISING edge). The ISR captures
+//   micros() into dio1CaptureVal and sets dio1Fired. Resolution is ~1 µs.
 
 #ifndef RADIO_HAL_H
 #define RADIO_HAL_H
@@ -44,22 +43,20 @@ struct sx126x_hal_context_t {
 };
 
 // ===================== DIO1 CAPTURE STATE =====================
-// Written by MCPWM capture ISR (IRAM-safe); read from main loop.
+// Written by GPIO ISR (IRAM-safe); read from main loop.
 
-extern volatile bool     dio1Fired;       // set by capture ISR on each DIO1 rising edge
-extern volatile uint32_t dio1CaptureVal;  // raw 80 MHz capture timer value at that edge
+extern volatile bool     dio1Fired;       // set by ISR on each DIO1 rising edge
+extern volatile uint32_t dio1CaptureVal;  // micros() at that edge (~1 µs resolution)
 
 // Microsecond timestamp of the most recent DIO1 rising edge.
-// Timer runs at 1 MHz (1 µs/tick), so captured value is already in microseconds.
-// Valid only while dio1Fired is true (or immediately after clearing it, before
-// the next edge could arrive).
+// Valid only while dio1Fired is true (or immediately after clearing it).
 inline uint64_t dio1TimestampUs() {
     return (uint64_t)dio1CaptureVal;
 }
 
 // ===================== PUBLIC API =====================
 
-// Initialise MCPWM capture timer and channel on the given DIO1 GPIO pin.
+// Attach GPIO interrupt on the given DIO1 pin (RISING edge).
 // Call once during radio init, after SPI and pins are configured.
 void radioMcpwmInit(uint8_t dio1Pin);
 

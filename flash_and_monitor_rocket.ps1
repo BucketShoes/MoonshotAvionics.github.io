@@ -29,5 +29,6 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 200
 }
 
+Clear-Host
 Write-Host "=== ROCKET: monitoring $PORT (Ctrl+C to stop) ==="
 & $PIO device monitor -e rocket

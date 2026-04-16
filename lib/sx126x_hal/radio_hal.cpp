@@ -1,10 +1,9 @@
 // radio_hal.cpp — SX126x HAL implementation for ESP32-S3 (Arduino SPI).
 // Implements the four HAL functions declared in Lora-net/sx126x_driver's sx126x_hal.h,
-// plus MCPWM hardware capture for jitter-free DIO1 timestamps.
+// plus a GPIO ISR for DIO1 edge detection.
 
 #include <Arduino.h>
 #include <SPI.h>
-#include "driver/mcpwm_prelude.h"  // ESP-IDF MCPWM capture API
 #include "radio_hal.h"             // our header: sx126x_hal_context_t, dio1Fired, radioMcpwmInit
 #include "sx126x_hal.h"            // driver's header: sx126x_hal_status_t, SX126X_NOP, and the
                                    // four HAL function prototypes we implement here
@@ -14,52 +13,16 @@
 volatile bool     dio1Fired      = false;
 volatile uint32_t dio1CaptureVal = 0;
 
-// ===================== MCPWM CAPTURE =====================
+// ===================== GPIO ISR =====================
 
-// cap_value is in timer ticks. Timer is configured at 1 MHz so ticks == microseconds.
-static bool IRAM_ATTR mcpwmCaptureIsr(mcpwm_cap_channel_handle_t /*chan*/,
-                                      const mcpwm_capture_event_data_t* data,
-                                      void* /*user_data*/) {
-    dio1CaptureVal = (uint32_t)data->cap_value;
+static void IRAM_ATTR dio1Isr() {
+    dio1CaptureVal = (uint32_t)micros();
     dio1Fired      = true;
-    return false;  // no higher-priority task woken
 }
 
 void radioMcpwmInit(uint8_t dio1Pin) {
-    // Do NOT call pinMode here — the Arduino peripheral manager would register
-    // this pin as GPIO and conflict with MCPWM taking ownership of it.
-    // Pull-down is applied at the MCPWM level via chanCfg.flags.pull_down below.
-
-    // Capture timer at 1 MHz (1 µs resolution). resolution_hz must be set
-    // explicitly — 0 is not "no divider", it is undefined behaviour in this driver.
-    mcpwm_cap_timer_handle_t capTimer = nullptr;
-    mcpwm_capture_timer_config_t timerCfg = {};
-    timerCfg.clk_src       = MCPWM_CAPTURE_CLK_SRC_DEFAULT;  // APB 80 MHz
-    timerCfg.group_id      = 0;
-    timerCfg.resolution_hz = 1000000;  // 1 MHz → 1 µs per tick
-    ESP_ERROR_CHECK(mcpwm_new_capture_timer(&timerCfg, &capTimer));
-
-    // Capture channel on DIO1, rising edge only.
-    mcpwm_cap_channel_handle_t capChan = nullptr;
-    mcpwm_capture_channel_config_t chanCfg = {};
-    chanCfg.gpio_num               = (int)dio1Pin;
-    chanCfg.prescale               = 1;
-    chanCfg.flags.pos_edge         = true;
-    chanCfg.flags.neg_edge         = false;
-    chanCfg.flags.pull_up          = false;
-    chanCfg.flags.pull_down        = true;   // reinforce pull-down at MCPWM level too
-    chanCfg.flags.invert_cap_signal = false;
-    chanCfg.flags.io_loop_back     = false;
-    ESP_ERROR_CHECK(mcpwm_new_capture_channel(capTimer, &chanCfg, &capChan));
-
-    // Register ISR callback (runs in IRAM, no FreeRTOS heap).
-    mcpwm_capture_event_callbacks_t cbs = {};
-    cbs.on_cap = mcpwmCaptureIsr;
-    ESP_ERROR_CHECK(mcpwm_capture_channel_register_event_callbacks(capChan, &cbs, nullptr));
-
-    ESP_ERROR_CHECK(mcpwm_capture_channel_enable(capChan));
-    ESP_ERROR_CHECK(mcpwm_capture_timer_enable(capTimer));
-    ESP_ERROR_CHECK(mcpwm_capture_timer_start(capTimer));
+    pinMode(dio1Pin, INPUT_PULLDOWN);
+    attachInterrupt(digitalPinToInterrupt(dio1Pin), dio1Isr, RISING);
 }
 
 // ===================== SPI HELPERS =====================

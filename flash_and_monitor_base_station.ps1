@@ -70,5 +70,6 @@ while ((Get-Date) -lt $deadline) {
 if (-not $found) { Write-Host "WARNING: $PORT did not appear, trying monitor anyway." }
 
 Write-Host ""
+Clear-Host
 Write-Host "=== BASE STATION: monitor on $PORT (Ctrl+C to stop) ==="
 & $PIO device monitor -e base_station

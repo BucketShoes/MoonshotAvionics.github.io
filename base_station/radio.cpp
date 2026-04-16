@@ -47,14 +47,14 @@ uint64_t      bsPendingHeaderValidUs = 0;
 
 // Background RSSI EMA — updated at RX timeout, not on received packets.
 float         bsBgRssiEma = 0.0f;
-static bool   bsBgRssiInit = false;  // true after first sample
-#define BG_RSSI_ALPHA  0.1f           // EMA smoothing factor (~10 timeouts)
+static bool   bsBgRssiInit = false;
+#define BG_RSSI_ALPHA  0.1f
 
 // ===================== SYNC BOOKKEEPING =====================
 
-static bool          bsSyncPending  = false;
-static bool          bsSyncSent     = false;
-static unsigned long bsSyncBootMs   = 0;
+static unsigned long bsSyncBootMs     = 0;   // set when init completes
+static unsigned long bsLastSyncSendMs = 0;   // millis() of last sync TX attempt
+#define BS_SYNC_RETRY_MS  60000UL            // resend sync every 60 s
 
 // ===================== HELPERS =====================
 
@@ -105,8 +105,8 @@ bool bsRadioInit() {
   bsRadioApplyConfig();
 
   sx126x_set_dio_irq_params(&bsRadioCtx,
-    SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
-    SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
+    SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT,
+    SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT,
     SX126X_IRQ_NONE,
     SX126X_IRQ_NONE);
 
@@ -117,8 +117,9 @@ bool bsRadioInit() {
   // Init complete — switch HAL back to drop-on-BUSY (non-blocking, safe for armed loop)
   bsRadioCtx.initMode = false;
 
-  bsSyncBootMs = millis();
-  bsRadioState = BS_RADIO_STANDBY;
+  bsSyncBootMs  = millis();
+  bsLastSyncSendMs = 0;
+  bsRadioState  = BS_RADIO_STANDBY;
   return true;
 }
 
@@ -202,13 +203,12 @@ void bsRadioStandby() {
 // ===================== SYNC =====================
 
 void bsSetSyncedFromTx(uint64_t anchorUs) {
-  bsSyncAnchorUs    = (unsigned long)anchorUs;
-  bsSyncSlotIndex   = 1;           // WIN_CMD = 1; we just transmitted in WIN_CMD
-  bsLastHandledSlot = 0xFFFFFFFF;
-  bsSynced          = true;
-  bsSyncSent        = true;
+  bsSyncAnchorUs     = (unsigned long)anchorUs;
+  bsSyncSlotIndex    = 1;           // WIN_CMD = slot index 1; we just transmitted in WIN_CMD
+  bsLastHandledSlot  = 0xFFFFFFFF;
+  bsSynced           = true;
   bsMissedTelemSlots = 0;
-  Serial.print("BS SYNC anchor="); Serial.print(bsSyncAnchorUs); Serial.println("us (from TxDone)");
+  Serial.print("BS SYNC anchor="); Serial.print(bsSyncAnchorUs); Serial.println("us");
 }
 
 // ===================== RX PACKET HANDLER =====================
@@ -240,34 +240,12 @@ static void bsHandleRxDone() {
   float snrF  = (float)pktStatus.snr_pkt_in_db;
   float rssiF = (float)pktStatus.rssi_pkt_in_dbm;
 
-  // Check for rocket telemetry (0xAF) — update missed-telem counter and drift log
   bool isTelemetry = (rxLen >= 10 && buf[0] == 0xAF && buf[1] == ROCKET_DEVICE_ID);
   if (isTelemetry) {
     bsMissedTelemSlots = 0;
-
-    // Compute drift: back-calculate preamble start from HeaderValid timestamp.
-    // symbolTimeUs = 2^SF / BW_Hz * 1e6
-    // preambleStartUs = headerValidUs - (preambleSymbols + 4.25) * symbolTimeUs
-    // expectedPreambleStartUs = bsSyncAnchorUs + slotNum * SLOT_DURATION_US
-    // drift = preambleStartUs - expectedPreambleStartUs
-    if (bsPendingHeaderValidUs != 0 && bsSynced) {
-      unsigned long elapsed  = (unsigned long)bsPendingHeaderValidUs - bsSyncAnchorUs;
-      uint32_t slotNum       = (uint32_t)(elapsed / SLOT_DURATION_US);
-      float    bwHz          = activeBwKHz * 1000.0f;
-      float    symbolTimeUs  = (float)(1UL << activeSF) / bwHz * 1e6f;
-      float    preambleOffUs = ((float)LORA_PREAMBLE + 4.25f) * symbolTimeUs;
-      uint64_t preambleStartUs = bsPendingHeaderValidUs - (uint64_t)preambleOffUs;
-      uint64_t expectedUs    = (uint64_t)bsSyncAnchorUs + (uint64_t)slotNum * SLOT_DURATION_US;
-      int32_t  drift         = (int32_t)(preambleStartUs - expectedUs);
-      Serial.print("DRIFT: preambleStart="); Serial.print((unsigned long)preambleStartUs);
-      Serial.print(" expected="); Serial.print((unsigned long)expectedUs);
-      Serial.print(" drift="); Serial.print(drift); Serial.println("us");
-      // anchorCorrection intentionally not applied yet — phase 2
-    }
   }
   bsPendingHeaderValidUs = 0;
 
-  // Pass to main.cpp for transport dispatch
   bsOnPacketReceived(buf, rxLen, snrF, rssiF);
 }
 
@@ -280,30 +258,27 @@ static void bsRadioHandleIrq() {
   sx126x_irq_mask_t irqFlags = 0;
   sx126x_get_and_clear_irq_status(&bsRadioCtx, &irqFlags);
 
-  if (irqFlags & SX126X_IRQ_HEADER_VALID) {
-    bsPendingHeaderValidUs = eventUs;
-  }
-
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsLedOff();
-    // Anchor slot clock to this TxDone if this was a sync command.
-    // (bsHandleRadio sets bsSynced when it queues sync TX — checked after IRQ.)
     bsRadioState = BS_RADIO_STANDBY;
     Serial.print("BS TxDone ts="); Serial.println((unsigned long)eventUs);
+    // If this was a sync TX, anchor the slot clock
+    if (bsSyncTxInFlight) {
+      bsSyncTxInFlight = false;
+      bsSetSyncedFromTx(eventUs);
+    }
   }
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
-    bsLedOff();
+    bsLedOn();
     bsHandleRxDone();
+    bsLedOff();
     bsRadioState = BS_RADIO_STANDBY;
   }
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     bsLedOff();
     bsPendingHeaderValidUs = 0;
-    // Sample instantaneous RSSI for background noise EMA.
-    // Radio is still in RX at this point (timeout just fired), so the reading
-    // reflects channel noise at a random moment in the listen window.
     int16_t rssiDbm = 0;
     if (sx126x_get_rssi_inst(&bsRadioCtx, &rssiDbm) == SX126X_STATUS_OK) {
       if (!bsBgRssiInit) { bsBgRssiEma = (float)rssiDbm; bsBgRssiInit = true; }
@@ -319,154 +294,93 @@ static void bsRadioHandleIrq() {
   }
 }
 
-// ===================== SYNC PACKET =====================
-
-// cmdTx is owned by main.cpp; bsBuildSyncCmdPacket only builds the packet bytes.
-// Callers must include <mbedtls/md.h> and provide HMAC_KEY / HMAC_KEY_LEN / HMAC_TRUNC_LEN.
-
-// Forward declaration — implemented in main.cpp (has access to secrets.h and highestNonce)
-extern size_t bsBuildSyncCmdPacket(uint8_t* buf);
-
-// ===================== SYNC SEND =====================
-
-void bsTriggerSyncSend() {
-  bsSyncPending = true;
-}
-
-// Pending TX slot flag: set when sync was queued, cleared after TxDone anchors the clock.
-static bool bsSyncTxPending = false;
-static uint64_t bsSyncTxDoneUs = 0;  // captured by IRQ path, processed here
-
-void bsHandleSyncSend() {
-  unsigned long now = millis();
-
-  if (!bsSyncSent && (now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS) {
-    bsSyncPending = true;
-  }
-
-  if (bsSynced && bsMissedTelemSlots >= BS_SYNC_LOSS_SLOTS) {
-    Serial.println("BS SYNC: too many missed telem slots, resyncing");
-    bsSyncPending = true;
-    bsMissedTelemSlots = 0;
-  }
-
-  // Nothing to do
-  if (!bsSyncPending) return;
-
-  // Sync is sent as a normal command via queueCommandTx() from main.cpp.
-  // Raise the flag; main.cpp calls bsBuildSyncCmdPacket and queues it.
-  bsSyncPending = false;
-  bsSyncNeedsQueue = true;
-}
+// ===================== SYNC MANAGEMENT =====================
 
 // Flag read by main.cpp to enqueue the sync packet
 bool bsSyncNeedsQueue = false;
 
+// Set by main.cpp before bsRadioStartTx for a sync packet; cleared on TxDone
+bool bsSyncTxInFlight = false;
+
+// Flag: main.cpp should attempt TX now (set in WIN_CMD at offset)
+bool bsWinCmdReady = false;
+
+void bsHandleSyncSend() {
+  unsigned long now = millis();
+
+  // First sync: send 2 s after boot
+  bool timeForSync = (bsLastSyncSendMs == 0) && ((now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS);
+
+  // Periodic resync every 60 s (also handles sync-loss recovery)
+  if (bsLastSyncSendMs != 0 && (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_MS) {
+    timeForSync = true;
+  }
+
+  if (!timeForSync) return;
+
+  // Check if we can send right now
+  if (bsSynced) {
+    // We're synced — queue via normal WIN_CMD slot machinery (bsWinCmdReady path)
+    Serial.println("BS SYNC: queuing via WIN_CMD slot");
+  } else {
+    // Not yet synced — send immediately (out-of-turn, no slot clock yet)
+    Serial.println("BS SYNC: queuing immediately (not synced)");
+  }
+
+  bsLastSyncSendMs = now;
+  bsSyncNeedsQueue  = true;
+}
+
 // ===================== MAIN RADIO UPDATE =====================
 
-// Per-slot guards (replace bsEarlyRxStarted / bsCmdSentThisSlot)
-static bool bsRxStartedThisSlot  = false;
-static bool bsCmdSentThisSlot    = false;
-// Track last TX's sync intent — set by main.cpp before calling bsRadioStartTx for sync
-bool bsSyncTxInFlight = false;
+static bool bsCmdSentThisSlot = false;
 
 void bsHandleRadio() {
   // Always handle DIO1 first
   if (dio1Fired) {
-    uint64_t txDoneUs = dio1TimestampUs();  // read before clearing dio1Fired
     bsRadioHandleIrq();
-
-    // If we just completed a sync TX, anchor the slot clock
-    if (bsSyncTxInFlight && bsRadioState == BS_RADIO_STANDBY) {
-      bsSyncTxInFlight = false;
-      bsSetSyncedFromTx(txDoneUs);
-    }
   }
 
-  unsigned long now = micros();
-
-  // ---- Bootstrap mode ----
-  if (!bsSynced) {
-    if (bsRadioState == BS_RADIO_STANDBY) {
-      static unsigned long lastBootstrapPrintMs = 0;
-      unsigned long nowMs = millis();
-      if (nowMs - lastBootstrapPrintMs >= 5000) {
-        lastBootstrapPrintMs = nowMs;
-        Serial.print("BS bootstrap RX (no sync) uptime="); Serial.print(nowMs); Serial.println("ms");
-      }
-      bsRadioStartRx();
-    }
+  // Keep radio listening whenever it returns to standby
+  if (bsRadioState == BS_RADIO_STANDBY) {
+    bsRadioStartRx();
     return;
   }
 
-  // ---- Synced mode ----
+  if (!bsSynced) return;  // not synced: just keep RX running, nothing else to schedule
 
+  // ---- Synced mode: slot-based TX scheduling ----
+  // RX is always running (continuous); we only need to preempt it to transmit
+  // in WIN_CMD slots.
+
+  unsigned long now       = micros();
   unsigned long elapsed   = now - bsSyncAnchorUs;
   uint32_t      slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
   uint32_t      posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
   uint8_t       seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
   WindowMode    win       = SLOT_SEQUENCE[seqIdx];
-  uint32_t      timeToNext = SLOT_DURATION_US - posInSlot;
 
-  // Reset per-slot guards on slot transition
+  // Reset per-slot guard on slot transition
   if (slotNum != bsLastHandledSlot) {
-    bsRxStartedThisSlot = false;
-    bsCmdSentThisSlot   = false;
-  }
-
-  // Don't preempt in-progress operations — let them finish
-  if (bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE) return;
-
-  switch (win) {
-
-    case WIN_TELEM: {
+    bsCmdSentThisSlot = false;
+    if (win == WIN_TELEM) {
+      bsMissedTelemSlots++;
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot = slotNum;
-        bsMissedTelemSlots++;
         Serial.print("SLOT WIN_TELEM pos="); Serial.print(posInSlot); Serial.println("us");
       }
-      // Start listening once per slot if not already started
-      if (!bsRxStartedThisSlot) {
-        bsRxStartedThisSlot = true;
-        bsLedOn();
-        bsRadioStartRxTimeout(BS_RX_TIMEOUT_RAW);
-      }
-      break;
-    }
-
-    case WIN_CMD: {
+    } else if (win == WIN_CMD) {
       if (slotNum != bsLastHandledSlot) {
         bsLastHandledSlot = slotNum;
         Serial.print("SLOT WIN_CMD pos="); Serial.print(posInSlot); Serial.println("us");
       }
-
-      // Fire queued command once per slot at BS_CMD_TX_OFFSET_US.
-      // Raise the flag once; main.cpp checks it, fires bsRadioStartTx, and clears it.
-      if (!bsCmdSentThisSlot && posInSlot >= BS_CMD_TX_OFFSET_US) {
-        bsCmdSentThisSlot = true;
-        bsWinCmdReady = true;
-      }
-
-      // Start early-listen when close to next WIN_TELEM
-      if (!bsRxStartedThisSlot && timeToNext <= BS_RX_EARLY_US) {
-        bsRxStartedThisSlot = true;
-        bsLedOn();
-        bsRadioStartRxTimeout(BS_RX_TIMEOUT_RAW);
-      }
-      break;
     }
+    bsLastHandledSlot = slotNum;
+  }
 
-    case WIN_OFF:
-    default:
-      if (slotNum != bsLastHandledSlot) {
-        bsLastHandledSlot = slotNum;
-        Serial.println("SLOT WIN_OFF");
-      }
-      bsRadioStandby();
-      bsLedOff();
-      break;
+  // In WIN_CMD: raise bsWinCmdReady at the configured TX offset
+  if (win == WIN_CMD && !bsCmdSentThisSlot && posInSlot >= BS_CMD_TX_OFFSET_US) {
+    bsCmdSentThisSlot = true;
+    bsWinCmdReady     = true;
   }
 }
-
-// Flag: main.cpp should attempt TX now (set in WIN_CMD at offset)
-bool bsWinCmdReady = false;
