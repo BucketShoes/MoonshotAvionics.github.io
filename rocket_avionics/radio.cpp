@@ -4,7 +4,7 @@
 // TEST MODE: uncomment to replace the slot state machine with bare continuous RX.
 // Rocket just listens and logs everything it hears. No telem TX, no sync.
 // Use this to verify DIO1 ISR and basic SPI before debugging the state machine.
-// #define ROCKET_RADIO_TEST_MODE
+#define ROCKET_RADIO_TEST_MODE
 
 #include <Arduino.h>
 #include "radio.h"
@@ -81,6 +81,9 @@ static void ledOff() { ledcWrite(LED_PIN, 0);   }
 // ===================== INIT =====================
 
 bool radioInit() {
+#ifdef ROCKET_RADIO_TEST_MODE
+  Serial.println("*** ROCKET RADIO TEST MODE ACTIVE — RX only, no telem TX ***");
+#endif
   pinMode(LORA_NSS_PIN,  OUTPUT);
   digitalWrite(LORA_NSS_PIN, HIGH);
   pinMode(LORA_BUSY_PIN, INPUT);
@@ -486,6 +489,9 @@ void nonblockingRadio() {
         Serial.print("IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
         dio1CaptureVal = (uint32_t)micros();
         dio1Fired = true;
+      } else {
+        Serial.print("IRQ poll: flags=0 state="); Serial.print(radioState);
+        Serial.print(" busy="); Serial.println(digitalRead(LORA_BUSY_PIN));
       }
     }
   }

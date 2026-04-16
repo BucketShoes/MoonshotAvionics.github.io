@@ -3,7 +3,7 @@
 // TEST MODE: uncomment to replace the slot state machine with a bare TX every 5s + continuous RX.
 // Use this to verify radio hardware works before debugging the state machine.
 // When test mode is active, bsHandleRadio() just does: TX a fixed packet every 5s, RX otherwise.
-// #define BS_RADIO_TEST_MODE
+#define BS_RADIO_TEST_MODE
 
 #include <Arduino.h>
 #include "radio.h"
@@ -79,6 +79,9 @@ static void bsLedOff() { ledcWrite(LED_PIN, 0);   }
 // ===================== INIT =====================
 
 bool bsRadioInit() {
+#ifdef BS_RADIO_TEST_MODE
+  Serial.println("*** BS RADIO TEST MODE ACTIVE — slot machine disabled ***");
+#endif
   pinMode(LORA_NSS_PIN,  OUTPUT);
   digitalWrite(LORA_NSS_PIN, HIGH);
   pinMode(LORA_BUSY_PIN, INPUT);
@@ -550,6 +553,9 @@ void bsHandleRadio() {
         Serial.print("BS IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
         dio1CaptureVal = (uint32_t)micros();
         dio1Fired = true;
+      } else {
+        Serial.print("BS IRQ poll: flags=0 state="); Serial.print(bsRadioState);
+        Serial.print(" busy="); Serial.println(digitalRead(LORA_BUSY_PIN));
       }
     }
   }
