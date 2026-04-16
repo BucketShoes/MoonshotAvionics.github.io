@@ -1,18 +1,56 @@
 {
     "version": "2.0.0",
     "tasks": [
-        // ── Upload everything ──────────────────────────────────────────────
-        // Rocket and base station run in parallel.
-        // Base station sequence: compress -> firmware -> (sleep) -> LittleFS
+        // ── DEFAULT: Flash + monitor both boards ───────────────────────────
+        // Ctrl+Shift+B. Each board runs in its own dedicated terminal.
+        // Re-running kills the existing terminal (and any monitor holding the port)
+        // before starting fresh. Base station does compress -> firmware -> LittleFS
+        // then becomes a monitor. Rocket does firmware then becomes a monitor.
         {
-            "label": "Upload All",
-            "dependsOn": ["Upload: rocket", "Upload: base_station + LittleFS"],
+            "label": "Flash + Monitor: Both",
+            "dependsOn": ["Flash + Monitor: rocket", "Flash + Monitor: base_station"],
             "dependsOrder": "parallel",
             "group": { "kind": "build", "isDefault": true },
             "presentation": { "reveal": "always", "panel": "shared" }
         },
 
         // ── Rocket ─────────────────────────────────────────────────────────
+        {
+            "label": "Flash + Monitor: rocket",
+            "type": "shell",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/flash_and_monitor_rocket.ps1"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "close": false
+            },
+            "problemMatcher": []
+        },
+
+        // ── Base station ────────────────────────────────────────────────────
+        {
+            "label": "Flash + Monitor: base_station",
+            "type": "shell",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/flash_and_monitor_base_station.ps1"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "close": false
+            },
+            "problemMatcher": []
+        },
+
+        // ── Upload only (no monitor, no LittleFS compress) ─────────────────
+        {
+            "label": "Upload All",
+            "dependsOn": ["Upload: rocket", "Upload: base_station + LittleFS"],
+            "dependsOrder": "parallel",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+
+        // ── Rocket upload only ─────────────────────────────────────────────
         {
             "label": "Upload: rocket",
             "type": "shell",
@@ -22,8 +60,7 @@
             "problemMatcher": []
         },
 
-        // ── Base station ───────────────────────────────────────────────────
-        // Steps run in sequence: compress -> firmware -> sleep -> LittleFS
+        // ── Base station: compress -> firmware -> sleep -> LittleFS ────────
         {
             "label": "Upload: base_station + LittleFS",
             "dependsOn": [
@@ -52,7 +89,6 @@
             "problemMatcher": []
         },
         {
-            // Port takes a few seconds to reappear after firmware reset
             "label": "Wait for COM9",
             "type": "shell",
             "command": "Start-Sleep",
@@ -67,28 +103,6 @@
             "args": ["run", "-e", "base_station", "-t", "uploadfs"],
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
-        },
-
-        // ── Upload + Monitor (one board at a time) ─────────────────────────
-        {
-            "label": "Upload + Monitor: rocket",
-            "dependsOn": ["Upload: rocket", "Wait for COM13", "Monitor: rocket (COM13)"],
-            "dependsOrder": "sequence",
-            "presentation": { "reveal": "always", "panel": "shared" }
-        },
-        {
-            "label": "Wait for COM13",
-            "type": "shell",
-            "command": "Start-Sleep",
-            "args": ["-Seconds", "4"],
-            "presentation": { "reveal": "silent", "panel": "shared" },
-            "problemMatcher": []
-        },
-        {
-            "label": "Upload + Monitor: base_station",
-            "dependsOn": ["Upload: base_station firmware", "Wait for COM9", "Monitor: base_station (COM9)"],
-            "dependsOrder": "sequence",
-            "presentation": { "reveal": "always", "panel": "shared" }
         },
 
         // ── Individual tasks (run from Command Palette if needed) ──────────

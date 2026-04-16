@@ -380,6 +380,12 @@ void bsHandleRadio() {
   // ---- Bootstrap mode ----
   if (!bsSynced) {
     if (bsRadioState == BS_RADIO_STANDBY) {
+      static unsigned long lastBootstrapPrintMs = 0;
+      unsigned long nowMs = millis();
+      if (nowMs - lastBootstrapPrintMs >= 5000) {
+        lastBootstrapPrintMs = nowMs;
+        Serial.print("BS bootstrap RX (no sync) uptime="); Serial.print(nowMs); Serial.println("ms");
+      }
       bsRadioStartRx();
     }
     return;

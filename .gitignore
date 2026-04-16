@@ -7,3 +7,4 @@ base_station/data/
 # PlatformIO auto-generated — contain machine-specific absolute paths
 .vscode/launch.json
 .vscode/c_cpp_properties.json
+/References

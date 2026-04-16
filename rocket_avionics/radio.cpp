@@ -367,6 +367,12 @@ void nonblockingRadio() {
   // ---- Bootstrap mode: continuous RX ----
   if (!radioSynced) {
     if (radioState == RADIO_STANDBY) {
+      static unsigned long lastBootstrapPrintMs = 0;
+      unsigned long nowMs = millis();
+      if (nowMs - lastBootstrapPrintMs >= 5000) {
+        lastBootstrapPrintMs = nowMs;
+        Serial.print("Rocket bootstrap RX (no sync) uptime="); Serial.print(nowMs); Serial.println("ms");
+      }
       radioStartRx();
     }
     return;
