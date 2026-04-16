@@ -55,4 +55,14 @@ inline uint64_t dio1TimestampUs() {
 // Call once during radio init, after SPI and pins are configured.
 void radioMcpwmInit(uint8_t dio1Pin);
 
+// Blocking BUSY poll — for use during init only (never call from main loop).
+// Spins until BUSY goes low or timeoutMs elapses. Returns true if ready.
+inline bool radioWaitBusy(const sx126x_hal_context_t* ctx, uint32_t timeoutMs = 100) {
+    unsigned long t0 = millis();
+    while (digitalRead(ctx->busy)) {
+        if ((millis() - t0) >= timeoutMs) return false;
+    }
+    return true;
+}
+
 #endif // RADIO_HAL_H

@@ -79,9 +79,7 @@ bool bsRadioInit() {
   pinMode(LORA_BUSY_PIN, INPUT);
 
   sx126x_hal_reset(&bsRadioCtx);
-  unsigned long t0 = millis();
-  while (digitalRead(LORA_BUSY_PIN) && (millis() - t0) < 100) {}
-  if (digitalRead(LORA_BUSY_PIN)) {
+  if (!radioWaitBusy(&bsRadioCtx, 100)) {
     Serial.println("LoRa init: BUSY stuck after reset");
     return false;
   }
@@ -90,27 +88,34 @@ bool bsRadioInit() {
     Serial.println("LoRa init: set_standby failed");
     return false;
   }
+  radioWaitBusy(&bsRadioCtx);
 
   if (sx126x_set_pkt_type(&bsRadioCtx, SX126X_PKT_TYPE_LORA) != SX126X_STATUS_OK) {
     Serial.println("LoRa init: set_pkt_type failed");
     return false;
   }
+  radioWaitBusy(&bsRadioCtx);
 
   sx126x_set_dio2_as_rf_sw_ctrl(&bsRadioCtx, true);
+  radioWaitBusy(&bsRadioCtx);
 
   // Sync word 0x12 (private network) → register pair 0x0740/0x0741 = 0x14, 0x24
   const uint8_t syncWord[2] = { 0x14, 0x24 };
   sx126x_write_register(&bsRadioCtx, 0x0740, syncWord, 2);
+  radioWaitBusy(&bsRadioCtx);
 
   bsRadioApplyConfig();
+  radioWaitBusy(&bsRadioCtx);
 
   sx126x_set_dio_irq_params(&bsRadioCtx,
     SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
     SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
     SX126X_IRQ_NONE,
     SX126X_IRQ_NONE);
+  radioWaitBusy(&bsRadioCtx);
 
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
+  radioWaitBusy(&bsRadioCtx);
 
   radioMcpwmInit(LORA_DIO1_PIN);
 
@@ -126,6 +131,7 @@ void bsRadioApplyConfig() {
   modParams.cr   = SX126X_LORA_CR_4_5;
   modParams.ldro = 0;
   sx126x_set_lora_mod_params(&bsRadioCtx, &modParams);
+  radioWaitBusy(&bsRadioCtx);
 
   sx126x_pkt_params_lora_t pktParams = {};
   pktParams.preamble_len_in_symb = LORA_PREAMBLE;
@@ -134,14 +140,18 @@ void bsRadioApplyConfig() {
   pktParams.crc_is_on            = true;
   pktParams.invert_iq_is_on      = false;
   sx126x_set_lora_pkt_params(&bsRadioCtx, &pktParams);
+  radioWaitBusy(&bsRadioCtx);
 
   uint32_t freqHz = (uint32_t)(activeFreqMHz * 1e6f + 0.5f);
   sx126x_set_rf_freq(&bsRadioCtx, freqHz);
+  radioWaitBusy(&bsRadioCtx);
 
   sx126x_set_tx_params(&bsRadioCtx, activePower, SX126X_RAMP_200_US);
+  radioWaitBusy(&bsRadioCtx);
 
   sx126x_pa_cfg_params_t paCfg = { .pa_duty_cycle = 0x04, .hp_max = 0x07, .device_sel = 0x00, .pa_lut = 0x01 };
   sx126x_set_pa_cfg(&bsRadioCtx, &paCfg);
+  radioWaitBusy(&bsRadioCtx);
 }
 
 // ===================== RX / TX =====================

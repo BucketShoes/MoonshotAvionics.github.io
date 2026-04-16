@@ -90,10 +90,10 @@ bool radioInit() {
 
   // Reset: HAL holds RST low 1 ms then releases. Chip needs ~3 ms to be ready.
   // After reset we poll BUSY in a short spin — this is init only, acceptable.
+  // We also wait between each subsequent command since the chip briefly
+  // re-asserts BUSY while processing each one.
   sx126x_hal_reset(&radioCtx);
-  unsigned long t0 = millis();
-  while (digitalRead(LORA_BUSY_PIN) && (millis() - t0) < 100) {}
-  if (digitalRead(LORA_BUSY_PIN)) {
+  if (!radioWaitBusy(&radioCtx, 100)) {
     Serial.println("LoRa init: BUSY stuck after reset");
     return false;
   }
@@ -103,15 +103,18 @@ bool radioInit() {
     Serial.println("LoRa init: set_standby failed");
     return false;
   }
+  radioWaitBusy(&radioCtx);
 
   // Packet type: LoRa
   if (sx126x_set_pkt_type(&radioCtx, SX126X_PKT_TYPE_LORA) != SX126X_STATUS_OK) {
     Serial.println("LoRa init: set_pkt_type failed");
     return false;
   }
+  radioWaitBusy(&radioCtx);
 
   // DIO2 as RF switch control (replaces radio.setDio2AsRfSwitch(true))
   sx126x_set_dio2_as_rf_sw_ctrl(&radioCtx, true);
+  radioWaitBusy(&radioCtx);
 
   // Sync word (0x12 = private network). Write directly to register.
   // SX126x LoRa sync word register: 0x0740 (MSB), 0x0741 (LSB).
@@ -120,9 +123,11 @@ bool radioInit() {
     const uint8_t syncWord[2] = { 0x14, 0x24 };
     sx126x_write_register(&radioCtx, 0x0740, syncWord, 2);
   }
+  radioWaitBusy(&radioCtx);
 
   // Modulation and packet parameters are applied by radioApplyConfig() below.
   radioApplyConfig();
+  radioWaitBusy(&radioCtx);
 
   // IRQ mask: TX_DONE | RX_DONE | TIMEOUT | HEADER_VALID — all on DIO1, none on DIO2/DIO3.
   sx126x_set_dio_irq_params(&radioCtx,
@@ -130,8 +135,10 @@ bool radioInit() {
     SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT | SX126X_IRQ_HEADER_VALID,
     SX126X_IRQ_NONE,
     SX126X_IRQ_NONE);
+  radioWaitBusy(&radioCtx);
 
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
+  radioWaitBusy(&radioCtx);
 
   // MCPWM hardware capture on DIO1 — replaces attachInterrupt / setDio1Action.
   radioMcpwmInit(LORA_DIO1_PIN);
@@ -148,6 +155,7 @@ void radioApplyConfig() {
   modParams.cr = SX126X_LORA_CR_4_5;
   modParams.ldro = 0;  // low data rate optimise: set to 1 for SF11/SF12 + BW125; off otherwise
   sx126x_set_lora_mod_params(&radioCtx, &modParams);
+  radioWaitBusy(&radioCtx);
 
   sx126x_pkt_params_lora_t pktParams = {};
   pktParams.preamble_len_in_symb = LORA_PREAMBLE;
@@ -156,17 +164,21 @@ void radioApplyConfig() {
   pktParams.crc_is_on            = true;
   pktParams.invert_iq_is_on      = false;
   sx126x_set_lora_pkt_params(&radioCtx, &pktParams);
+  radioWaitBusy(&radioCtx);
 
   // Frequency (Hz)
   uint32_t freqHz = (uint32_t)(activeFreqMHz * 1e6f + 0.5f);
   sx126x_set_rf_freq(&radioCtx, freqHz);
+  radioWaitBusy(&radioCtx);
 
   // TX power and ramp time
   sx126x_set_tx_params(&radioCtx, activePower, SX126X_RAMP_200_US);
+  radioWaitBusy(&radioCtx);
 
   // PA config for SX1262 (device_sel=0 = SX1262, hp_max=7, pa_lut=1 per datasheet §13.1.14)
   sx126x_pa_cfg_params_t paCfg = { .pa_duty_cycle = 0x04, .hp_max = 0x07, .device_sel = 0x00, .pa_lut = 0x01 };
   sx126x_set_pa_cfg(&radioCtx, &paCfg);
+  radioWaitBusy(&radioCtx);
 }
 
 // ===================== SYNC =====================
