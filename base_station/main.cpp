@@ -236,6 +236,9 @@ struct BleLogFetch {
   LogStore::SeqReader seq;
 } bleLogFetch = {false, 0, 0, 0, {}};
 
+// Forward declaration — defined below, used in dispatchCmdTx
+static bool BlockingReadyWait();
+
 // ===================== TRANSPORT-AGNOSTIC COMMAND TX =====================
 
 struct CmdTxState {
@@ -394,17 +397,15 @@ static void dispatchCmdTx() {
   // This is the base station (not rocket) and is only called when we intend to TX,
   // so a brief spin here (~300µs max) is acceptable — it is NOT in any armed path.
   if (bsRadioState == BS_RADIO_RX_ACTIVE) {
+    Serial.println("CMD TX: stopping RX for TX");
     bsRadioStandby();
-    // Wait for BUSY to deassert after standby command
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN)) {
-      if (micros() - t0 > 2000) {
-        Serial.println("CMD TX: BUSY stuck after standby, aborting");
-        return;
-      }
-    }
+    // TODO: @@@ Blocking - BUSY spin after standby, expected <300µs, bounded at 2ms
+    if (!BlockingReadyWait()) return;
   }
-  if (bsRadioState != BS_RADIO_STANDBY) return;
+  if (bsRadioState != BS_RADIO_STANDBY) {
+    Serial.print("CMD TX: not standby (state="); Serial.print(bsRadioState); Serial.println(") — skip");
+    return;
+  }
 
   Serial.print("CMD TX "); Serial.print(cmdTx.sent + 1);
   Serial.print("/"); Serial.print(cmdTx.sends);
@@ -424,6 +425,7 @@ static void dispatchCmdTx() {
 
   if (cmdTx.sent >= cmdTx.sends) {
     cmdTx.active = false;
+    Serial.print("CMD TX complete: all "); Serial.print(cmdTx.sends); Serial.println(" sends dispatched, waiting TxDone");
     if (logStoreOk) logStore.writeRecord(cmdTx.pkt, cmdTx.pktLen, 0x7F, millis());
 
     // OTA commands (0x50/0x51/0x52) targeted at this base station — apply locally
@@ -472,6 +474,19 @@ static void dispatchCmdTx() {
       return;
     }
   }
+}
+
+static bool BlockingReadyWait()
+{
+  // TODO: @@@ Blocking - spins on BUSY up to 2ms. Base station only, not in armed path.
+  unsigned long t0 = micros();
+  while (digitalRead(LORA_BUSY_PIN)) {
+    if (micros() - t0 > 2000) {
+      Serial.println("BS: BUSY stuck after standby (>2ms)");
+      return false;
+    }
+  }
+  return true;
 }
 
 // ===================== BUILD STATUS JSON =====================
@@ -864,7 +879,9 @@ void loop() {
       cmdTx.pktLen   = (uint8_t)syncLen;
       cmdTx.sends    = 1;
       cmdTx.sent     = 0;
-      cmdTx.waitMs   = bsSynced ? 4000 : 0;  // if synced, wait up to 4s for WIN_CMD; else send now
+      // Pre-sync: waitMs=0 so send fires as soon as radio is standby (no slot wait).
+      // Post-sync: wait up to 4s for the next WIN_CMD slot; if missed, send out-of-slot.
+      cmdTx.waitMs   = bsSynced ? 4000 : 0;
       cmdTx.queuedMs = millis();
       cmdTx.active   = true;
       Serial.print("SYNC loaded nonce="); Serial.print(highestNonce);
@@ -877,8 +894,10 @@ void loop() {
       dispatchCmdTx();
     }
 
-    // Dispatch: send immediately when not synced (waitMs=0) or wait expired
-    if (cmdTx.active && cmdTx.sent < cmdTx.sends && bsRadioState == BS_RADIO_STANDBY) {
+    // Dispatch: send immediately when not synced (waitMs=0) or wait expired.
+    // Never interrupt a TX in progress — if the radio is already transmitting,
+    // wait for TxDone IRQ (handled in bsHandleRadio) before sending next.
+    if (cmdTx.active && cmdTx.sent < cmdTx.sends && bsRadioState != BS_RADIO_TX_ACTIVE) {
       bool waitExpired = (cmdTx.waitMs == 0) || ((millis() - cmdTx.queuedMs) >= cmdTx.waitMs);
       if (waitExpired) {
         if (cmdTx.waitMs > 0) Serial.println("CMD TX: wait expired, sending out-of-slot");

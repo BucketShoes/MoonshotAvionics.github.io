@@ -153,6 +153,9 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       nvs.putChar("radio_pwr", activePower);
 
       // Apply new config. Radio must be in standby; radioApplyConfig() keeps it there.
+      // TODO: @@@ LONG BLOCKING - radioApplyConfig() calls radioWaitBusy() multiple times
+      // (up to 100ms each). CMD_SET_RADIO must be refused while armed (currently it is not).
+      // Add isArmed check before this branch to prevent blocking the armed loop.
       radioStandby();
       radioApplyConfig();
       radioStartRx();

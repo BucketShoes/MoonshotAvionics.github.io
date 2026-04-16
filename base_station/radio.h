@@ -123,7 +123,7 @@ void bsUpdateActiveFreqBw();
 // Initialise radio hardware. Call once in setup() after SPI is started.
 bool bsRadioInit();
 
-// Apply current activeChannel/activeSF/activePower to hardware. Radio must be in standby.
+// Apply current activeChannel/activeSF/activePower to hardware. Radio must be in standby. WARNING: THIS BLOCKS BRIEFLY. DO NOT CALL WHILE ARMED
 void bsRadioApplyConfig();
 
 void bsRadioStartRx();
@@ -137,7 +137,7 @@ void bsSetSyncedFromTx(uint64_t anchorUs);
 
 // Build CMD_SET_SYNC packet. Updates nonce and writes to NVS.
 // Returns packet length (always 17).
-size_t bsBuildSyncCmdPacket(uint8_t* buf);
+size_t bsBuildSyncCmdPacket(uint8_t *buf);
 
 // Main radio update. Call every loop iteration.
 void bsHandleRadio();
