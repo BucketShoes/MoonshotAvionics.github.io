@@ -338,7 +338,10 @@ void nonblockingLoopStats() {
     Serial.print("  runningMaxLoopUs: "); Serial.print(runningMaxLoopUs);
     Serial.print("  bleCbTotal: "); Serial.print(bleCallbackTotalUs);
     Serial.print("us  bleCbPeak: "); Serial.print(bleCallbackPeakUs);
-    Serial.println("us");
+    Serial.print("us  dio1ISR="); Serial.print(dio1IsrCount);
+    Serial.print(" radioState="); Serial.print(radioState);
+    Serial.print(" dio1Pin="); Serial.print(digitalRead(LORA_DIO1_PIN));
+    Serial.print(" busyPin="); Serial.println(digitalRead(LORA_BUSY_PIN));
 
     if (recentMaxLoopUs > runningMaxLoopUs) runningMaxLoopUs = recentMaxLoopUs;
     recentMaxLoopUs = 0;

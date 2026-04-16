@@ -1,5 +1,10 @@
 // radio.cpp — LoRa radio hardware, TX/RX state machine, slot-based scheduling.
 // See radio.h for the public API.
+//
+// TEST MODE: uncomment to replace the slot state machine with bare continuous RX.
+// Rocket just listens and logs everything it hears. No telem TX, no sync.
+// Use this to verify DIO1 ISR and basic SPI before debugging the state machine.
+// #define ROCKET_RADIO_TEST_MODE
 
 #include <Arduino.h>
 #include "radio.h"
@@ -163,13 +168,14 @@ void radioApplyConfig() {
   Serial.print("LoRa applyConfig: freq="); Serial.print(freqHz); Serial.print("Hz -> "); Serial.println(st);
   radioWaitBusy(&radioCtx);
 
-  st = sx126x_set_tx_params(&radioCtx, activePower, SX126X_RAMP_200_US);
-  Serial.print("LoRa applyConfig: tx_params pwr="); Serial.print(activePower); Serial.print("dBm -> "); Serial.println(st);
-  radioWaitBusy(&radioCtx);
-
+  // PA config must come BEFORE SetTxParams per SX1262 datasheet §13.1.14.
   sx126x_pa_cfg_params_t paCfg = { .pa_duty_cycle = 0x04, .hp_max = 0x07, .device_sel = 0x00, .pa_lut = 0x01 };
   st = sx126x_set_pa_cfg(&radioCtx, &paCfg);
-  Serial.print("LoRa applyConfig: pa_cfg duty=0x04 hp_max=0x07 -> "); Serial.println(st);
+  Serial.print("LoRa applyConfig: pa_cfg duty=0x04 hp_max=0x07 device_sel=0 -> "); Serial.println(st);
+  radioWaitBusy(&radioCtx);
+
+  st = sx126x_set_tx_params(&radioCtx, activePower, SX126X_RAMP_200_US);
+  Serial.print("LoRa applyConfig: tx_params pwr="); Serial.print(activePower); Serial.print("dBm ramp=200us -> "); Serial.println(st);
   radioWaitBusy(&radioCtx);
 }
 
@@ -409,9 +415,46 @@ static void radioHandleIrq() {
 // LED: on whenever radio is active (RX or TX), off when standby.
 
 static unsigned long lastTelemTxUs = 0;
+static uint32_t lastIsrCount = 0;
+
+#ifdef ROCKET_RADIO_TEST_MODE
+// In test mode: just RX continuously, log everything received. No TX, no sync.
+void nonblockingRadio() {
+  if (!loraReady) return;
+  uint32_t isrNow = dio1IsrCount;
+  if (isrNow != lastIsrCount) {
+    Serial.print("TEST DIO1 ISR! count="); Serial.println(isrNow);
+    lastIsrCount = isrNow;
+  }
+  if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
+      (radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE)) {
+    Serial.println("TEST DIO1 pin HIGH (poll fallback)");
+    dio1CaptureVal = (uint32_t)micros();
+    dio1Fired = true;
+  }
+  if (dio1Fired) radioHandleIrq();
+  if (radioState == RADIO_STANDBY) radioStartRx();
+}
+#else
 
 void nonblockingRadio() {
   if (!loraReady) return;
+
+  // Check ISR count — log if new fires detected
+  uint32_t isrNow = dio1IsrCount;
+  if (isrNow != lastIsrCount) {
+    Serial.print("DIO1 ISR fired! count="); Serial.print(isrNow);
+    Serial.print(" dio1Pin="); Serial.println(digitalRead(LORA_DIO1_PIN));
+    lastIsrCount = isrNow;
+  }
+
+  // Also poll DIO1 pin directly as fallback
+  if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
+      (radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE)) {
+    Serial.println("DIO1 pin HIGH but ISR not set — polling fallback");
+    dio1CaptureVal = (uint32_t)micros();
+    dio1Fired = true;
+  }
 
   // Always process DIO1 first
   if (dio1Fired) {
@@ -499,3 +542,5 @@ void nonblockingRadio() {
     // No extra action needed — just let it run.
   }
 }
+
+#endif  // ROCKET_RADIO_TEST_MODE

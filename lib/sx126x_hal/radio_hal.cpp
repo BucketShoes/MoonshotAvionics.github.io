@@ -15,9 +15,12 @@ volatile uint32_t dio1CaptureVal = 0;
 
 // ===================== GPIO ISR =====================
 
+volatile uint32_t dio1IsrCount = 0;  // incremented every ISR fire; read from loop for diagnostics
+
 static void IRAM_ATTR dio1Isr() {
     dio1CaptureVal = (uint32_t)micros();
     dio1Fired      = true;
+    dio1IsrCount++;
 }
 
 void radioMcpwmInit(uint8_t dio1Pin) {

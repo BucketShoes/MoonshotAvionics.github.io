@@ -915,6 +915,18 @@ void loop() {
   }
 
   if (wifiEnabled) ws.cleanupClients();
+
+  // Periodic diagnostic: print DIO1 ISR count and radio state so we can tell
+  // if the ISR is ever firing even when nothing else is logged.
+  static unsigned long bsLastDiagMs = 0;
+  unsigned long nowMs = millis();
+  if (nowMs - bsLastDiagMs >= 5000) {
+    bsLastDiagMs = nowMs;
+    Serial.print("DIAG: radioState="); Serial.print(bsRadioState);
+    Serial.print(" dio1IsrCount="); Serial.print(dio1IsrCount);
+    Serial.print(" dio1Pin="); Serial.print(digitalRead(LORA_DIO1_PIN));
+    Serial.print(" busyPin="); Serial.println(digitalRead(LORA_BUSY_PIN));
+  }
 }
 
 

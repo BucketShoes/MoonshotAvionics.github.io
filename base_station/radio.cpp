@@ -1,4 +1,9 @@
 // base_station/radio.cpp — LoRa radio, slot machine, and sync logic for base station.
+//
+// TEST MODE: uncomment to replace the slot state machine with a bare TX every 5s + continuous RX.
+// Use this to verify radio hardware works before debugging the state machine.
+// When test mode is active, bsHandleRadio() just does: TX a fixed packet every 5s, RX otherwise.
+// #define BS_RADIO_TEST_MODE
 
 #include <Arduino.h>
 #include "radio.h"
@@ -162,13 +167,14 @@ void bsRadioApplyConfig() {
   Serial.print("BS applyConfig: freq="); Serial.print(freqHz); Serial.print("Hz -> "); Serial.println(st);
   radioWaitBusy(&bsRadioCtx);
 
-  st = sx126x_set_tx_params(&bsRadioCtx, activePower, SX126X_RAMP_200_US);
-  Serial.print("BS applyConfig: tx_params pwr="); Serial.print(activePower); Serial.print("dBm -> "); Serial.println(st);
-  radioWaitBusy(&bsRadioCtx);
-
+  // PA config must come BEFORE SetTxParams per SX1262 datasheet §13.1.14.
   sx126x_pa_cfg_params_t paCfg = { .pa_duty_cycle = 0x04, .hp_max = 0x07, .device_sel = 0x00, .pa_lut = 0x01 };
   st = sx126x_set_pa_cfg(&bsRadioCtx, &paCfg);
-  Serial.print("BS applyConfig: pa_cfg duty=0x04 hp_max=0x07 -> "); Serial.println(st);
+  Serial.print("BS applyConfig: pa_cfg duty=0x04 hp_max=0x07 device_sel=0 -> "); Serial.println(st);
+  radioWaitBusy(&bsRadioCtx);
+
+  st = sx126x_set_tx_params(&bsRadioCtx, activePower, SX126X_RAMP_200_US);
+  Serial.print("BS applyConfig: tx_params pwr="); Serial.print(activePower); Serial.print("dBm ramp=200us -> "); Serial.println(st);
   radioWaitBusy(&bsRadioCtx);
 }
 
@@ -427,11 +433,87 @@ void bsHandleSyncSend() {
   Serial.print(" retry="); Serial.print(BS_SYNC_RETRY_MS); Serial.println("ms)");
 }
 
+// ===================== SIMPLE TEST MODE =====================
+// When BS_RADIO_TEST_MODE is defined: TX a hardcoded packet every 5s, RX otherwise.
+// Bypasses all slot/sync logic. Use to verify DIO1 ISR, PA, and basic SPI.
+
+#ifdef BS_RADIO_TEST_MODE
+
+// Minimal valid-looking command packet (wrong HMAC — rocket will reject it, but will
+// log "HMAC fail" which proves the packet arrived and was decoded).
+static const uint8_t bsTestPkt[] = {
+  0x9A,       // PKT_COMMAND
+  0x92,       // ROCKET_DEVICE_ID
+  0x40,       // CMD_PING
+  0x01, 0x00, 0x00, 0x00,  // nonce=1
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // fake HMAC (10 bytes)
+};
+static unsigned long bsTestLastTxMs = 0;
+static bool bsTestRxStarted = false;
+
+void bsHandleRadio() {
+  uint32_t isrNow = dio1IsrCount;
+  static uint32_t bsLastIsrCountT = 0;
+  if (isrNow != bsLastIsrCountT) {
+    Serial.print("TEST DIO1 ISR! count="); Serial.println(isrNow);
+    bsLastIsrCountT = isrNow;
+  }
+  if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
+      (bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE)) {
+    Serial.println("TEST DIO1 pin HIGH (poll fallback)");
+    dio1CaptureVal = (uint32_t)micros();
+    dio1Fired = true;
+  }
+  if (dio1Fired) {
+    bsRadioHandleIrq();  // handles TxDone/RxDone/Timeout, restarts RX after each
+  }
+  unsigned long nowMs = millis();
+  if (bsRadioState == BS_RADIO_STANDBY && !bsTestRxStarted) {
+    bsRadioStartRx();
+    bsTestRxStarted = true;
+  }
+  if (bsRadioState == BS_RADIO_STANDBY || (bsRadioState == BS_RADIO_RX_ACTIVE)) {
+    if (nowMs - bsTestLastTxMs >= 5000) {
+      bsTestLastTxMs = nowMs;
+      bsTestRxStarted = false;
+      Serial.println("TEST TX: sending test packet");
+      if (bsRadioState == BS_RADIO_RX_ACTIVE) {
+        bsRadioStandby();
+        unsigned long t0 = micros();
+        while (digitalRead(LORA_BUSY_PIN) && micros() - t0 < 2000) {}
+      }
+      bsRadioStartTx(bsTestPkt, sizeof(bsTestPkt));
+    }
+  }
+}
+
+#else  // normal mode below
+
 // ===================== MAIN RADIO UPDATE =====================
 
 static bool bsCmdSentThisSlot = false;
 
+// Track ISR count to detect if ISR is ever firing
+static uint32_t bsLastIsrCount = 0;
+
 void bsHandleRadio() {
+  // Check ISR count — log if new fires detected (ISR itself can't Serial.print)
+  uint32_t isrNow = dio1IsrCount;
+  if (isrNow != bsLastIsrCount) {
+    Serial.print("BS DIO1 ISR fired! count="); Serial.print(isrNow);
+    Serial.print(" dio1Pin="); Serial.println(digitalRead(LORA_DIO1_PIN));
+    bsLastIsrCount = isrNow;
+  }
+
+  // Also poll DIO1 pin directly as fallback — catches any ISR setup issues.
+  // If pin is high and radio is TX/RX active, treat it as a pending IRQ.
+  if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
+      (bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE)) {
+    Serial.println("BS DIO1 pin HIGH but ISR not set — polling fallback");
+    dio1CaptureVal = (uint32_t)micros();
+    dio1Fired = true;
+  }
+
   if (dio1Fired) {
     bsRadioHandleIrq();
   }
@@ -467,3 +549,5 @@ void bsHandleRadio() {
     bsWinCmdReady     = true;
   }
 }
+
+#endif  // BS_RADIO_TEST_MODE
