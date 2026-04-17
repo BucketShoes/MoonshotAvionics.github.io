@@ -25,16 +25,16 @@
 #define LORA_PREAMBLE 6      // preamble symbols
 // Sync word 0x12 (private) written as register pair 0x14, 0x24
 
-#define ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket
+#define ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket (for bootstrap setup, we only have one rocket for debug. will need to make this a config later)
 
 // ===================== SLOT TIMING =====================
 
 enum WindowMode : uint8_t {
-  WIN_TELEM  = 0,
-  WIN_CMD     = 1,
-  WIN_OFF    = 2,
-  WIN_LR     = 3,
-  WIN_FINDME = 4,
+  WIN_TELEM  = 0,  // rocket TX telemetry / base RX
+  WIN_CMD     = 1,  // base TX commands / rocket RX
+  WIN_OFF    = 2,  // radio off — neither side active
+  WIN_LR     = 3,  // future: long-range low-rate TX
+  WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
 };
 
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
@@ -48,7 +48,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define BS_CMD_TX_OFFSET_US   5'000UL     // fire command this many µs into WIN_CMD
 
 #define BS_SYNC_BOOT_DELAY_MS  2'000      // send first sync 2s after boot
-#define BS_SYNC_LOSS_SLOTS     5          // resync if this many WIN_TELEM slots missed
+#define BS_SYNC_LOSS_SLOTS     500          // resync if this many WIN_TELEM slots missed
 
 // ===================== RADIO STATE =====================
 

@@ -62,7 +62,7 @@ enum WindowMode : uint8_t {
   WIN_TELEM  = 0,  // rocket TX telemetry / base RX
   WIN_CMD     = 1,  // base TX commands / rocket RX
   WIN_OFF    = 2,  // radio off — neither side active
-  WIN_LR     = 3,  // future: long-range low-rate TX
+  WIN_LR     = 3,  // future: long-range low-rate TX with very small payload
   WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
 };
 

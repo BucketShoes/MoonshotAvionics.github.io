@@ -4,7 +4,7 @@
 // TEST MODE: uncomment to replace the slot state machine with bare continuous RX.
 // Rocket just listens and logs everything it hears. No telem TX, no sync.
 // Use this to verify DIO1 ISR and basic SPI before debugging the state machine.
-#define ROCKET_RADIO_TEST_MODE
+//#define ROCKET_RADIO_TEST_MODE
 
 #include <Arduino.h>
 #include "radio.h"
@@ -235,9 +235,6 @@ void radioStartRx() {
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_RX_ACTIVE;
     ledOn();
-    Serial.print("RX: started timeout=");
-    Serial.print(radioSynced ? (uint32_t)ROCKET_RX_TIMEOUT_US : (uint32_t)PRESYNC_RX_TIMEOUT_US);
-    Serial.println("us");
   } else {
     Serial.print("RX: start fail st="); Serial.println(st);
     radioState = RADIO_STANDBY;
@@ -255,7 +252,6 @@ void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_RX_ACTIVE;
     ledOn();
-    Serial.print("RX(timeout): started raw="); Serial.println(timeoutRtcSteps);
   } else {
     Serial.print("RX(timeout): start fail st="); Serial.println(st);
     radioState = RADIO_STANDBY;
@@ -269,14 +265,6 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   }
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
-
-  Serial.print("TX: writing "); Serial.print(len); Serial.print("B [");
-  for (size_t i = 0; i < len && i < 8; i++) {
-    if (pkt[i] < 0x10) Serial.print("0");
-    Serial.print(pkt[i], HEX); Serial.print(" ");
-  }
-  if (len > 8) Serial.print("...");
-  Serial.println("]");
 
   sx126x_status_t st = sx126x_write_buffer(&radioCtx, 0, pkt, (uint8_t)len);
   if (st != SX126X_STATUS_OK) {
@@ -299,7 +287,6 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_TX_ACTIVE;
     ledOn();
-    Serial.print("TX: started "); Serial.print(len); Serial.println("B — waiting TxDone");
     return true;
   }
   Serial.print("TX: set_tx fail st="); Serial.println(st);
@@ -308,10 +295,9 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
 }
 
 void radioStandby() {
-  sx126x_status_t st = sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
+  sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
   radioState = RADIO_STANDBY;
   ledOff();
-  Serial.print("STANDBY st="); Serial.println(st);
 }
 
 // ===================== IRQ / RX PACKET HANDLER =====================
@@ -380,19 +366,13 @@ static void radioHandleIrq() {
     return;
   }
 
-  Serial.print("IRQ: flags=0x"); Serial.print(irqFlags, HEX);
-  Serial.print(" ts="); Serial.print((unsigned long)eventUs); Serial.println("us");
-
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     radioState = RADIO_STANDBY;
     ledOff();
-    Serial.print("TxDone at "); Serial.print((unsigned long)eventUs); Serial.println("us");
   }
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     radioState = RADIO_STANDBY;
-    // LED stays on (set in radioStartRx) while we read the packet, then off
-    Serial.print("RxDone at "); Serial.print((unsigned long)eventUs); Serial.println("us");
     handleRxDone();
     ledOff();
   }
@@ -405,8 +385,6 @@ static void radioHandleIrq() {
       if (!rssiEmaInit) { rssiEma = rssiDbm; rssiEmaInit = true; }
       else rssiEma += RSSI_EMA_ALPHA * (rssiDbm - rssiEma);
     }
-    Serial.print("RX timeout at "); Serial.print((unsigned long)eventUs);
-    Serial.print("us bgRssi="); Serial.println((int)rssiEma);
   }
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
@@ -435,12 +413,12 @@ static void radioHandleIrq() {
 // LED: on whenever radio is active (RX or TX), off when standby.
 
 static unsigned long lastTelemTxUs = 0;
-static uint32_t lastIsrCount = 0;
 
 #ifdef ROCKET_RADIO_TEST_MODE
 // In test mode: just RX continuously, log everything received. No TX, no sync.
 void nonblockingRadio() {
   if (!loraReady) return;
+  static uint32_t lastIsrCount = 0;
   uint32_t isrNow = dio1IsrCount;
   if (isrNow != lastIsrCount) {
     Serial.print("TEST DIO1 ISR! count="); Serial.println(isrNow);
@@ -477,43 +455,6 @@ void nonblockingRadio() {
 void nonblockingRadio() {
   if (!loraReady) return;
 
-  // Check ISR count — log if new fires detected
-  uint32_t isrNow = dio1IsrCount;
-  if (isrNow != lastIsrCount) {
-    Serial.print("DIO1 ISR fired! count="); Serial.print(isrNow);
-    Serial.print(" dio1Pin="); Serial.println(digitalRead(LORA_DIO1_PIN));
-    lastIsrCount = isrNow;
-  }
-
-  // Fallback 1: DIO1 pin polling
-  if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
-      (radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE)) {
-    Serial.println("DIO1 pin HIGH (poll fallback)");
-    dio1CaptureVal = (uint32_t)micros();
-    dio1Fired = true;
-  }
-
-  // Fallback 2: poll IRQ register directly every 100ms when stuck in TX/RX
-  static unsigned long lastIrqPollMs = 0;
-  {
-    unsigned long npMs = millis();
-    if ((radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE) &&
-        !dio1Fired && (npMs - lastIrqPollMs) >= 100) {
-      lastIrqPollMs = npMs;
-      sx126x_irq_mask_t irqFlags = 0;
-      sx126x_get_irq_status(&radioCtx, &irqFlags);
-      if (irqFlags != 0) {
-        Serial.print("IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
-        dio1CaptureVal = (uint32_t)micros();
-        dio1Fired = true;
-      } else {
-        Serial.print("IRQ poll: flags=0 state="); Serial.print(radioState);
-        Serial.print(" busy="); Serial.println(digitalRead(LORA_BUSY_PIN));
-      }
-    }
-  }
-
-  // Always process DIO1 first
   if (dio1Fired) {
     radioHandleIrq();
   }

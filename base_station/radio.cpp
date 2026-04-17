@@ -3,7 +3,7 @@
 // TEST MODE: uncomment to replace the slot state machine with a bare TX every 5s + continuous RX.
 // Use this to verify radio hardware works before debugging the state machine.
 // When test mode is active, bsHandleRadio() just does: TX a fixed packet every 5s, RX otherwise.
-#define BS_RADIO_TEST_MODE
+//#define BS_RADIO_TEST_MODE
 
 #include <Arduino.h>
 #include "radio.h"
@@ -220,9 +220,6 @@ void bsRadioStartRx() {
   if (st == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_RX_ACTIVE;
     bsLedOn();
-    Serial.print("BS RX: started timeout=");
-    Serial.print(bsSynced ? BS_RX_TIMEOUT_US : BS_PRESYNC_RX_TIMEOUT_US);
-    Serial.println("us");
   } else {
     Serial.print("BS RX: start fail st="); Serial.println(st);
     bsRadioState = BS_RADIO_STANDBY;
@@ -231,7 +228,7 @@ void bsRadioStartRx() {
 
 void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.print("BS RX(timeout): BUSY — skip");
+    Serial.println("BS RX(timeout): BUSY — skip");
     return;
   }
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
@@ -240,7 +237,6 @@ void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (st == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_RX_ACTIVE;
     bsLedOn();
-    Serial.print("BS RX(timeout): started raw="); Serial.println(timeoutRtcSteps);
   } else {
     Serial.print("BS RX(timeout): start fail st="); Serial.println(st);
     bsRadioState = BS_RADIO_STANDBY;
@@ -249,19 +245,11 @@ void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
 
 bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
   if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.println("BS TX: BUSY before write_buffer — drop");
+    Serial.println("BS TX: BUSY — drop");
     return false;
   }
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
-
-  Serial.print("BS TX: writing "); Serial.print(len); Serial.print("B [");
-  for (size_t i = 0; i < len && i < 8; i++) {
-    if (pkt[i] < 0x10) Serial.print("0");
-    Serial.print(pkt[i], HEX); Serial.print(" ");
-  }
-  if (len > 8) Serial.print("...");
-  Serial.println("]");
 
   sx126x_status_t st = sx126x_write_buffer(&bsRadioCtx, 0, pkt, (uint8_t)len);
   if (st != SX126X_STATUS_OK) {
@@ -277,7 +265,7 @@ bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
     unsigned long t0 = micros();
     while (digitalRead(LORA_BUSY_PIN)) {
       if (micros() - t0 > 500) {
-        Serial.println("BS TX: BUSY stuck after write_buffer (>500µs) — abort");
+        Serial.println("BS TX: BUSY stuck after write_buffer — abort");
         return false;
       }
     }
@@ -287,7 +275,6 @@ bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
   if (st == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_TX_ACTIVE;
     bsLedOn();
-    Serial.print("BS TX: started "); Serial.print(len); Serial.println("B — waiting TxDone");
     return true;
   }
   Serial.print("BS TX: set_tx fail st="); Serial.println(st);
@@ -296,10 +283,9 @@ bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
 }
 
 void bsRadioStandby() {
-  sx126x_status_t st = sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
+  sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
   bsRadioState = BS_RADIO_STANDBY;
   bsLedOff();
-  Serial.print("BS STANDBY st="); Serial.println(st);
 }
 
 // ===================== SYNC =====================
@@ -378,25 +364,18 @@ static void bsRadioHandleIrq() {
     return;
   }
 
-  Serial.print("BS IRQ: flags=0x"); Serial.print(irqFlags, HEX);
-  Serial.print(" ts="); Serial.print((unsigned long)eventUs); Serial.println("us");
-
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
     bsLedOff();
-    Serial.print("BS TxDone at "); Serial.print((unsigned long)eventUs); Serial.println("us");
     if (bsSyncTxInFlight) {
       bsSyncTxInFlight = false;
       bsSetSyncedFromTx(eventUs);
     }
-    // Restart RX after TX completes
     bsRadioStartRx();
   }
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
-    // LED stays on (already on from RX start) while we read the packet
-    Serial.print("BS RxDone at "); Serial.print((unsigned long)eventUs); Serial.println("us");
     bsHandleRxDone();
     bsLedOff();
     bsRadioStartRx();
@@ -410,8 +389,6 @@ static void bsRadioHandleIrq() {
       if (!bsBgRssiInit) { bsBgRssiEma = (float)rssiDbm; bsBgRssiInit = true; }
       else bsBgRssiEma += BG_RSSI_ALPHA * ((float)rssiDbm - bsBgRssiEma);
     }
-    Serial.print("BS RX timeout at "); Serial.print((unsigned long)eventUs);
-    Serial.print("us bgRssi="); Serial.println((int)bsBgRssiEma);
     bsRadioStartRx();
   }
 
@@ -421,13 +398,12 @@ static void bsRadioHandleIrq() {
     Serial.print("BS RX: ");
     if (irqFlags & SX126X_IRQ_CRC_ERROR)    Serial.print("CRC_ERROR ");
     if (irqFlags & SX126X_IRQ_HEADER_ERROR) Serial.print("HEADER_ERROR ");
-    Serial.print("at "); Serial.print((unsigned long)eventUs); Serial.println("us");
+    Serial.println();
     bsRadioStartRx();
   }
 
   if (irqFlags == 0) {
-    Serial.println("BS IRQ: flags=0 (spurious or ISR race)");
-    // Don't change state — radio is still doing whatever it was doing.
+    Serial.println("BS IRQ: flags=0 (spurious)");
   }
 }
 
@@ -537,46 +513,7 @@ void bsHandleRadio() {
 
 static bool bsCmdSentThisSlot = false;
 
-// Track ISR count to detect if ISR is ever firing
-static uint32_t bsLastIsrCount = 0;
-
 void bsHandleRadio() {
-  // Check ISR count — log if new fires detected (ISR itself can't Serial.print)
-  uint32_t isrNow = dio1IsrCount;
-  if (isrNow != bsLastIsrCount) {
-    Serial.print("BS DIO1 ISR fired! count="); Serial.print(isrNow);
-    Serial.print(" dio1Pin="); Serial.println(digitalRead(LORA_DIO1_PIN));
-    bsLastIsrCount = isrNow;
-  }
-
-  // Fallback 1: DIO1 pin polling
-  if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
-      (bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE)) {
-    Serial.println("BS DIO1 pin HIGH (poll fallback)");
-    dio1CaptureVal = (uint32_t)micros();
-    dio1Fired = true;
-  }
-
-  // Fallback 2: poll IRQ register directly every 100ms when stuck in TX/RX
-  static unsigned long bsLastIrqPollMs2 = 0;
-  {
-    unsigned long npMs = millis();
-    if ((bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE) &&
-        !dio1Fired && (npMs - bsLastIrqPollMs2) >= 100) {
-      bsLastIrqPollMs2 = npMs;
-      sx126x_irq_mask_t irqFlags = 0;
-      sx126x_get_irq_status(&bsRadioCtx, &irqFlags);
-      if (irqFlags != 0) {
-        Serial.print("BS IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
-        dio1CaptureVal = (uint32_t)micros();
-        dio1Fired = true;
-      } else {
-        Serial.print("BS IRQ poll: flags=0 state="); Serial.print(bsRadioState);
-        Serial.print(" busy="); Serial.println(digitalRead(LORA_BUSY_PIN));
-      }
-    }
-  }
-
   if (dio1Fired) {
     bsRadioHandleIrq();
   }
@@ -592,14 +529,8 @@ void bsHandleRadio() {
   if (slotNum != bsLastHandledSlot) {
     bsCmdSentThisSlot = false;
     bsLastHandledSlot = slotNum;
-    Serial.print("BS SLOT #"); Serial.print(slotNum);
-    Serial.print(bsSynced ? " [SYNC] " : " [NOSYNC] ");
-    Serial.print(win == WIN_TELEM ? "WIN_TELEM" : win == WIN_CMD ? "WIN_CMD" : "WIN_OTHER");
-    Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
-
     if (win == WIN_TELEM) {
       bsMissedTelemSlots++;
-      Serial.print("BS missed telem slots="); Serial.println(bsMissedTelemSlots);
     }
   }
 
