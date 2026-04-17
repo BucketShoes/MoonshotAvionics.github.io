@@ -200,11 +200,6 @@ void bsRadioApplyConfig() {
 
 // ===================== RX / TX =====================
 
-// Pre-sync: RX window sized to nearly a full slot so we don't miss anything.
-// SLOT_DURATION_US - 20ms margin, converted to RTC steps (15.625µs each).
-#define BS_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 20000UL)
-#define BS_PRESYNC_RX_TIMEOUT_RAW  ((uint32_t)(BS_PRESYNC_RX_TIMEOUT_US / 15.625f))
-
 // Synced RX window: listen early (BS_RX_EARLY_US before slot) for duration BS_RX_TIMEOUT_US.
 // Both defined in radio.h.
 
@@ -250,6 +245,16 @@ bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
   }
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
+
+  // In explicit header mode, pld_len_in_bytes controls how many bytes are transmitted.
+  // Must be set to the actual payload length before each TX.
+  sx126x_pkt_params_lora_t pp = {};
+  pp.preamble_len_in_symb = LORA_PREAMBLE;
+  pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
+  pp.pld_len_in_bytes     = (uint8_t)len;
+  pp.crc_is_on            = true;
+  pp.invert_iq_is_on      = false;
+  sx126x_set_lora_pkt_params(&bsRadioCtx, &pp);
 
   sx126x_status_t st = sx126x_write_buffer(&bsRadioCtx, 0, pkt, (uint8_t)len);
   if (st != SX126X_STATUS_OK) {

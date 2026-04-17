@@ -40,6 +40,10 @@ enum WindowMode : uint8_t {
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN   2
 #define SLOT_DURATION_US    2'000'000UL
+// Pre-sync: RX window sized to nearly a full slot so we don't miss anything.
+// SLOT_DURATION_US - 20ms margin, converted to RTC steps (15.625µs each).
+#define BS_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 50'000UL)
+#define BS_PRESYNC_RX_TIMEOUT_RAW  ((uint32_t)(BS_PRESYNC_RX_TIMEOUT_US / 15.625f))
 
 // Base station RX window parameters
 #define BS_RX_EARLY_US        10'000UL    // start RX this many µs before WIN_TELEM
@@ -49,6 +53,8 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 
 #define BS_SYNC_BOOT_DELAY_MS  2'000      // send first sync 2s after boot
 #define BS_SYNC_LOSS_SLOTS     500          // resync if this many WIN_TELEM slots missed
+
+
 
 // ===================== RADIO STATE =====================
 

@@ -56,7 +56,7 @@ uint32_t armRecordCounter = 0;
 
 bool txSendingEnabled = true;
 int8_t activeTxRate   = -5;
-unsigned long txIntervalUs = 5000000UL;
+unsigned long txIntervalUs = 5000000UL; //used when not synced to time windows
 
 unsigned long runningMaxLoopUs = 0;
 

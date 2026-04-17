@@ -266,6 +266,16 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
 
+  // In explicit header mode, pld_len_in_bytes controls how many bytes are transmitted.
+  // Must be set to the actual payload length before each TX.
+  sx126x_pkt_params_lora_t pp = {};
+  pp.preamble_len_in_symb = LORA_PREAMBLE;
+  pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
+  pp.pld_len_in_bytes     = (uint8_t)len;
+  pp.crc_is_on            = true;
+  pp.invert_iq_is_on      = false;
+  sx126x_set_lora_pkt_params(&radioCtx, &pp);
+
   sx126x_status_t st = sx126x_write_buffer(&radioCtx, 0, pkt, (uint8_t)len);
   if (st != SX126X_STATUS_OK) {
     Serial.print("TX: write_buffer fail st="); Serial.println(st);
@@ -331,23 +341,28 @@ static void handleRxDone() {
   int8_t pktRssi = pktStatus.rssi_pkt_in_dbm;
   int8_t pktSnr  = pktStatus.snr_pkt_in_db;
 
-  Serial.print("RX: "); Serial.print(rxLen);
-  Serial.print("B rssi="); Serial.print(pktRssi);
-  Serial.print(" snr="); Serial.print(pktSnr);
-  Serial.print(" [");
-  for (uint8_t i = 0; i < rxLen && i < 8; i++) {
-    if (rxBuf[i] < 0x10) Serial.print("0");
-    Serial.print(rxBuf[i], HEX); Serial.print(" ");
-  }
-  if (rxLen > 8) Serial.print("...");
-  Serial.println("]");
-
   bool structOk = (rxLen >= 2) && (rxBuf[0] == PKT_TELEMETRY || rxBuf[0] == PKT_COMMAND ||
                                     rxBuf[0] == PKT_BACKHAUL);
   if (!structOk) {
     Serial.print("RX: unknown type 0x"); Serial.println(rxBuf[0], HEX);
     invalidRxCount++;
     return;
+  }
+
+  // Update noise floor EMA from actual received packet RSSI.
+  if (!rssiEmaInit) { rssiEma = pktRssi; rssiEmaInit = true; }
+  else rssiEma += RSSI_EMA_ALPHA * (pktRssi - rssiEma);
+
+  // Log one summary line per received packet, no faster than 1/sec.
+  static unsigned long lastRxLogMs = 0;
+  unsigned long nowMs = millis();
+  if (nowMs - lastRxLogMs >= 1000) {
+    lastRxLogMs = nowMs;
+    const char* typeStr = (rxBuf[0] == PKT_COMMAND) ? "CMD" :
+                          (rxBuf[0] == PKT_TELEMETRY) ? "TELEM" : "BH";
+    Serial.print("RX "); Serial.print(typeStr);
+    Serial.print(" "); Serial.print(rxLen); Serial.print("B rssi=");
+    Serial.print(pktRssi); Serial.print(" snr="); Serial.println(pktSnr);
   }
 
   processReceivedPacket(rxBuf, rxLen, pktRssi, pktSnr);
@@ -380,21 +395,22 @@ static void radioHandleIrq() {
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     radioState = RADIO_STANDBY;
     ledOff();
-    int16_t rssiDbm = 0;
-    if (sx126x_get_rssi_inst(&radioCtx, &rssiDbm) == SX126X_STATUS_OK) {
-      if (!rssiEmaInit) { rssiEma = rssiDbm; rssiEmaInit = true; }
-      else rssiEma += RSSI_EMA_ALPHA * (rssiDbm - rssiEma);
-    }
   }
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
     radioState = RADIO_STANDBY;
     ledOff();
     invalidRxCount++;
-    Serial.print("RX: ");
-    if (irqFlags & SX126X_IRQ_CRC_ERROR)    Serial.print("CRC_ERROR ");
-    if (irqFlags & SX126X_IRQ_HEADER_ERROR) Serial.print("HEADER_ERROR ");
-    Serial.print("at "); Serial.print((unsigned long)eventUs); Serial.println("us");
+    // Rate-limit header/CRC error logs — they can be frequent on a busy channel.
+    static unsigned long lastRxErrLogMs = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - lastRxErrLogMs >= 5000) {
+      lastRxErrLogMs = nowMs;
+      Serial.print("RX: ");
+      if (irqFlags & SX126X_IRQ_CRC_ERROR)    Serial.print("CRC_ERROR ");
+      if (irqFlags & SX126X_IRQ_HEADER_ERROR) Serial.print("HEADER_ERROR ");
+      Serial.println();
+    }
   }
 
   if (irqFlags == 0) {
@@ -405,11 +421,11 @@ static void radioHandleIrq() {
 
 // ===================== MAIN RADIO STATE MACHINE =====================
 //
-// Pre-sync: TX telem at txIntervalUs rate. RX for nearly a full slot between TX.
-//           Slot clock runs from anchor=0, so WIN_CMD slots are defined but have
-//           no special pre-sync behaviour beyond cycling.
-// Synced:   WIN_TELEM — stop RX, TX telem.
-//           WIN_CMD   — RX with ROCKET_RX_TIMEOUT_RAW to listen for a command.
+// Single slot-based path — anchor=0 pre-sync, anchor=RxDone time when synced.
+// WIN_TELEM: TX telem at slot boundary (or RX if txSendingEnabled=false).
+// WIN_CMD:   RX for the slot. Pre-sync uses PRESYNC_RX_TIMEOUT_RAW (longer window
+//            to catch the base anywhere in the slot). Synced uses ROCKET_RX_TIMEOUT_RAW.
+//            radioStartRx() selects the right timeout based on radioSynced flag.
 // LED: on whenever radio is active (RX or TX), off when standby.
 
 static unsigned long lastTelemTxUs = 0;
@@ -459,85 +475,55 @@ void nonblockingRadio() {
     radioHandleIrq();
   }
 
-  unsigned long now = micros();
+  if (radioState == RADIO_TX_ACTIVE) return;  // TX in progress — wait for TxDone IRQ
 
-  if (!radioSynced) {
-    // ---- Bootstrap mode: TX telem at txIntervalUs, RX between ----
-    // After IRQ (TxDone/timeout/RxDone), radioState==STANDBY — restart RX immediately.
-    if (radioState == RADIO_STANDBY) {
-      if (txSendingEnabled && (now - lastTelemTxUs) >= txIntervalUs) {
-        // Time to TX — don't restart RX, go straight to TX
-        uint8_t pkt[32];
-        size_t len = buildTelemetryPacket(pkt);
-        lastTelemTxUs = now;
-        radioStartTx(pkt, len);
-      } else {
-        radioStartRx();
-      }
-    } else if (radioState == RADIO_RX_ACTIVE && txSendingEnabled && (now - lastTelemTxUs) >= txIntervalUs) {
-      // Time to TX — preempt ongoing RX
+  // Single slot-based path for both pre-sync and synced operation.
+  // Pre-sync: anchor=0, so slots run from boot. RX timeout is longer (PRESYNC_RX_TIMEOUT_RAW)
+  // to give the base station time to be heard anywhere in the slot.
+  // Synced: anchor set from CMD_SET_SYNC RxDone; RX timeout tightened to ROCKET_RX_TIMEOUT_RAW.
+  // Either way: one slot machine, one timing system.
+  unsigned long now = micros();
+  unsigned long elapsed   = now - syncAnchorUs;
+  uint32_t      slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+  uint8_t       seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+  WindowMode    win       = SLOT_SEQUENCE[seqIdx];
+
+  // On new slot: decide what to do at the top of this slot window.
+  if (slotNum != lastHandledSlotNum) {
+    lastHandledSlotNum = slotNum;
+
+    // Stop whatever was running from the previous slot.
+    if (radioState == RADIO_RX_ACTIVE) {
       radioStandby();
       // TODO: @@@ Blocking - brief BUSY spin after standby before TX, bounded at 500µs
       unsigned long t0 = micros();
       while (digitalRead(LORA_BUSY_PIN)) {
         if (micros() - t0 > 500) {
-          Serial.println("TELEM TX: BUSY stuck after standby — skip");
+          Serial.println("new slot: BUSY stuck after standby — skip");
           return;
         }
       }
-      uint8_t pkt[32];
-      size_t len = buildTelemetryPacket(pkt);
-      lastTelemTxUs = now;
-      radioStartTx(pkt, len);
     }
-    return;
-  }
 
-  // ---- Synced mode: slot-based TX/RX ----
-  if (radioState == RADIO_TX_ACTIVE) return;  // TX in progress — wait for TxDone IRQ
-
-  // After any event (TxDone, RxDone, timeout), restart RX for the current slot.
-  // WIN_TELEM will preempt it immediately if it's time to TX.
-  if (radioState == RADIO_STANDBY) {
-    radioStartRx();
-  }
-
-  unsigned long elapsed   = now - syncAnchorUs;
-  uint32_t      slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
-  uint32_t      posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
-  uint8_t       seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
-  WindowMode    win       = SLOT_SEQUENCE[seqIdx];
-
-  if (slotNum != lastHandledSlotNum) {
-    lastHandledSlotNum = slotNum;
-    Serial.print("SLOT #"); Serial.print(slotNum);
-    Serial.print(win == WIN_TELEM ? " WIN_TELEM" : win == WIN_CMD ? " WIN_CMD" : " WIN_OTHER");
-    Serial.print(" pos="); Serial.print(posInSlot); Serial.println("us");
-
-    if (win == WIN_TELEM && txSendingEnabled) {
-      // Preempt RX (which was just started above) to TX telem.
-      if (radioState == RADIO_RX_ACTIVE) {
-        radioStandby();
-        // TODO: @@@ Blocking - brief BUSY spin after standby before TX, bounded at 500µs
-        unsigned long t0 = micros();
-        while (digitalRead(LORA_BUSY_PIN)) {
-          if (micros() - t0 > 500) {
-            Serial.println("SLOT WIN_TELEM: BUSY stuck after standby — skip slot");
-            return;
-          }
-        }
-      }
-      if (radioState == RADIO_STANDBY) {
+    if (win == WIN_TELEM) {
+      if (txSendingEnabled) {
         uint8_t pkt[32];
         size_t len = buildTelemetryPacket(pkt);
-        lastTelemTxUs = now;
         radioStartTx(pkt, len);
-        // TxDone IRQ will fire when done; radio returns to standby, then RX restarts next loop.
+        // TxDone IRQ returns radio to STANDBY; RX is started below on next loop iteration.
+      } else {
+        radioStartRx();
       }
+    } else {
+      // WIN_CMD (and any future WIN_OTHER): listen.
+      // RX times out before the next slot boundary naturally.
+      radioStartRx();
     }
-    // WIN_CMD: RX is already running from the radioState==STANDBY block above.
-    // ROCKET_RX_TIMEOUT_RAW ensures it times out before the next slot.
-    // No extra action needed — just let it run.
+  }
+
+  // If standby between slots (e.g. after TxDone, before next slot), restart RX to fill the gap.
+  if (radioState == RADIO_STANDBY) {
+    radioStartRx();
   }
 }
 
