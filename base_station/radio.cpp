@@ -99,6 +99,23 @@ bool bsRadioInit() {
   Serial.print("BS LoRa: set_standby -> "); Serial.println(st);
   if (st != SX126X_STATUS_OK) return false;
 
+  // Heltec Wireless Tracker V1.1: TCXO is powered via DIO3 at 1.8V.
+  // Without this call the oscillator never starts and the radio accepts SPI commands
+  // but never completes any RF operation (TxDone/RxDone/Timeout never fire).
+  // Timeout = 5ms (320 × 15.625µs steps = 5000µs) for TCXO startup.
+  // Must be called BEFORE set_pkt_type and any modulation config.
+  st = sx126x_set_dio3_as_tcxo_ctrl(&bsRadioCtx, SX126X_TCXO_CTRL_1_8V, 320);
+  Serial.print("BS LoRa: set_dio3_tcxo 1.8V 5ms -> "); Serial.println(st);
+  // After TCXO command, chip re-calibrates — wait for BUSY to clear.
+  if (!radioWaitBusy(&bsRadioCtx, 100)) {
+    Serial.println("BS LoRa init FAIL: BUSY stuck after TCXO setup");
+    return false;
+  }
+
+  // DC-DC regulator (Heltec board uses DCDC, not LDO).
+  st = sx126x_set_reg_mode(&bsRadioCtx, SX126X_REG_MODE_DCDC);
+  Serial.print("BS LoRa: set_reg_mode DCDC -> "); Serial.println(st);
+
   st = sx126x_set_pkt_type(&bsRadioCtx, SX126X_PKT_TYPE_LORA);
   Serial.print("BS LoRa: set_pkt_type LORA -> "); Serial.println(st);
   if (st != SX126X_STATUS_OK) return false;
