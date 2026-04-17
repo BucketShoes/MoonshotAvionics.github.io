@@ -49,9 +49,6 @@ unsigned long bsMissedTelemSlots = 0;
 
 uint64_t      bsPendingHeaderValidUs = 0;
 
-float         bsBgRssiEma = 0.0f;
-static bool   bsBgRssiInit = false;
-#define BG_RSSI_ALPHA  0.1f
 
 // ===================== SYNC BOOKKEEPING =====================
 
@@ -369,6 +366,10 @@ static void bsRadioHandleIrq() {
     return;
   }
 
+  // IRQ handler only updates state — slot machine in bsHandleRadio() decides when to
+  // start the next RX or TX. Do NOT restart RX here; that caused the LED to stay on
+  // continuously as the IRQ handler blindly restarted 40ms windows in a tight loop.
+
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
     bsLedOff();
@@ -376,35 +377,31 @@ static void bsRadioHandleIrq() {
       bsSyncTxInFlight = false;
       bsSetSyncedFromTx(eventUs);
     }
-    bsRadioStartRx();
   }
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
     bsHandleRxDone();
     bsLedOff();
-    bsRadioStartRx();
   }
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     bsRadioState = BS_RADIO_STANDBY;
     bsLedOff();
-    int16_t rssiDbm = 0;
-    if (sx126x_get_rssi_inst(&bsRadioCtx, &rssiDbm) == SX126X_STATUS_OK) {
-      if (!bsBgRssiInit) { bsBgRssiEma = (float)rssiDbm; bsBgRssiInit = true; }
-      else bsBgRssiEma += BG_RSSI_ALPHA * ((float)rssiDbm - bsBgRssiEma);
-    }
-    bsRadioStartRx();
   }
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
     bsRadioState = BS_RADIO_STANDBY;
     bsLedOff();
-    Serial.print("BS RX: ");
-    if (irqFlags & SX126X_IRQ_CRC_ERROR)    Serial.print("CRC_ERROR ");
-    if (irqFlags & SX126X_IRQ_HEADER_ERROR) Serial.print("HEADER_ERROR ");
-    Serial.println();
-    bsRadioStartRx();
+    static unsigned long lastRxErrLogMs = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - lastRxErrLogMs >= 5000) {
+      lastRxErrLogMs = nowMs;
+      Serial.print("BS RX: ");
+      if (irqFlags & SX126X_IRQ_CRC_ERROR)    Serial.print("CRC_ERROR ");
+      if (irqFlags & SX126X_IRQ_HEADER_ERROR) Serial.print("HEADER_ERROR ");
+      Serial.println();
+    }
   }
 
   if (irqFlags == 0) {
@@ -517,13 +514,39 @@ void bsHandleRadio() {
 // ===================== MAIN RADIO UPDATE =====================
 
 static bool bsCmdSentThisSlot = false;
+static bool bsRxStartedThisSlot = false;
+
+// Background RSSI EMA — sampled from get_rssi_inst() every loop while RX_ACTIVE,
+// excluding the first loop after starting RX (radio hasn't settled yet).
+// Purpose: noise floor / channel activity estimate, not correlated with our packets.
+// Updated here; reported in telemetry page 12.
+float        bsBgRssiEma  = -128.0f;
+static bool  bsBgRssiInit = false;
+static bool  bsBgRssiReady = false;  // false on first loop after radioStartRx(), true after
+#define BG_RSSI_ALPHA  0.05f
 
 void bsHandleRadio() {
   if (dio1Fired) {
     bsRadioHandleIrq();
+    bsBgRssiReady = false;  // reset after any IRQ — next RX start is a fresh window
   }
 
-  // Slot clock always runs (anchor=0 pre-sync, which is fine — slots just cycle from boot).
+  // Background RSSI sampling: every loop while RX is active, after the first loop.
+  // The first loop after radioStartRx() is skipped (bsBgRssiReady=false) because the
+  // radio has just been commanded into RX and the RSSI register hasn't settled.
+  if (bsRadioState == BS_RADIO_RX_ACTIVE) {
+    if (!bsBgRssiReady) {
+      bsBgRssiReady = true;  // first loop — skip sample, allow from next loop onward
+    } else {
+      int16_t rssiDbm = 0;
+      if (sx126x_get_rssi_inst(&bsRadioCtx, &rssiDbm) == SX126X_STATUS_OK) {
+        if (!bsBgRssiInit) { bsBgRssiEma = (float)rssiDbm; bsBgRssiInit = true; }
+        else bsBgRssiEma += BG_RSSI_ALPHA * ((float)rssiDbm - bsBgRssiEma);
+      }
+    }
+  }
+
+  // Slot clock always runs (anchor=0 pre-sync, slots just cycle from boot).
   unsigned long now       = micros();
   unsigned long elapsed   = now - bsSyncAnchorUs;
   uint32_t      slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
@@ -532,17 +555,35 @@ void bsHandleRadio() {
   WindowMode    win       = SLOT_SEQUENCE[seqIdx];
 
   if (slotNum != bsLastHandledSlot) {
-    bsCmdSentThisSlot = false;
     bsLastHandledSlot = slotNum;
+    bsCmdSentThisSlot  = false;
+    bsRxStartedThisSlot = false;
+
+    // Stop any RX from the previous slot before deciding what this slot does.
+    if (bsRadioState == BS_RADIO_RX_ACTIVE) {
+      bsRadioStandby();
+    }
+
     if (win == WIN_TELEM) {
       bsMissedTelemSlots++;
+      // WIN_TELEM: rocket TXes, we RX. Start RX BS_RX_EARLY_US before the slot boundary
+      // so we're already listening when the rocket's packet arrives.
+      // On the first loop of a new WIN_TELEM slot, posInSlot is ~0 so we always start
+      // immediately (we're already past the -BS_RX_EARLY_US lead point).
+      // The radio was stopped above; start RX now.
+      bsRadioStartRx();
+      bsRxStartedThisSlot = true;
+      bsBgRssiReady = false;  // fresh window — skip first RSSI sample
     }
+    // WIN_CMD: TX is dispatched by main.cpp via bsWinCmdReady at posInSlot >= BS_CMD_TX_OFFSET_US.
+    // Don't start RX here — stay standby until TX fires (and any RX-after-TX can be added later).
   }
 
-  // Signal WIN_CMD ready for TX dispatch (both synced and unsynced paths use this).
-  // Pre-sync: slot machine still runs from anchor=0, so WIN_CMD slots cycle normally.
-  // The wait=0 on sync packets means the expired-wait path fires immediately; the
-  // slot signal here also fires for any other queued commands.
+  // WIN_TELEM: RX was started at slot boundary. After it times out (RxDone or Timeout IRQ
+  // set state to STANDBY), stay standby for the rest of the slot. Do not restart.
+  // This is what keeps the LED off between the 40ms listen window and the next slot.
+
+  // WIN_CMD: signal TX dispatch point.
   if (win == WIN_CMD && !bsCmdSentThisSlot && posInSlot >= BS_CMD_TX_OFFSET_US) {
     bsCmdSentThisSlot = true;
     bsWinCmdReady     = true;

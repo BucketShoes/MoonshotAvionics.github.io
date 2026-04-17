@@ -510,21 +510,23 @@ void nonblockingRadio() {
         uint8_t pkt[32];
         size_t len = buildTelemetryPacket(pkt);
         radioStartTx(pkt, len);
-        // TxDone IRQ returns radio to STANDBY; RX is started below on next loop iteration.
+        // After TxDone the radio returns to STANDBY. We do NOT restart RX in WIN_TELEM —
+        // the base has received the packet and there is nothing to listen for in this window.
+        // Stay standby until WIN_CMD boundary (LED off after TxDone).
       } else {
+        // TX disabled — listen for the slot (e.g. ground test, download mode).
         radioStartRx();
       }
     } else {
-      // WIN_CMD (and any future WIN_OTHER): listen.
-      // RX times out before the next slot boundary naturally.
+      // WIN_CMD: listen for a command. 100ms timeout (ROCKET_RX_TIMEOUT_RAW) when synced,
+      // presync timeout when not. After timeout, stay standby until next slot.
       radioStartRx();
     }
   }
 
-  // If standby between slots (e.g. after TxDone, before next slot), restart RX to fill the gap.
-  if (radioState == RADIO_STANDBY) {
-    radioStartRx();
-  }
+  // After any window action completes (TxDone, RX timeout), stay standby until the next
+  // slot boundary. The slot handler fires at the boundary and starts the next action.
+  // No fallback RX restart here — that was causing the LED to stay on continuously.
 }
 
 #endif  // ROCKET_RADIO_TEST_MODE

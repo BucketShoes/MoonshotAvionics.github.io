@@ -39,7 +39,7 @@ enum WindowMode : uint8_t {
 
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN   2
-#define SLOT_DURATION_US    2'000'000UL
+#define SLOT_DURATION_US    1'000'000UL
 // Pre-sync: RX window sized to nearly a full slot so we don't miss anything.
 // SLOT_DURATION_US - 20ms margin, converted to RTC steps (15.625µs each).
 #define BS_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 50'000UL)
@@ -96,10 +96,11 @@ extern unsigned long bsMissedTelemSlots;
 // HeaderValid timestamp (held until RX_DONE of a valid rocket telemetry packet)
 extern uint64_t      bsPendingHeaderValidUs;
 
-// Background RSSI EMA — updated on RX timeout (no packet received).
-// Excludes packet RX windows so it reflects channel noise, not signal.
-// int8 range: reported as-is in page 12 bgRssi field.
-extern float         bsBgRssiEma;
+// Background RSSI EMA — noise floor / channel activity estimate.
+// Sampled every loop while RX_ACTIVE (after the first loop of each RX window).
+// Excludes received-packet RSSI so it reflects channel noise between our packets.
+// Reported in telemetry page 12 bgRssi field. -128.0 = no samples yet.
+extern float bsBgRssiEma;
 
 // ===================== COORDINATION FLAGS (main.cpp ↔ radio.cpp) =====================
 
