@@ -10,6 +10,7 @@
 
 #include "flight.h"
 #include "ota.h"
+#include "globals.h"
 
 // ===================== GLOBAL STATE =====================
 
@@ -243,6 +244,18 @@ static bool checkArmReady(unsigned long nowUs) {
 static void enterPhase(FlightPhase newPhase, unsigned long nowUs) {
   FlightPhase oldPhase = flightState.phase;
   flightState.phase = newPhase;
+
+  // Thrust curve: on coast entry, freeze ring and schedule forced send on both transports.
+  // thrustLoraForce stays set until the next WIN_TELEM slot consumes it (≤2s).
+  // Ring resumes automatically after LoRa send clears thrustLoraForce.
+  if (newPhase == PHASE_COAST) {
+    flightState.thrustCoastEntryUs = nowUs;
+    flightState.thrustViaBoost     = (oldPhase == PHASE_BOOST);
+    thrustLoraForce = true;
+    thrustBleForce  = true;
+    thrustBufActive = false;  // freeze ring until LoRa send clears thrustLoraForce
+    Serial.println("FLIGHT: coast — thrust curve frozen for forced send");
+  }
 
   Serial.print("FLIGHT: ");
   static const char* phaseNames[] = {
@@ -643,6 +656,12 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
     }
   }
 
+  // Refuse arm if a coast thrust snapshot is pending LoRa send.
+  // thrustLoraForce clears within one WIN_TELEM slot (≤2s), so this is transient.
+  if (thrustLoraForce) {
+    return ARM_ERR_REFUSED;
+  }
+
   // --- ARMING ---
   flightState.config = cfg;
   flightState.armed = true;
@@ -696,6 +715,14 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   Serial.print(" force="); Serial.print(forceArm);
   Serial.print(" orient="); Serial.println(flightState.orientXPositive ? "X+" : "X-");
 
+  // Reset thrust coast snapshot context (do NOT wipe thrustBuf or thrustBufHead —
+  // buffer may have been filling from BLE subscription and data is still valid).
+  flightState.thrustCoastEntryUs = 0;
+  flightState.thrustViaBoost     = false;
+  thrustBleForce  = false;
+  thrustBufActive = true;  // ring always active when armed
+  Serial.println("FLIGHT: armed — thrust buf active");
+
   return ARM_OK;
 }
 
@@ -706,7 +733,10 @@ void flightDisarm() {
   // Re-arming (flightTryArm) is what resets flight state.
   flightState.armed = false;
   enterPhase(PHASE_IDLE, micros());
-  Serial.println("FLIGHT: disarmed (state preserved)");
+  // Thrust ring continues if BLE is subscribed; otherwise stop.
+  thrustBufActive = (bleSubPageMask & (1ULL << PAGE_THRUST_CURVE)) != 0;
+  Serial.print("FLIGHT: disarmed (state preserved). thrust buf ");
+  Serial.println(thrustBufActive ? "active (BLE subscribed)" : "inactive");
 }
 
 // ===================== ACCESSORS =====================

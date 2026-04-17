@@ -13,7 +13,7 @@
 // ===================== LOG PAGE CONFIG =====================
 //back reference index
 static const uint8_t LOG_PAGE_TYPE[] = {
-  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D
+  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E
 };
 
 LogPageConfig logPages[LOGI_COUNT] = {
@@ -30,6 +30,7 @@ LogPageConfig logPages[LOGI_COUNT] = {
   { 1000000, 0, 0 },  // Flight status
   {10000000, 0, 0 },  // Radio health
   {10000000, 0, 0 },  // Timestamp
+  { 0,       0, 0 },  // Thrust curve: intervalUs=0, never written to flash
 };
 
 // ===================== PAGE CYCLE =====================
@@ -230,6 +231,76 @@ static void buildPage0D(uint8_t* buf, size_t* pos) {
   }
 }
 
+// Page 0x0E: Thrust curve — X-axis acceleration ring buffer snapshot (variable length)
+// Wire format (after type byte):
+//   uint16  durationMs  — window span in milliseconds
+//   int16   minAccel8   — min sample in 8mg units (actual mg = val × 8)
+//   int16   maxAccel8   — max sample in 8mg units
+//   uint8[] samples     — N bytes; count inferred from record/packet length
+//                         each = ((val_mg − min8×8) × 255) / ((max8 − min8) × 8)
+// Two-pass ring walk: pass 1 finds min/max, pass 2 encodes. No intermediate buffer.
+static void buildPage0E(uint8_t* buf, size_t* pos, uint16_t numSamples) {
+  const unsigned long MAX_WINDOW_US =
+    (unsigned long)THRUST_BUF_SIZE * 1000000UL / THRUST_SAMPLE_RATE_HZ;
+
+  // Determine window duration and sample count
+  unsigned long windowUs = MAX_WINDOW_US;
+
+  if (flightState.thrustCoastEntryUs != 0) {
+    // Coast snapshot: window = from (boostEntry - 1s) to coastEntry, or full buffer
+    if (flightState.thrustViaBoost && flightState.boostEntryUs > 0) {
+      unsigned long startUs = (flightState.boostEntryUs > 1000000UL)
+                              ? flightState.boostEntryUs - 1000000UL : 0;
+      unsigned long coast = flightState.thrustCoastEntryUs;
+      windowUs = (coast > startUs) ? (coast - startUs) : MAX_WINDOW_US;
+    }
+    // else direct coast (PAD_READY→COAST): use full buffer
+    if (windowUs > MAX_WINDOW_US) windowUs = MAX_WINDOW_US;
+  }
+  // else rolling subscription: full buffer
+
+  uint16_t windowSamples = (uint16_t)(windowUs * THRUST_SAMPLE_RATE_HZ / 1000000UL);
+  if (windowSamples > THRUST_BUF_SIZE) windowSamples = THRUST_BUF_SIZE;
+  if (windowSamples == 0) windowSamples = 1;
+
+  uint16_t N = (numSamples < windowSamples) ? numSamples : windowSamples;
+  if (N == 0) N = 1;
+
+  uint16_t durationMs = (uint16_t)(windowUs / 1000UL);
+
+  // --- Pass 1: find min/max ---
+  int16_t min16 = 0, max16 = 0;
+  bool first = true;
+  uint16_t step = (N > 1) ? (windowSamples / N) : 1;
+  if (step == 0) step = 1;
+  for (uint16_t i = 0; i < N; i++) {
+    uint16_t ringIdx = (uint16_t)((thrustBufHead + THRUST_BUF_SIZE - windowSamples + i * step) % THRUST_BUF_SIZE);
+    int16_t val = thrustBuf[ringIdx];
+    if (!flightState.orientXPositive) val = -val;
+    if (first) { min16 = max16 = val; first = false; }
+    else { if (val < min16) min16 = val; if (val > max16) max16 = val; }
+  }
+  // Flat-range guard: avoid division by zero in encoding
+  if (max16 == min16) max16 = min16 + 1;
+
+  // Header: durationMs, min8, max8 (8mg units)
+  writeU16(buf, pos, durationMs);
+  writeS16(buf, pos, (int16_t)(min16 / 8));
+  writeS16(buf, pos, (int16_t)(max16 / 8));
+
+  // --- Pass 2: encode ---
+  int32_t range8 = (int32_t)(max16 / 8) - (int32_t)(min16 / 8);
+  for (uint16_t i = 0; i < N; i++) {
+    uint16_t ringIdx = (uint16_t)((thrustBufHead + THRUST_BUF_SIZE - windowSamples + i * step) % THRUST_BUF_SIZE);
+    int16_t val = thrustBuf[ringIdx];
+    if (!flightState.orientXPositive) val = -val;
+    int32_t encoded = ((int32_t)val - (int32_t)(min16 / 8) * 8) * 255 / (range8 * 8);
+    if (encoded < 0) encoded = 0;
+    if (encoded > 255) encoded = 255;
+    buf[(*pos)++] = (uint8_t)encoded;
+  }
+}
+
 static void dispatchBuildPage(uint8_t pageType, uint8_t* buf, size_t* pos) {
   switch (pageType) {
     case 0x01: buildPage01(buf, pos); break;
@@ -281,7 +352,22 @@ size_t buildHeaderRecord(uint8_t* buf, size_t maxLen) {
 size_t buildDataPageRecord(uint8_t pageType, uint8_t* buf, size_t maxLen) {
   if (maxLen < 2) return 0;
 
-  uint8_t stageBuf[32];
+  // Page 0x0E (thrust curve): variable-length, bypasses stageBuf.
+  // numSamples chosen based on current TX PHY: 489 on 1M/2M, 200 on Coded.
+  // ATT limit is 517; record header is 2 bytes (len+type), payload header is 6 bytes.
+  if (pageType == PAGE_THRUST_CURVE) {
+    uint16_t n = (bleTxPhy == 3) ? 200 : 489;
+    // record: [len u8][0x0E][6-byte header][n bytes samples] = 2 + 6 + n
+    if (maxLen < (size_t)(2 + 6 + n)) return 0;
+    size_t recPos = 0;
+    buf[recPos++] = 0;        // len placeholder
+    buf[recPos++] = 0x0E;
+    buildPage0E(buf, &recPos, n);
+    buf[0] = (uint8_t)(recPos - 1);  // len = everything after the len byte
+    return recPos;
+  }
+
+  uint8_t stageBuf[255];  // large enough for any standard page (max 254 bytes payload)
   size_t stagePos = 0;
   dispatchBuildPage(pageType, stageBuf, &stagePos);
 
@@ -316,18 +402,30 @@ size_t buildTelemetryPacket(uint8_t* buf) {
   writeS16(buf, &pos, fusionAlt);
   writeU16(buf, &pos, buildStateFlags());
 
-  // Choose data page: force 0x0A after a command, otherwise round-robin
+  // Choose data page: cmd ack > thrust curve force > round-robin
   uint8_t pageType;
+  uint16_t thrustSamples = 0;
   if (lastAck.pending) {
     pageType = 0x0A;
     lastAck.pending = false;
+  } else if (thrustLoraForce) {
+    pageType = PAGE_THRUST_CURVE;
+    thrustLoraForce = false;
+    // Resume ring after send: active if armed OR BLE subscribed to 0x0E
+    thrustBufActive = isArmed || ((bleSubPageMask & (1ULL << PAGE_THRUST_CURVE)) != 0);
+    // Sample count depends on SF: SF≤7 = 200, SF8 = 100, SF9+ = 50
+    thrustSamples = (activeSF <= 7) ? 200 : (activeSF == 8) ? 100 : 50;
   } else {
     pageType = PAGE_CYCLE[pageIndex];
     pageIndex = (pageIndex + 1) % PAGE_CYCLE_COUNT;
   }
 
   writeU8(buf, &pos, pageType);
-  dispatchBuildPage(pageType, buf, &pos);
+  if (pageType == PAGE_THRUST_CURVE) {
+    buildPage0E(buf, &pos, thrustSamples);
+  } else {
+    dispatchBuildPage(pageType, buf, &pos);
+  }
 
   return pos;
 }
@@ -354,6 +452,28 @@ void logPage(LogPageIdx idx) {
 void logReceivedCommand(const uint8_t* pkt, size_t pktLen, int8_t snr) {
   if (!logStoreOk || pktLen == 0 || pktLen > LOG_MAX_PAYLOAD) return;
   logStore.writeRecord(pkt, (uint8_t)pktLen, snr, millis());
+}
+
+// ===================== NON-BLOCKING THRUST CAPTURE =====================
+// Samples accel.x into the ring buffer at THRUST_SAMPLE_RATE_HZ.
+// Only runs when thrustBufActive. Non-blocking — just a timestamp check.
+
+void nonblockingThrust() {
+  if (!thrustBufActive) return;
+  if (!accelData.valid) return;
+
+  static unsigned long thrustNextUs = 0;
+  unsigned long now = micros();
+  const unsigned long THRUST_CAPTURE_US = 1000000UL / THRUST_SAMPLE_RATE_HZ;  // 5000µs @ 200Hz
+
+  if ((now - thrustNextUs) < THRUST_CAPTURE_US) return;
+  thrustNextUs += THRUST_CAPTURE_US;
+  // Catch-up guard: if we're more than one period behind, reset (e.g. after long sleep)
+  if ((long)(now - thrustNextUs) > (long)THRUST_CAPTURE_US) thrustNextUs = now;
+
+  thrustBuf[thrustBufHead] = accelData.x;
+  thrustBufHead = (uint16_t)((thrustBufHead + 1) % THRUST_BUF_SIZE);
+  logPages[LOGI_THRUST_CURVE].freshMask = 0xFF;  // fresh for all transports
 }
 
 // ===================== NON-BLOCKING LOGGING =====================

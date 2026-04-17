@@ -147,6 +147,21 @@ DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but
      uint64   UTC time, ms since 1/1/1970
 
 
+0x0E  Thrust curve — X-axis acceleration history (variable length)
+      uint16  durationMs  — window duration in milliseconds
+      int16   minAccel8   — min sample, 8mg units (actual mg = val × 8)
+      int16   maxAccel8   — max sample, 8mg units
+      uint8[] samples     — N bytes; count inferred from record/packet length
+                            each = ((val_mg − min8×8) × 255) / ((max8 − min8) × 8)
+                            0 = minMg, 255 = maxMg, linear interpolation.
+      Sample count varies by transport:
+        LoRa SF≤7: 200, SF8: 100, SF9+: 50
+        BLE 1M/2M: 489, BLE Coded: 200
+      Not in regular LoRa page cycle. Not logged to flash.
+      Forced on coast entry (LoRa + BLE). BLE-subscribable for rolling window.
+      Coast snapshot window: if BOOST→COAST, covers 1s before boost to coast entry.
+      Direct coast (PAD_READY→COAST): full ring buffer window.
+
 0x10-0x7F  Reserved for future data pages and log-only types
            (log-only types are recorded to flash but usually not transmitted as part of regular telemetry pages — e.g. raw sensor dumps, debug data, future high-rate IMU logs)
 ```

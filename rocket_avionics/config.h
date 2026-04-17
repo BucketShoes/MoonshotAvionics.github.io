@@ -115,6 +115,15 @@ struct SlotConfig {
 #define PKT_BACKHAUL   0xE2
 #define PKT_LOG_CHUNK  0xCA
 
+// ===================== DATA PAGE TYPE CONSTANTS =====================
+
+#define PAGE_THRUST_CURVE      0x0E   // X-axis accel ring buffer (variable length, not logged to flash)
+
+// ===================== THRUST CURVE =====================
+
+#define THRUST_BUF_SIZE        2048   // int16_t samples; 4096 bytes RAM
+#define THRUST_SAMPLE_RATE_HZ  200    // target capture rate (5000µs period)
+
 // ===================== COMMAND IDs =====================
 
 #define CMD_ARM           0x01
@@ -166,9 +175,10 @@ struct SlotConfig {
 #define BLE_CONNSET_PAGEMASK  0x02   // [mask u64]
 #define BLE_CONNSET_PHY       0x03   // [phy u8] 0=1M 1=2M 2=Coded-S2 3=Coded-S8
 
-// Max BLE PDU payload in bytes. 517 MTU - 3 ATT header - 12 LL overhead = ~502.
+// Max BLE PDU payload for log fetch in bytes. 517 MTU - 3 ATT header - 12 LL overhead = ~502.
 // Using 502 allows 2 LL segments; 517 would spill into a 3rd.
-#define BLE_MAX_PDU            502
+// NOTE: for thrust curve telem the real ATT limit (517) applies — use 517 directly there.
+#define BLE_LOGFETCH_MAX_PDU   502
 
 // Advertising interval in 0.625ms units. 1600 = 1000ms.
 #define BLE_ADV_INTERVAL       1600

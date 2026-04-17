@@ -507,7 +507,7 @@ void nonblockingRadio() {
 
     if (win == WIN_TELEM) {
       if (txSendingEnabled) {
-        uint8_t pkt[32];
+        uint8_t pkt[255];  // 255 to accommodate thrust curve page (up to 217 bytes at SF≤7)
         size_t len = buildTelemetryPacket(pkt);
         radioStartTx(pkt, len);
         // After TxDone the radio returns to STANDBY. We do NOT restart RX in WIN_TELEM —

@@ -280,6 +280,10 @@ struct FlightState {
   bool landAccelEmaValid;
   unsigned long landAccelEmaLastUs;
 
+  // Thrust curve coast snapshot context — set in enterPhase(PHASE_COAST)
+  bool          thrustViaBoost;       // true = BOOST→COAST path; false = direct (PAD_READY→COAST)
+  unsigned long thrustCoastEntryUs;   // micros() at coast entry (0 = not yet coasted)
+
   // Arm readiness flag (for telemetry)
   bool armReady;
 

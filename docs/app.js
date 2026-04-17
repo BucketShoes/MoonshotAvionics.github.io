@@ -178,6 +178,18 @@
   PD[11]={n:'Flight',s:6,d:function(v,o){var ms=v.getInt32(o,1);var fl=v.getUint16(o+4,1);return{ms:ms,p1c:!!(fl&1),p1f:!!(fl&2),p1a:!!(fl&4),p2c:!!(fl&8),p2f:!!(fl&16),p2a:!!(fl&32),cc:!!(fl&64),cf:!!(fl&128),ca:!!(fl&256)}},f:function(d){return(d.ms<0?'pre':'T+'+(d.ms/1000).toFixed(1)+'s')+' P1:'+(d.p1c?'*':'o')+(d.p1f?'F':'')+' P2:'+(d.p2c?'*':'o')+(d.p2f?'F':'')+' Ch:'+(d.cc?'*':'o')+(d.cf?'F':'')}};
   PD[12]={n:'Radio',s:5,d:function(v,o){return{dtx:v.getUint16(o,1),irx:v.getUint16(o+2,1),bgRssi:v.getInt8(o+4)}},f:function(d){return 'dTX:'+d.dtx+' bRX:'+d.irx+' bg:'+d.bgRssi+'dBm'}};
   PD[13]={n:'Time',s:8,d:function(v,o){var lo=v.getUint32(o,1),hi=v.getUint32(o+4,1);var ms=hi*4294967296+lo;return{ms:ms,utc:ms>0?new Date(ms):null}},f:function(d){return d.utc?d.utc.toISOString().replace('T',' ').substring(0,19)+'Z':'no time'}};
+  // Page 0x0E: Thrust Curve — variable-length accel ring buffer snapshot
+  // Header: durationMs u16, minAccel8 s16, maxAccel8 s16 (8mg units), then N sample bytes.
+  // Sample count inferred from totalLen - 6 (totalLen passed in for BLE records; falls back to DataView length).
+  PD[14]={n:'Thrust Curve',s:6,d:function(v,o,totalLen){
+    var durationMs=v.getUint16(o,true);
+    var minMg8=v.getInt16(o+2,true);
+    var maxMg8=v.getInt16(o+4,true);
+    var nSamples=(totalLen!==undefined?totalLen:(v.byteLength-o))-6;
+    if(nSamples<0)nSamples=0;
+    var samples=new Uint8Array(v.buffer,v.byteOffset+o+6,nSamples);
+    return{durationMs:durationMs,minMg:minMg8*8,maxMg:maxMg8*8,sampleCount:nSamples,samples:samples};
+  },f:function(d){return d.sampleCount+' samples, '+d.durationMs+'ms, '+d.minMg+'..'+d.maxMg+' mg'}};
 
   var charts = null;
   function makeChart(id, ds) {
@@ -198,10 +210,56 @@ function initCharts() {
       mag:  makeChart('cMag', [{l:'Mag X',c:'rgba(255,68,68,0.75)'},{l:'Mag Y',c:'rgba(68,255,68,0.75)'},{l:'Mag Z',c:'rgba(68,68,255,0.75)'}]),
       batt: makeChart('cBatt',[{l:'Rocket mV',c:'rgba(0,255,0,0.75)'},{l:'Base mV',c:'rgba(255,255,0,0.75)'}])
     };
+    makeThrustChart();
     return true;
   }
   function clearCharts(){if(!charts)return;for(var k in charts){var c=charts[k];for(var i=0;i<c.data.datasets.length;i++)c.data.datasets[i].data=[];delete c.options.scales.x.min;delete c.options.scales.x.max;c.update('none')}}
   function pushChart(ch,t,v){if(!ch)return;for(var i=0;i<v.length;i++){if(v[i]!==null&&v[i]!==undefined)ch.data.datasets[i].data.push({x:t,y:v[i]})}for(var j=0;j<ch.data.datasets.length;j++){var d=ch.data.datasets[j].data;while(d.length>MAX_PTS)d.shift()}ch.update('none')}
+
+  // Thrust curve chart — independent from the telemetry time-series charts.
+  // x-axis is time within the captured window (0..durationMs), not boot time.
+  // Does not participate in cross-chart scroll/zoom sync.
+  var thrustChart = null;
+  function makeThrustChart() {
+    if (typeof Chart === 'undefined') return;
+    var el = document.getElementById('cThrust');
+    if (!el) return;
+    thrustChart = new Chart(el, {
+      type: 'line',
+      data: {datasets:[{label:'Accel X (mg)',data:[],borderColor:'rgba(255,136,0,0.85)',backgroundColor:'rgba(255,136,0,0.15)',pointRadius:0,fill:true,tension:0,borderWidth:1}]},
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: {type:'linear',display:true,title:{display:true,text:'Time (ms)',color:'#666',font:{size:10}},ticks:{color:'#666',font:{size:9},maxTicksLimit:8},grid:{color:'#1a1a1a'}},
+          y: {ticks:{color:'#888',font:{size:10}},grid:{color:'#222'},title:{display:true,text:'mg',color:'#666',font:{size:10}}}
+        },
+        plugins:{legend:{labels:{color:'#888',font:{size:10}}},zoom:{pan:{enabled:true,mode:'xy'},zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'xy'}}}
+      }
+    });
+  }
+  function clearThrustChart() {
+    if (!thrustChart) return;
+    thrustChart.data.datasets[0].data = [];
+    delete thrustChart.options.scales.x.min;
+    delete thrustChart.options.scales.x.max;
+    thrustChart.update('none');
+  }
+  function loadThrustCurve(d) {
+    if (!thrustChart) return;
+    clearThrustChart();
+    var pts = [];
+    var N = d.sampleCount;
+    var range = d.maxMg - d.minMg;
+    for (var i = 0; i < N; i++) {
+      var x = N > 1 ? i * d.durationMs / (N - 1) : 0;
+      var y = d.minMg + (d.samples[i] / 255) * range;
+      pts.push({x: x, y: y});
+    }
+    thrustChart.data.datasets[0].data = pts;
+    thrustChart.options.scales.x.min = 0;
+    thrustChart.options.scales.x.max = d.durationMs;
+    thrustChart.update('none');
+  }
 
   // Per-page detailed field descriptions for expanded view
   var PF = {};
@@ -219,6 +277,7 @@ function initCharts() {
   PF[11]=[{k:'ms',n:'T+launch',u:'ms'},{k:'p1c',n:'P1cont',u:'bool'},{k:'p1f',n:'P1fire',u:'bool'},{k:'p1a',n:'P1act',u:'bool'},{k:'p2c',n:'P2cont',u:'bool'},{k:'p2f',n:'P2fire',u:'bool'},{k:'p2a',n:'P2act',u:'bool'},{k:'cc',n:'Chcont',u:'bool'},{k:'cf',n:'Chfire',u:'bool'},{k:'ca',n:'Chact',u:'bool'}];
   PF[12]=[{k:'dtx',n:'DlyTX',u:'count'},{k:'irx',n:'BadRX',u:'count'},{k:'bgRssi',n:'BgRSSI',u:'dBm'}];
   PF[13]=[{k:'utc',n:'UTC',u:'',fmt:function(v){return v?v.toISOString().replace('T',' ').substring(0,19)+'Z':'none'}}];
+  PF[14]=[{k:'durationMs',n:'Duration',u:'ms'},{k:'minMg',n:'Min',u:'mg'},{k:'maxMg',n:'Max',u:'mg'},{k:'sampleCount',n:'Samples',u:''}];
 
   var detailMode = false;
   var lastPageData = {}; // store latest decoded data per page key
@@ -283,9 +342,9 @@ function initCharts() {
   function setWs(on){document.getElementById('dot-ws').className='dot '+(on?'dg':'dr');document.getElementById('val-ws').textContent=on?'connected':'disconnected'}
   function setSNR(s){var e=document.getElementById('val-snr-top');if(s===127){e.textContent='--';e.style.color='#555';return}e.textContent=s.toFixed(1)+'dB';e.style.color=s>5?'#0f0':s>0?'#ff0':s>-5?'#f80':'#f44'}
 
-  function decodeTelem(buf){var dv=new DataView(buf);if(dv.byteLength<10||dv.getUint8(0)!==0xAF)return null;var r={dev:dv.getUint8(1),latF:dv.getUint16(2,1),lonF:dv.getUint16(4,1),altM:dv.getInt16(6,1),flags:dv.getUint16(8,1),pg:null};if(dv.byteLength>10){var pt=dv.getUint8(10);var df=PD[pt];if(df&&dv.byteLength>=11+df.s)r.pg={t:pt,d:df.d(dv,11)}}return r}
+  function decodeTelem(buf){var dv=new DataView(buf);if(dv.byteLength<10||dv.getUint8(0)!==0xAF)return null;var r={dev:dv.getUint8(1),latF:dv.getUint16(2,1),lonF:dv.getUint16(4,1),altM:dv.getInt16(6,1),flags:dv.getUint16(8,1),pg:null};if(dv.byteLength>10){var pt=dv.getUint8(10);var df=PD[pt];if(df&&dv.byteLength>=11+df.s){var pgTotalLen=dv.byteLength-11;r.pg={t:pt,d:df.d(dv,11,pgTotalLen)}}}return r}
   function fmtGpsFrac(v){if(v===65535)return'NOT_POWERED';if(v===65534)return'INIT';if(v===65533)return'NO_FIX';if(v>=50000)return'Err:'+v;return'#.'+(v*2+'').padStart(5,'0')}
-  function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='st-phase p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8&&toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null])}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
+  function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='st-phase p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8&&toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null]);if(t===14)loadThrustCurve(d)}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
 
   function getLiveRecs(){return liveSource==='rkt'?rktLiveRecs:baseLiveRecs}
   function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+sessions[viewIdx].length+')'}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
@@ -399,6 +458,14 @@ function initCharts() {
     if (!df) return;
     if (bytes.length < 1 + df.s) return;
     var dv = new DataView(payload);
+    // Thrust curve (0x0E): pass totalLen for variable-length decode; load chart instead of pushing
+    if (pageType === 14) {
+      var d14 = df.d(dv, 1, bytes.length - 1);
+      if (df.f) setV(pageType, df.f(d14), isLive);
+      updateDetail(pageType, d14);
+      loadThrustCurve(d14);
+      return;
+    }
     var d = df.d(dv, 1); // decode starting at offset 1 (after page type byte)
     if (df.f) setV(pageType, df.f(d), isLive);
     updateDetail(pageType, d);
@@ -2333,12 +2400,15 @@ function initCharts() {
 
     // Build page mask checkboxes (pages 1-16)
     (function() {
-      var PAGE_NAMES = {1:'GPS Full',2:'Baro',3:'Mag',4:'Accel',5:'Gyro',6:'GPS Ext',7:'Kalman',8:'System',9:'Peaks',10:'Cmd Ack',11:'Flight',12:'Radio',13:'Time'};
+      var PAGE_NAMES = {1:'GPS Full',2:'Baro',3:'Mag',4:'Accel',5:'Gyro',6:'GPS Ext',7:'Kalman',8:'System',9:'Peaks',10:'Cmd Ack',11:'Flight',12:'Radio',13:'Time',14:'Thrust Curve'};
+      // Pages checked by default: 1-13 (matches BLE_DEFAULT_PAGE_MASK bits 1-13).
+      // Page 14 (Thrust Curve) is unchecked by default — must be explicitly subscribed.
+      var DEFAULT_CHECKED = {1:1,2:1,3:1,4:1,5:1,6:1,7:1,8:1,9:1,10:1,11:1,12:1,13:1};
       var g = document.getElementById('rkt-mask-grid');
       var h = '';
       for (var i = 1; i <= 16; i++) {
         var nm = PAGE_NAMES[i] || ('Pg'+i);
-        h += '<label><input type="checkbox" class="rkt-mask-cb" data-page="'+i+'" '+(i<=13?'checked':'')+'>'+nm+'</label>';
+        h += '<label><input type="checkbox" class="rkt-mask-cb" data-page="'+i+'" '+(DEFAULT_CHECKED[i]?'checked':'')+'>'+nm+'</label>';
       }
       g.innerHTML = h;
     })();

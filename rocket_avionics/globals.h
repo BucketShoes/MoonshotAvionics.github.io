@@ -61,4 +61,20 @@ extern unsigned long txIntervalUs;
 
 extern unsigned long runningMaxLoopUs;  // all-time worst loop iteration (reset on arm)
 
+// ===================== THRUST CURVE =====================
+// Ring buffer for X-axis acceleration history (page 0x0E).
+// Defined in main.cpp; accessed by telemetry.cpp, flight.cpp, ble.cpp.
+
+extern int16_t   thrustBuf[THRUST_BUF_SIZE];  // native accel.x milli-g samples
+extern uint16_t  thrustBufHead;               // next-write index (wraps at THRUST_BUF_SIZE)
+extern bool      thrustBufActive;             // ring is currently writing samples
+extern bool      thrustLoraForce;             // force page 0x0E on next LoRa WIN_TELEM slot (freezes ring)
+extern bool      thrustBleForce;              // force page 0x0E to BLE once (coast entry)
+
+// ===================== BLE SHARED STATE =====================
+// Mirrors of BLE state needed by telemetry.cpp and flight.cpp without a circular ble.h include.
+
+extern uint8_t   bleTxPhy;        // current TX PHY: 1=1M, 2=2M, 3=Coded; updated by ble.cpp
+extern uint64_t  bleSubPageMask;  // mirrors bleState.subPageMask; updated on mask change
+
 #endif // GLOBALS_H

@@ -48,6 +48,7 @@ static void applyPhyParams(uint16_t connHandle, uint8_t phy) {
       pServer->updateConnParams(connHandle,
         BLE_CI_FAST_MIN, BLE_CI_FAST_MAX, BLE_CI_FAST_LATENCY, BLE_CI_FAST_TIMEOUT);
       bleState.currentTxPhy = 2;
+      bleTxPhy = 2;
       break;
     case 2:  // Coded S=2
       pServer->updatePhy(connHandle,
@@ -55,6 +56,7 @@ static void applyPhyParams(uint16_t connHandle, uint8_t phy) {
       pServer->updateConnParams(connHandle,
         BLE_CI_SLOW_MIN, BLE_CI_SLOW_MAX, BLE_CI_SLOW_LATENCY, BLE_CI_SLOW_TIMEOUT);
       bleState.currentTxPhy = 3;
+      bleTxPhy = 3;
       break;
     case 3:  // Coded S=8
       pServer->updatePhy(connHandle,
@@ -62,6 +64,7 @@ static void applyPhyParams(uint16_t connHandle, uint8_t phy) {
       pServer->updateConnParams(connHandle,
         BLE_CI_SLOW_MIN, BLE_CI_SLOW_MAX, BLE_CI_SLOW_LATENCY, BLE_CI_SLOW_TIMEOUT);
       bleState.currentTxPhy = 3;
+      bleTxPhy = 3;
       break;
     default:  // 0 = 1M
       pServer->updatePhy(connHandle,
@@ -69,6 +72,7 @@ static void applyPhyParams(uint16_t connHandle, uint8_t phy) {
       pServer->updateConnParams(connHandle,
         BLE_CI_FAST_MIN, BLE_CI_FAST_MAX, BLE_CI_FAST_LATENCY, BLE_CI_FAST_TIMEOUT);
       bleState.currentTxPhy = 1;
+      bleTxPhy = 1;
       break;
   }
 }
@@ -80,15 +84,17 @@ class BleServerCB : public NimBLEServerCallbacks {
     BLE_CB_START();
 
     // Single connection: any new connection clears previous state
-    bleState.connected      = true;
+    bleState.connected       = true;
     bleState.telemSubscribed = false;
-    bleState.fetchActive    = false;
-    bleState.ovfLen         = 0;
-    bleState.ovfSent        = 0;
+    bleState.fetchActive     = false;
+    bleState.ovfLen          = 0;
+    bleState.ovfSent         = 0;
     bleState.fetchCurrentRec = 0;
-    bleState.fetchEndRec    = 0;
-    bleState.nextCaptureUs  = micros();
-    bleState.currentTxPhy   = 1;
+    bleState.fetchEndRec     = 0;
+    bleState.nextCaptureUs   = micros();
+    bleState.currentTxPhy    = 1;
+    bleState.subPageMask     = BLE_DEFAULT_PAGE_MASK;
+    bleSubPageMask           = BLE_DEFAULT_PAGE_MASK;  // mirror into globals
 
     // Mark all pages fresh for the new connection
     for (int i = 0; i < LOGI_COUNT; i++) {
@@ -131,7 +137,10 @@ class BleServerCB : public NimBLEServerCallbacks {
     Serial.printf("BLE: PHY tx:%s rx:%s\n",
       txPhy < 4 ? n[txPhy] : "?",
       rxPhy < 4 ? n[rxPhy] : "?");
-    if (txPhy <= 3) bleState.currentTxPhy = txPhy;
+    if (txPhy <= 3) {
+      bleState.currentTxPhy = txPhy;
+      bleTxPhy = txPhy;  // mirror into globals for telemetry.cpp use
+    }
     BLE_CB_END();
   }
 };
@@ -219,8 +228,13 @@ class BleConnSetCB : public NimBLECharacteristicCallbacks {
           uint64_t mask = 0;
           for (int i = 0; i < 8; i++) mask |= ((uint64_t)data[1 + i] << (i * 8));
           bleState.subPageMask = mask;
-          Serial.printf("BLE: page mask set to 0x%08lX%08lX\n",
-            (unsigned long)(mask >> 32), (unsigned long)(mask & 0xFFFFFFFF));
+          bleSubPageMask = mask;  // mirror into globals for telemetry.cpp / flight.cpp
+          // Recalculate thrust ring active state based on new subscription
+          thrustBufActive = (isArmed || ((bleSubPageMask & (1ULL << PAGE_THRUST_CURVE)) != 0))
+                            && !thrustLoraForce;
+          Serial.printf("BLE: page mask set to 0x%08lX%08lX, thrust buf %s\n",
+            (unsigned long)(mask >> 32), (unsigned long)(mask & 0xFFFFFFFF),
+            thrustBufActive ? "active" : "inactive");
         }
         break;
 
@@ -394,7 +408,7 @@ void initBLE() {
 // Maps LOGI_* index to page type byte. Must match LOG_PAGE_TYPE in telemetry.cpp.
 static const uint8_t BLE_LOGI_TO_PAGE[LOGI_COUNT] = {
   0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-  0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D
+  0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E
 };
 
 static void bleCapture() {
@@ -420,17 +434,25 @@ static void bleCapture() {
   size_t written = buildHeaderRecord(bleState.ovfBuf + 8, BLE_OVF_BUF_SIZE - 8);
   bleState.ovfLen = 8 + (uint16_t)written;
 
-  // Write each fresh page in the subscription mask
+  // Write each fresh page in the subscription mask (or forced thrust page)
   for (int i = 0; i < LOGI_COUNT; i++) {
     uint8_t pageType = BLE_LOGI_TO_PAGE[i];
-    if (!(bleState.subPageMask & (1ULL << pageType))) continue;
-    if (!(logPages[i].freshMask & FRESH_BLE)) continue;
+
+    // Thrust curve page can be forced regardless of subscription (coast entry send)
+    bool forced = (pageType == PAGE_THRUST_CURVE && thrustBleForce);
+    bool subscribed = (bleState.subPageMask & (1ULL << pageType)) != 0;
+
+    if (!forced && !subscribed) continue;
+    if (!forced && !(logPages[i].freshMask & FRESH_BLE)) continue;
 
     size_t remaining = BLE_OVF_BUF_SIZE - bleState.ovfLen;
     size_t rec = buildDataPageRecord(pageType,
       bleState.ovfBuf + bleState.ovfLen, remaining);
     if (rec == 0) continue;
     bleState.ovfLen += (uint16_t)rec;
+
+    // Clear force flag after building the record
+    if (forced) thrustBleForce = false;
   }
 
   // Clear FRESH_BLE for all subscribed pages
@@ -452,8 +474,8 @@ static void bleDrainOnePdu() {
   if (bleState.ovfSent >= bleState.ovfLen) return;
 
   // Walk records starting at ovfSent to fit as many whole records as possible
-  // into one PDU (max BLE_MAX_PDU - 8 bytes of records, plus 8-byte timestamp prefix).
-  uint16_t maxRecBytes = (BLE_MAX_PDU > 8) ? (BLE_MAX_PDU - 8) : 0;
+  // into one PDU (max BLE_LOGFETCH_MAX_PDU - 8 bytes of records, plus 8-byte timestamp prefix).
+  uint16_t maxRecBytes = (BLE_LOGFETCH_MAX_PDU > 8) ? (BLE_LOGFETCH_MAX_PDU - 8) : 0;
   uint16_t pduRecLen = 0;
   uint16_t pos = bleState.ovfSent;
   while (pos < bleState.ovfLen) {
@@ -503,7 +525,7 @@ static void bleFetchOnePdu() {
   // Build one PDU using the sequential cursor — O(1) per record.
   // Format: [recNum u32 LE][len u8][snr i8][ts u32 LE][payload: len bytes]
   // (same as base station log fetch so JS uses identical parsing)
-  uint8_t pdu[BLE_MAX_PDU];
+  uint8_t pdu[BLE_LOGFETCH_MAX_PDU];
   uint16_t pduLen = 0;
 
   uint8_t recBuf[LOG_MAX_PAYLOAD];
@@ -512,7 +534,7 @@ static void bleFetchOnePdu() {
 
   while (bleState.fetchSeq.hasMore()) {
     // Stop filling if worst-case next record wouldn't fit
-    if (pduLen + 10 + LOG_MAX_PAYLOAD > BLE_MAX_PDU) break;
+    if (pduLen + 10 + LOG_MAX_PAYLOAD > BLE_LOGFETCH_MAX_PDU) break;
 
     uint32_t recNum = bleState.fetchSeq.currentRec();
     int rLen = bleState.fetchSeq.readNext(recBuf, sizeof(recBuf), &snr, &ts);
@@ -557,9 +579,12 @@ void nonblockingBle() {
     return;  // one PDU per loop
   }
 
-  // Priority 2: capture new telem if subscribed and interval elapsed
-  if (bleState.telemSubscribed) {
-    bool captureNow = (bleState.subIntervalUs == 0) || (now >= bleState.nextCaptureUs);
+  // Priority 2: capture new telem if subscribed and interval elapsed, OR forced thrust send
+  bool forcedCapture = thrustBleForce;  // coast entry: send thrust page immediately
+  if (bleState.telemSubscribed || forcedCapture) {
+    bool captureNow = forcedCapture ||
+                      (bleState.subIntervalUs == 0) ||
+                      (now >= bleState.nextCaptureUs);
     if (captureNow) {
       bleCapture();
       // Start draining immediately if we captured anything

@@ -18,7 +18,7 @@
 //   data[0] is always the type byte.
 //   len includes the type byte: e.g. len=8 → 1 type byte + 7 data bytes.
 //   Types 0x00-0x7F = data pages; 0x80-0xFF = packet/header types (e.g. 0xAF).
-//   Max PDU payload: BLE_MAX_PDU bytes (defined in config.h). Whole records only.
+//   Max PDU payload for log fetch: BLE_LOGFETCH_MAX_PDU bytes (defined in config.h). Whole records only.
 //
 // Fresh flags: ble.cpp clears FRESH_BLE (bit 2) from logPages[i].freshMask after
 // sending each page. Sensor code sets freshMask |= 0xFF on each new reading.

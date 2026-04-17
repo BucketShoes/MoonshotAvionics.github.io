@@ -60,6 +60,21 @@ unsigned long txIntervalUs = 5000000UL; //used when not synced to time windows
 
 unsigned long runningMaxLoopUs = 0;
 
+// ===================== THRUST CURVE =====================
+// Ring buffer for page 0x0E. Static allocation — 4096 bytes, never heap.
+
+int16_t  thrustBuf[THRUST_BUF_SIZE];
+uint16_t thrustBufHead   = 0;
+bool     thrustBufActive = false;
+bool     thrustLoraForce = false;
+bool     thrustBleForce  = false;
+
+// ===================== BLE SHARED STATE =====================
+// Mirrors of ble.cpp state needed by telemetry.cpp / flight.cpp.
+
+uint8_t  bleTxPhy       = 2;                      // default 2M on connect
+uint64_t bleSubPageMask = BLE_DEFAULT_PAGE_MASK;  // updated by ble.cpp on mask change
+
 // ===================== DEFAULT HMAC KEY =====================
 // Written to NVS on first boot. Replace via CMD_SET_KEY in production.
 // Key is loaded from secrets.h (gitignored). Copy secrets_example.h to secrets.h and fill in your key.
@@ -363,6 +378,9 @@ void setup() {
   setCpuFrequencyMhz(240);
   Serial.println("Rocket Telemetry - Heltec Wireless Tracker");
   loopStatStartUs = micros();
+  memset(thrustBuf, 0, sizeof(thrustBuf));
+  thrustBufHead   = 0;
+  thrustBufActive = false;
   initBLE();
 }
 
@@ -376,11 +394,11 @@ unsigned long lastLoopUs = 0;
 // which subsystem consumed the most time. Only active when not armed.
 enum LoopSlot {
   SLOT_INIT = 0, SLOT_GPS, SLOT_BUTTON, SLOT_BATTERY,
-  SLOT_SENSORS, SLOT_FLIGHT, SLOT_PEAKS, SLOT_LOGGING, SLOT_RADIO,
+  SLOT_SENSORS, SLOT_THRUST, SLOT_FLIGHT, SLOT_PEAKS, SLOT_LOGGING, SLOT_RADIO,
   SLOT_BLE, SLOT_STATS, SLOT_COUNT
 };
 static const char* slotNames[] = {
-  "init", "gps", "btn", "batt", "sens", "flight", "peak", "log", "radio", "ble", "stats"
+  "init", "gps", "btn", "batt", "sens", "thrust", "flight", "peak", "log", "radio", "ble", "stats"
 };
 unsigned long slotUs[SLOT_COUNT];
 
@@ -408,6 +426,9 @@ void loop() {
 
   nonblockingSensors();
   t1 = micros(); slotUs[SLOT_SENSORS] = t1 - t0; t0 = t1;
+
+  nonblockingThrust();
+  t1 = micros(); slotUs[SLOT_THRUST] = t1 - t0; t0 = t1;
 
   nonblockingFlight();
   t1 = micros(); slotUs[SLOT_FLIGHT] = t1 - t0; t0 = t1;

@@ -45,6 +45,7 @@ enum LogPageIdx {
   LOGI_FLIGHT_STATUS, // 0x0B
   LOGI_RADIO_HEALTH,  // 0x0C
   LOGI_TIMESTAMP,     // 0x0D
+  LOGI_THRUST_CURVE,  // 0x0E (intervalUs=0: never written to flash; BLE capture + LoRa forced send only)
   LOGI_COUNT
 };
 
@@ -74,6 +75,10 @@ void logReceivedCommand(const uint8_t* pkt, size_t pktLen, int8_t snr);
 
 // Check each enabled log page and write any that are due.
 void nonblockingLogging();
+
+// Capture one X-axis accel sample into the thrust ring buffer (page 0x0E).
+// Must be called every loop iteration, between nonblockingSensors() and nonblockingFlight().
+void nonblockingThrust();
 
 // Print a packet as hex to Serial.
 void printPacketHex(const uint8_t* buf, size_t len);
