@@ -843,7 +843,7 @@ void setup() {
   if (bsRadioInit()) {
     Serial.println("ok");
     bsLoraReady = true;
-    bsRadioStartRx();  // start listening immediately after init
+    bsRadioStartRx();  // start listening immediately after init// TODO: we dont need to init on boot - the first window will do that for us - why is this here? casn we delete it? will this interfere with the first loop because the radio is already running?
   } else {
     Serial.println("FAIL");
   }
