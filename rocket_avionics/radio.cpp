@@ -75,7 +75,7 @@ static sx126x_lora_sf_t sfToEnum(uint8_t sf) {
   return (sx126x_lora_sf_t)sf;
 }
 
-static void ledOn()  { ledcWrite(LED_PIN, 255); }
+static void ledOn()  { ledcWrite(LED_PIN, 16); }
 static void ledOff() { ledcWrite(LED_PIN, 0);   }
 
 // ===================== INIT =====================

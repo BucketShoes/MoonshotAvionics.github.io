@@ -213,7 +213,7 @@ void nonblockingInit() {
       txSendingEnabled = true;
       if (loraReady) {
         radioStartRx();
-        ledcWrite(LED_PIN, 10);
+        ledcWrite(LED_PIN, 1);
         Serial.println("Radio enabled — bootstrap RX, waiting for sync");
       } else {
         Serial.println("Radio FAILED — no LoRa");
@@ -373,8 +373,8 @@ void nonblockingLoopStats() {
 void setup() {
   Serial.begin(SERIAL_BAUD);
   pinMode(USER_BTN_PIN, INPUT_PULLUP);
-  ledcAttach(LED_PIN, 1000, 8);
-  ledcWrite(LED_PIN, 25);
+  ledcAttach(LED_PIN, 10000, 8);
+  ledcWrite(LED_PIN, 1);
   setCpuFrequencyMhz(240);
   Serial.println("Rocket Telemetry - Heltec Wireless Tracker");
   loopStatStartUs = micros();

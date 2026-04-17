@@ -6,7 +6,8 @@
       "WebFetch(domain:github.com)",
       "Bash(pio run:*)",
       "Bash(~/.platformio/penv/bin/pio run:*)",
-      "Bash(/c/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run:*)"
+      "Bash(/c/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run:*)",
+      "Bash(grep -E \"\\\\.\\(h|cpp|ino\\)$\")"
     ]
   }
 }

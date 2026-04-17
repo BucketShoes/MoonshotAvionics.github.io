@@ -761,8 +761,8 @@ void setup() {
 
   initBLE();
 
-  ledcAttach(LED_PIN, 1000, 8);
-  ledcWrite(LED_PIN, 5);
+  ledcAttach(LED_PIN, 10000, 8);
+  ledcWrite(LED_PIN, 1);
 
   pinMode(VEXT_CTRL_PIN, OUTPUT); digitalWrite(VEXT_CTRL_PIN, HIGH);
   pinMode(VBAT_ADC_CTRL_PIN, OUTPUT); digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
@@ -920,9 +920,3 @@ void loop() {
 
 
 
-void NotUsed(){
-  //led current drive strength - not good given series resistor
-  //gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-  //gpio_set_drive_capability(LED_PIN, GPIO_DRIVE_CAP_0);
-  //gpio_set_level(LED_PIN, 1);
-}

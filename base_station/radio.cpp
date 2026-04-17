@@ -70,7 +70,7 @@ static sx126x_lora_bw_t bwKHzToEnum(float bwKHz) {
   return SX126X_LORA_BW_125;
 }
 
-static void bsLedOn()  { ledcWrite(LED_PIN, 255); }
+static void bsLedOn()  { ledcWrite(LED_PIN, 64); }
 static void bsLedOff() { ledcWrite(LED_PIN, 0);   }
 
 // ===================== INIT =====================
