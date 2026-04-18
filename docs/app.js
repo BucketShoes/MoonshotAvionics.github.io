@@ -347,7 +347,7 @@ function initCharts() {
 
   function decodeTelem(buf){var dv=new DataView(buf);if(dv.byteLength<10||dv.getUint8(0)!==0xAF)return null;var r={dev:dv.getUint8(1),latF:dv.getUint16(2,1),lonF:dv.getUint16(4,1),altM:dv.getInt16(6,1),flags:dv.getUint16(8,1),pg:null};if(dv.byteLength>10){var pt=dv.getUint8(10);var df=PD[pt];if(df&&dv.byteLength>=11+df.s){var pgTotalLen=dv.byteLength-11;r.pg={t:pt,d:df.d(dv,11,pgTotalLen)}}}return r}
   function fmtGpsFrac(v){if(v===65535)return'NOT_POWERED';if(v===65534)return'INIT';if(v===65533)return'NO_FIX';if(v>=50000)return'Err:'+v;return'#.'+(v*2+'').padStart(5,'0')}
-  function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='st-phase p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8&&toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null]);if(t===14)loadThrustCurve(d)}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
+  function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='st-phase p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8){updateRktBatt(d.batt);if(toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null]);}if(t===14)loadThrustCurve(d)}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
 
   function getLiveRecs(){return liveSource==='rkt'?rktLiveRecs:baseLiveRecs}
   function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+sessions[viewIdx].length+')'}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
@@ -482,7 +482,7 @@ function initCharts() {
     if (pageType === 3) pushChart(charts.mag, bootMs, [d.x, d.y, d.z]);
     if (pageType === 4) pushChart(charts.acc, bootMs, [d.x, d.y, d.z]);
     if (pageType === 5) pushChart(charts.gyr, bootMs, [d.x, d.y, d.z]);
-    if (pageType === 8) pushChart(charts.batt, bootMs, [d.batt, null]);
+    if (pageType === 8) { pushChart(charts.batt, bootMs, [d.batt, null]); updateRktBatt(d.batt); }
     // For altitude chart: only push if this page contributes altitude data
     if (pageType === 2 || pageType === 6) {
       pushChart(charts.alt, bootMs, [null, gpsAlt, baroAlt]);
@@ -853,6 +853,13 @@ function initCharts() {
     }
   }
 
+  // Update rocket battery display from any source (status poll or page 0x08 telemetry)
+  function updateRktBatt(battMv) {
+    var be = document.getElementById('val-rktbatt');
+    be.textContent = battMv + 'mV';
+    be.style.color = battMv > 3500 ? '#0f0' : battMv > 3300 ? '#ff0' : '#f44';
+  }
+
   // Update nonce field from either base or rocket status
   function updateNonceFromStatus(s) {
     if (typeof s.nonce === 'number') {
@@ -1022,11 +1029,7 @@ function initCharts() {
       if (typeof s.logIdx === 'number') {
         document.getElementById('val-rktlogrec').textContent = s.logIdx;
       }
-      if (typeof s.batt === 'number') {
-        var be = document.getElementById('val-rktbatt');
-        be.textContent = s.batt + 'mV';
-        be.style.color = s.batt > 3500 ? '#0f0' : s.batt > 3300 ? '#ff0' : '#f44';
-      }
+      if (typeof s.batt === 'number') { updateRktBatt(s.batt); }
       // Sync rocket boot clock for correct x-axis on charts
       if (typeof s.uptime === 'number') {
         rktUptimeMs = s.uptime;
