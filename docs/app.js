@@ -257,8 +257,8 @@ function initCharts() {
       pts.push({x: x, y: y});
     }
     thrustChart.data.datasets[0].data = pts;
-    thrustChart.options.scales.x.min = 0;
-    thrustChart.options.scales.x.max = d.durationMs / 1000;
+    thrustChart.options.scales.x.min = -1;
+    thrustChart.options.scales.x.max = d.durationMs / 1000 + 1;
     thrustChart.options.scales.y.min = d.minMg / 1000;
     thrustChart.options.scales.y.max = d.maxMg / 1000;
     thrustChart.update();
