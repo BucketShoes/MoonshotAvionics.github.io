@@ -54,8 +54,7 @@ uint64_t      bsPendingHeaderValidUs = 0;
 
 static unsigned long bsSyncBootMs     = 0;
 static unsigned long bsLastSyncSendMs = 0;
-// Prime number — avoids re-aligning to the same slot boundary every retry.
-#define BS_SYNC_RETRY_MS  31337UL
+
 
 // ===================== HELPERS =====================
 

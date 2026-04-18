@@ -52,8 +52,8 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define BS_CMD_TX_OFFSET_US   5'000UL     // fire command this many µs into WIN_CMD
 
 #define BS_SYNC_BOOT_DELAY_MS  2'000      // send first sync 2s after boot
-#define BS_SYNC_LOSS_SLOTS     500          // resync if this many WIN_TELEM slots missed
-
+#define BS_SYNC_LOSS_SLOTS     5000          // resync if this many WIN_TELEM slots missed
+#define BS_SYNC_RETRY_MS  31337UL // Prime number — avoids re-aligning to the same slot boundary every retry.
 
 
 // ===================== RADIO STATE =====================
