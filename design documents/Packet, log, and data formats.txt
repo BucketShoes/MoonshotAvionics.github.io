@@ -157,10 +157,11 @@ DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but
       Sample count varies by transport:
         LoRa SF≤7: 200, SF8: 100, SF9+: 50
         BLE 1M/2M: 489, BLE Coded: 200
-      Not in regular LoRa page cycle. Not logged to flash.
-      Forced on coast entry (LoRa + BLE). BLE-subscribable for rolling window.
+        Logs: 230        
+      Not in regular LoRa page cycle. Not logged to flash (TODO: log to flash with 230 samples if triggered by launch detection).
+      Forced on coast entry (LoRa + BLE), will cover the boost duration; or can be subscribed on ble to cover full sample buffer duration on rolling window
       Coast snapshot window: if BOOST→COAST, covers 1s before boost to coast entry.
-      Direct coast (PAD_READY→COAST): full ring buffer window.
+      Direct coast (PAD_READY→COAST): full ring buffer window (assuming boost timing was not properly detected below noise).
 
 0x10-0x7F  Reserved for future data pages and log-only types
            (log-only types are recorded to flash but usually not transmitted as part of regular telemetry pages — e.g. raw sensor dumps, debug data, future high-rate IMU logs)
@@ -266,10 +267,11 @@ TODO: @@@@ - this is wrong - it should be reported directly via the service (the
 When we eventually combine services/chars, this will still be separate from the base, since bases can talk to any rocket, but this is talking directly to the rocket its talking to.
 
   Char 0003 (READ) — Status JSON
-    Returns JSON: {"logIdx":N,"batt":N,"armed":true/false,"uptime":N}
+    Returns JSON: {"logIdx":N,"batt":N,"armed":true/false,"uptime":N,"nonce":N}
     uptime: rocket milliseconds since boot.
     logIdx: current flash record counter.
     batt: battery millivolts.
+    nonce: highest command nonce accepted (next command must use nonce >= this + 1).
 
   Char 0004 (WRITE | WRITE WITHOUT RESPONSE) — Connection settings (ConnSet)
     Write a single command byte followed by parameters:

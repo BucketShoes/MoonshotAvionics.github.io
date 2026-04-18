@@ -490,6 +490,26 @@ function initCharts() {
   }
 
   var lastStatusPollMs = 0;
+  var statusPollInterval = null;
+
+  function startStatusPolling() {
+    if (statusPollInterval) return;  // Already polling
+    statusPollInterval = setInterval(function() {
+      if (bleConnected && bleStatusChar_) {
+        bleReadStatus().catch(function(e) { console.error('Auto-poll BLE status failed:', e); });
+      } else if (rktBleConnected && rktStatusChar_) {
+        rktReadStatus().catch(function(e) { console.error('Auto-poll rocket status failed:', e); });
+      }
+    }, 10000);  // Poll every 10 seconds
+  }
+
+  function stopStatusPolling() {
+    if (statusPollInterval) {
+      clearInterval(statusPollInterval);
+      statusPollInterval = null;
+    }
+  }
+
   function fetchStatus(cb){
     // BLE path: read status characteristic
     if (bleConnected && bleStatusChar_) {
@@ -497,7 +517,7 @@ function initCharts() {
       return;
     }
     // HTTP path (WiFi)
-    var x=new XMLHttpRequest();x.open('GET',getBaseHttp()+'/api/status');x.onload=function(){if(x.status===200){try{var s=JSON.parse(x.responseText);serverUptimeMs=s.uptimeMs;serverSyncClockMs=Date.now();document.getElementById('val-logrec').textContent=s.records;if(typeof s.baseBattMv==='number'){var be=document.getElementById('val-basebatt');be.textContent=s.baseBattMv+'mV';be.style.color=s.baseBattMv>3500?'#0f0':s.baseBattMv>3300?'#ff0':'#f44';if(charts&&charts.batt){var bootMs=serverUptimeMs;pushChart(charts.batt,bootMs,[null,s.baseBattMv])}}if(typeof s.nonce==='number'){var ne=document.getElementById('cmd-nonce');var srvNext=s.nonce+1;var cur=parseInt(ne.value)||0;if(srvNext>cur){ne.value=srvNext;try{localStorage.setItem('cmd-nonce',''+srvNext)}catch(e){}}}if(cb)cb(s)}catch(e){}}};x.send()
+    var x=new XMLHttpRequest();x.open('GET',getBaseHttp()+'/api/status');x.onload=function(){if(x.status===200){try{var s=JSON.parse(x.responseText);serverUptimeMs=s.uptimeMs;serverSyncClockMs=Date.now();document.getElementById('val-logrec').textContent=s.records;if(typeof s.baseBattMv==='number'){var be=document.getElementById('val-basebatt');be.textContent=s.baseBattMv+'mV';be.style.color=s.baseBattMv>3500?'#0f0':s.baseBattMv>3300?'#ff0':'#f44';if(charts&&charts.batt){var bootMs=serverUptimeMs;pushChart(charts.batt,bootMs,[null,s.baseBattMv])}}updateNonceFromStatus(s);if(cb)cb(s)}catch(e){}}};x.send()
   }
 
   // Rebuild sessions from fetched logs + LoRa download session.
@@ -741,6 +761,7 @@ function initCharts() {
         bleConnected = false;
         setBle(false);
         bleTelemChar_ = null; bleCmdChar_ = null; bleStatusChar_ = null; bleLogFetchChar_ = null;
+        stopStatusPolling();
         console.log('BLE disconnected');
       });
 
@@ -818,6 +839,7 @@ function initCharts() {
 
       // Fetch initial status via BLE
       bleReadStatus();
+      startStatusPolling();
 
       console.log('BLE connected, MTU negotiated by OS');
 
@@ -825,6 +847,16 @@ function initCharts() {
       console.error('BLE connect failed:', err);
       setBle(false);
       document.getElementById('val-ble').textContent = err.message || 'failed';
+    }
+  }
+
+  // Update nonce field from either base or rocket status
+  function updateNonceFromStatus(s) {
+    if (typeof s.nonce === 'number') {
+      var ne = document.getElementById('cmd-nonce');
+      var srvNext = s.nonce + 1;
+      var cur = parseInt(ne.value) || 0;
+      if (srvNext > cur) { ne.value = srvNext; try { localStorage.setItem('cmd-nonce', '' + srvNext); } catch(e) {} }
     }
   }
 
@@ -844,12 +876,7 @@ function initCharts() {
         be.textContent = s.baseBattMv + 'mV';
         be.style.color = s.baseBattMv > 3500 ? '#0f0' : s.baseBattMv > 3300 ? '#ff0' : '#f44';
       }
-      if (typeof s.nonce === 'number') {
-        var ne = document.getElementById('cmd-nonce');
-        var srvNext = s.nonce + 1;
-        var cur = parseInt(ne.value) || 0;
-        if (srvNext > cur) { ne.value = srvNext; try { localStorage.setItem('cmd-nonce', '' + srvNext); } catch(e) {} }
-      }
+      updateNonceFromStatus(s);
     } catch (e) {
       console.error('BLE status read failed:', e);
     }
@@ -1002,6 +1029,7 @@ function initCharts() {
         rktUptimeMs = s.uptime;
         rktSyncClockMs = Date.now();
       }
+      updateNonceFromStatus(s);
     } catch (e) {
       console.error('Rkt BLE status read failed:', e);
     }
@@ -1091,6 +1119,7 @@ function initCharts() {
         setRocketBle(false);
         rktTelemChar_ = null; rktCmdChar_ = null;
         rktStatusChar_ = null; rktConnSetChar_ = null; rktFetchChar_ = null;
+        stopStatusPolling();
         console.log('Rocket BLE disconnected');
       });
 
@@ -1159,6 +1188,7 @@ function initCharts() {
 
       // Read initial status
       rktReadStatus();
+      startStatusPolling();
 
       console.log('Rocket BLE connected');
 
