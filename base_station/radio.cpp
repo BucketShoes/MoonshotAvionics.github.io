@@ -54,6 +54,8 @@ uint64_t      bsPendingHeaderValidUs = 0;
 
 static unsigned long bsSyncBootMs     = 0;
 static unsigned long bsLastSyncSendMs = 0;
+static unsigned long bsLastCmdSentMs  = 0;
+unsigned long        bsLastTelemRxMs  = 0;
 
 
 // ===================== HELPERS =====================
@@ -333,8 +335,11 @@ static void bsHandleRxDone() {
   float snrF  = (float)pktStatus.snr_pkt_in_db;
   float rssiF = (float)pktStatus.rssi_pkt_in_dbm;
 
-  bool isTelemetry = (rxLen >= 10 && buf[0] == 0xAF && buf[1] == ROCKET_DEVICE_ID);
-  if (isTelemetry) bsMissedTelemSlots = 0;
+  bool isTelemetry = (rxLen >= 10 && buf[0] == 0xAF && buf[1] == FAVORITE_ROCKET_DEVICE_ID);
+  if (isTelemetry) {
+    bsMissedTelemSlots = 0;
+    bsLastTelemRxMs = millis();
+  }
 
   Serial.print("BS RX: "); Serial.print(rxLen); Serial.print("B snr=");
   Serial.print(snrF, 1); Serial.print(" rssi="); Serial.print(rssiF, 0);
@@ -411,23 +416,39 @@ static void bsRadioHandleIrq() {
 // ===================== SYNC MANAGEMENT =====================
 
 bool bsSyncNeedsQueue  = false;
+bool bsPingNeedsQueue  = false;
 bool bsSyncTxInFlight  = false;
 bool bsWinCmdReady     = false;
 
 void bsHandleSyncSend() {
   unsigned long now = millis();
 
+  // Boot-time sync: 2s after boot, always (no telem yet so silence check not used).
   bool timeForSync = (bsLastSyncSendMs == 0) && ((now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS);
-  if (!timeForSync && bsLastSyncSendMs != 0 && (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_MS) {
-    timeForSync = true;
+
+  // Silence-based sync: haven't heard the rocket in 20 minutes.
+  if (!timeForSync && bsLastTelemRxMs != 0 &&
+      (now - bsLastTelemRxMs) >= BS_SYNC_SILENCE_MS) {
+    // Only re-trigger if we haven't sent a sync recently (avoid hammering).
+    if (bsLastSyncSendMs == 0 || (now - bsLastSyncSendMs) >= BS_SYNC_SILENCE_MS) {
+      timeForSync = true;
+    }
   }
 
-  if (!timeForSync) return;
+  if (timeForSync) {
+    bsLastSyncSendMs = now;
+    bsLastCmdSentMs  = now;
+    bsSyncNeedsQueue = true;
+    Serial.println("BS SYNC: queuing sync (silence or boot)");
+    return;
+  }
 
-  bsLastSyncSendMs = now;
-  bsSyncNeedsQueue = true;
-  Serial.print("BS SYNC: queuing sync (synced="); Serial.print(bsSynced);
-  Serial.print(" retry="); Serial.print(BS_SYNC_RETRY_MS); Serial.println("ms)");
+  // Periodic ping: if no command sent in BS_PING_INTERVAL_MS.
+  if (bsLastCmdSentMs != 0 && (now - bsLastCmdSentMs) >= BS_PING_INTERVAL_MS) {
+    bsLastCmdSentMs  = now;
+    bsPingNeedsQueue = true;
+    Serial.println("BS SYNC: queuing ping");
+  }
 }
 
 // ===================== SIMPLE TEST MODE =====================
@@ -440,7 +461,7 @@ void bsHandleSyncSend() {
 // log "HMAC fail" which proves the packet arrived and was decoded).
 static const uint8_t bsTestPkt[] = {
   0x9A,       // PKT_COMMAND
-  0x92,       // ROCKET_DEVICE_ID
+  0x92,       // FAVORITE_ROCKET_DEVICE_ID
   0x40,       // CMD_PING
   0x01, 0x00, 0x00, 0x00,  // nonce=1
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // fake HMAC (10 bytes)

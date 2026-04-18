@@ -22,6 +22,9 @@ struct CommandAck {
 
 extern CommandAck lastAck;
 
+// Track when last verified command was received (micros).
+extern unsigned long lastValidCmdUs;
+
 // ===================== HMAC / NONCE STATE =====================
 
 extern uint8_t  hmacKey[HMAC_KEY_LEN];

@@ -75,6 +75,17 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define ROCKET_RX_TIMEOUT_US  100'000UL
 #define ROCKET_RX_TIMEOUT_RAW ((uint32_t)((ROCKET_RX_TIMEOUT_US) / 15.625f))
 
+// Long WIN_CMD listen window: nearly a full slot (same derivation as PRESYNC_RX_TIMEOUT_US).
+// Used when synced but no verified command heard recently.
+#define ROCKET_LONG_RX_TIMEOUT_US   (SLOT_DURATION_US - 200'000UL)   // 800ms at 1s slots
+#define ROCKET_LONG_RX_TIMEOUT_RAW  ((uint32_t)(ROCKET_LONG_RX_TIMEOUT_US / 15.625f))
+
+// Switch to long listen windows if no verified command heard for this long.
+#define ROCKET_CMD_SILENCE_LONG_LISTEN_US  120'000'000UL   // 2 minutes
+
+// After hearing a command, stay in short listen mode for this long.
+#define ROCKET_CMD_SHORT_LISTEN_US   120'000'000UL   // 2 minutes
+
 // ===================== SLOT CONFIG =====================
 // Per-slot radio parameters. Enables per-slot frequency, SF, BW, and header mode.
 // All slots currently use the same config (populated from activeChannel/SF/power).

@@ -25,7 +25,7 @@
 #define LORA_PREAMBLE 6      // preamble symbols
 // Sync word 0x12 (private) written as register pair 0x14, 0x24
 
-#define ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket (for bootstrap setup, we only have one rocket for debug. will need to make this a config later)
+#define FAVORITE_ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket (for bootstrap setup, we only have one rocket for debug. will need to make this a config later)
 
 // ===================== SLOT TIMING =====================
 
@@ -39,7 +39,7 @@ enum WindowMode : uint8_t {
 
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN   2
-#define SLOT_DURATION_US    1'000'000UL
+#define SLOT_DURATION_US    1'000'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 // Pre-sync: RX window sized to nearly a full slot so we don't miss anything.
 // SLOT_DURATION_US - 20ms margin, converted to RTC steps (15.625µs each).
 #define BS_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 50'000UL)
@@ -52,8 +52,8 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define BS_CMD_TX_OFFSET_US   5'000UL     // fire command this many µs into WIN_CMD
 
 #define BS_SYNC_BOOT_DELAY_MS  2'000      // send first sync 2s after boot
-#define BS_SYNC_LOSS_SLOTS     5000          // resync if this many WIN_TELEM slots missed
-#define BS_SYNC_RETRY_MS  31337UL // Prime number — avoids re-aligning to the same slot boundary every retry.
+#define BS_PING_INTERVAL_MS    60'000UL    // send ping if no command sent in this long
+#define BS_SYNC_SILENCE_MS     1'200'000UL // send sync only if no telem heard for 20 min
 
 
 // ===================== RADIO STATE =====================
@@ -102,11 +102,18 @@ extern uint64_t      bsPendingHeaderValidUs;
 // Reported in telemetry page 12 bgRssi field. -128.0 = no samples yet.
 extern float bsBgRssiEma;
 
+// Track when last rocket telemetry was received (millis).
+extern unsigned long bsLastTelemRxMs;
+
 // ===================== COORDINATION FLAGS (main.cpp ↔ radio.cpp) =====================
 
-// Set by bsHandleSyncSend() when a sync packet needs to be built and queued.
-// main.cpp calls bsBuildSyncCmdPacket(), loads cmdTx, then clears this flag.
+// Set by bsHandleSyncSend() when a sync or ping packet needs to be built and queued.
+// main.cpp calls bsBuildSyncCmdPacket() or bsBuildPingCmdPacket(), loads cmdTx, then clears this flag.
 extern bool bsSyncNeedsQueue;
+
+// Set by bsHandleSyncSend() when a ping packet needs to be built and queued.
+// main.cpp calls bsBuildPingCmdPacket(), loads cmdTx, then clears this flag.
+extern bool bsPingNeedsQueue;
 
 // Set by bsHandleRadio() at BS_CMD_TX_OFFSET_US into WIN_CMD.
 // main.cpp calls dispatchCmdTx(), then clears this flag.
@@ -145,6 +152,10 @@ void bsSetSyncedFromTx(uint64_t anchorUs);
 // Build CMD_SET_SYNC packet. Updates nonce and writes to NVS.
 // Returns packet length (always 17).
 size_t bsBuildSyncCmdPacket(uint8_t *buf);
+
+// Build CMD_PING packet. Updates nonce and writes to NVS.
+// Returns packet length (always 17).
+size_t bsBuildPingCmdPacket(uint8_t *buf);
 
 // Main radio update. Call every loop iteration.
 void bsHandleRadio();

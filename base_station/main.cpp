@@ -366,8 +366,37 @@ size_t bsBuildSyncCmdPacket(uint8_t* buf) {
   bsNvs.putUInt("nonce", highestNonce);
 
   buf[0] = 0x9A;               // PKT_COMMAND
-  buf[1] = ROCKET_DEVICE_ID;
+  buf[1] = FAVORITE_ROCKET_DEVICE_ID;
   buf[2] = 0x41;               // CMD_SET_SYNC
+  buf[3] = (uint8_t)(highestNonce);
+  buf[4] = (uint8_t)(highestNonce >> 8);
+  buf[5] = (uint8_t)(highestNonce >> 16);
+  buf[6] = (uint8_t)(highestNonce >> 24);
+
+  uint8_t fullHmac[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+  mbedtls_md_hmac_starts(&ctx, HMAC_KEY, HMAC_KEY_LEN);
+  mbedtls_md_hmac_update(&ctx, buf, 7);
+  mbedtls_md_hmac_finish(&ctx, fullHmac);
+  mbedtls_md_free(&ctx);
+  memcpy(buf + 7, fullHmac, HMAC_TRUNC_LEN);
+
+  return 17;
+}
+
+// ===================== PING PACKET BUILDER =====================
+// Builds a CMD_PING (0x40) command packet signed with HMAC.
+// Returns packet length (always 17).
+
+size_t bsBuildPingCmdPacket(uint8_t* buf) {
+  highestNonce++;
+  bsNvs.putUInt("nonce", highestNonce);
+
+  buf[0] = 0x9A;               // PKT_COMMAND
+  buf[1] = FAVORITE_ROCKET_DEVICE_ID;
+  buf[2] = 0x40;               // CMD_PING
   buf[3] = (uint8_t)(highestNonce);
   buf[4] = (uint8_t)(highestNonce >> 8);
   buf[5] = (uint8_t)(highestNonce >> 16);
@@ -419,6 +448,9 @@ static void dispatchCmdTx() {
     Serial.println("CMD TX start fail");
     return;
   }
+
+  extern unsigned long bsLastCmdSentMs;
+  bsLastCmdSentMs = millis();
 
   cmdTx.sent++;
   cmdTx.lastSendMs = millis();
@@ -885,6 +917,22 @@ void loop() {
       cmdTx.queuedMs = millis();
       cmdTx.active   = true;
       Serial.print("SYNC loaded nonce="); Serial.print(highestNonce);
+      Serial.print(" waitMs="); Serial.println(cmdTx.waitMs);
+    }
+
+    // Build and load ping packet when flagged. Only load if no TX already queued.
+    if (bsPingNeedsQueue && !cmdTx.active) {
+      bsPingNeedsQueue = false;
+      uint8_t pingPkt[17];
+      size_t pingLen = bsBuildPingCmdPacket(pingPkt);
+      memcpy(cmdTx.pkt, pingPkt, pingLen);
+      cmdTx.pktLen   = (uint8_t)pingLen;
+      cmdTx.sends    = 1;
+      cmdTx.sent     = 0;
+      cmdTx.waitMs   = bsSynced ? 4000 : 0;
+      cmdTx.queuedMs = millis();
+      cmdTx.active   = true;
+      Serial.print("PING loaded nonce="); Serial.print(highestNonce);
       Serial.print(" waitMs="); Serial.println(cmdTx.waitMs);
     }
 

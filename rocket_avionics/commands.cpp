@@ -18,6 +18,7 @@ bool     hmacKeyValid = false;
 uint32_t highestNonce = 0;
 
 CommandAck lastAck = {0, CMD_ERR_UNKNOWN, 0, 0, 0, false};
+unsigned long lastValidCmdUs = 0;
 
 // ===================== HMAC-SHA256 =====================
 // Covers payload bytes excluding the trailing HMAC itself.
@@ -276,6 +277,7 @@ void processReceivedPacket(const uint8_t* pkt, size_t pktLen, int8_t rssi, int8_
 
   highestNonce = nonce;
   nvs.putUInt("nonce", highestNonce);
+  lastValidCmdUs = micros();
 
   lastAck.rssi = rssi;
   lastAck.snr  = (int8_t)((float)snr * 4);
