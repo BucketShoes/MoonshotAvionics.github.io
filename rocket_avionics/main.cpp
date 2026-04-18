@@ -344,8 +344,8 @@ void nonblockingLoopStats() {
     unsigned long elapsed = now - loopStatStartUs;
     float hz = (float)loopCount / ((float)elapsed / 1000000.0f);
 
-    Serial.print("Loop: "); Serial.print((int)hz);
-    Serial.print(" Hz  Batt: "); Serial.print(batteryMv);
+    Serial.print("Loop: "); Serial.print((int)((1/hz)*1'000'000)); Serial.print("us (");
+    Serial.print((int)hz); Serial.print(" Hz)  Batt: "); Serial.print(batteryMv);
     Serial.print("mV  Sync:"); Serial.print(radioSynced ? "YES" : "NO");
     Serial.print("  DelayedTX: "); Serial.print(delayedTxCount);
     Serial.print("  InvalidRX: "); Serial.print(invalidRxCount);
@@ -392,13 +392,43 @@ unsigned long lastLoopUs = 0;
 
 // Slow-loop blame tracking: when a loop iteration exceeds the threshold, report
 // which subsystem consumed the most time. Only active when not armed.
+// ===================== ESKF FLOP BENCHMARK =====================
+// Simulates ~60,000 float multiply-adds — representative of a 20-state ESKF
+// predict+update step. volatile sink prevents the compiler from optimising away.
+// Remove this block once the benchmark is no longer needed.
+//
+// ESP32-S3: Xtensa LX7 with hardware FPU. No float SIMD exists on any ESP32 variant
+// (PIE/SIMD unit is 8/16-bit integer only). Scalar FPU at 240 MHz should do
+// 30,000 FMAs in ~300-500us. Seeing ~2ms means compiler is using soft-float.
+// Check build output for -mfloat-abi=soft vs -mfloat-abi=hard.
+
+static volatile float eskfSink = 0.0f;
+
+void nonblockingEskfBenchmark() {
+  // 8 independent accumulators break the FPU latency chain (Xtensa LX7 FPU: ~4 cycle
+  // latency). This measures peak throughput rather than worst-case serial latency.
+  // 8 x 3750 iterations x 2 flops = 60,000 flops total, same as serial version.
+  float a0=1.0f, a1=1.1f, a2=1.2f, a3=1.3f, a4=1.4f, a5=1.5f, a6=1.6f, a7=1.7f;
+  for (int i = 0; i < 3750; i++) {
+    a0 = a0 * 1.000001f + 0.000001f;
+    a1 = a1 * 1.000001f + 0.000002f;
+    a2 = a2 * 1.000001f + 0.000003f;
+    a3 = a3 * 1.000001f + 0.000004f;
+    a4 = a4 * 1.000001f + 0.000005f;
+    a5 = a5 * 1.000001f + 0.000006f;
+    a6 = a6 * 1.000001f + 0.000007f;
+    a7 = a7 * 1.000001f + 0.000008f;
+  }
+  eskfSink = a0+a1+a2+a3+a4+a5+a6+a7; // prevent dead-code elimination
+}
+
 enum LoopSlot {
   SLOT_INIT = 0, SLOT_GPS, SLOT_BUTTON, SLOT_BATTERY,
   SLOT_SENSORS, SLOT_THRUST, SLOT_FLIGHT, SLOT_PEAKS, SLOT_LOGGING, SLOT_RADIO,
-  SLOT_BLE, SLOT_STATS, SLOT_COUNT
+  SLOT_BLE, SLOT_STATS, SLOT_ESKF, SLOT_COUNT
 };
 static const char* slotNames[] = {
-  "init", "gps", "btn", "batt", "sens", "thrust", "flight", "peak", "log", "radio", "ble", "stats"
+  "init", "gps", "btn", "batt", "sens", "thrust", "flight", "peak", "log", "radio", "ble", "stats", "eskf"
 };
 unsigned long slotUs[SLOT_COUNT];
 
@@ -445,9 +475,16 @@ void loop() {
   nonblockingBle();
   t1 = micros(); slotUs[SLOT_BLE] = t1 - t0; t0 = t1;
 
+  //  nonblockingEskfBenchmark();
+  t1 = micros(); slotUs[SLOT_ESKF] = t1 - t0; t0 = t1;
+
+
+
+
+  
+
   nonblockingLoopStats();
   t1 = micros(); slotUs[SLOT_STATS] = t1 - t0;
-
   unsigned long totalUs = t1 - lastLoopUs;
   if (!isArmed && totalUs > SLOW_LOOP_THRESHOLD_US) {
     Serial.print("SLOW LOOP "); Serial.print(totalUs); Serial.print("us: ");

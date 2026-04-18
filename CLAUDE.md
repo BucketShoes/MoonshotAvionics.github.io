@@ -2,18 +2,19 @@
 
 ## What this is
 
-A model rocket avionics and telemetry system built around ESP32-C3 (rocket) and ESP32 (base station). Communicates via SX1262 LoRa radio (AU915 channel plan). A web dashboard (JavaScript/HTML) runs on the base station and in-browser via BLE. This is a personal/hobby project, currently unflown but bench-tested before each change.
+A model rocket avionics and telemetry system built around ESP32-S3 (rocket) and ESP32 (base station). Communicates via SX1262 LoRa radio (AU915 channel plan). A web dashboard (JavaScript/HTML) runs on the base station and in-browser via BLE. This is a personal/hobby project, currently unflown but bench-tested before each change.
 
 ## Safety context
 
 Most of this codebase is cosmetic or tracking-only (telemetry display, logging, voice callouts). However:
 
-- **Pyro channels exist** (parachute ejection charges) and are triggered automatically by flight phase logic. Bugs here have real consequences.
+- **Pyro channels exist** (parachute ejection charges) and are triggered automatically by flight phase logic. Bugs here have real consequences. (Setting off the charge near someone, or failing to deploy and landing on someone)
 - **The pyro decision path is**: `sensors.h/cpp` → `flight.h/cpp` (phase state machine) → pyro GPIO. Flight phase data also feeds into `telemetry.h/cpp` (logged and transmitted).
+- **Future active aero**: The architecture is being built for active aerodynamic control in future versions; so must have tight timing determinism.
 - **Flight warnings are noted in `flight.h` and `flight.cpp`** but the sensors feeding those decisions are upstream.
 - **Arming is required** before any automatic pyro action. Ground test firing is command-only (FIRE PYRO command, while armed).
-- **Future direction**: ESP32 will eventually be a telemetry/logging coprocessor alongside a dedicated STM32 primary flight computer. The ESP32 retains pyro capability as backup even then. Active control surfaces (loop timing constraints) are planned but not yet implemented.
-- **When touching flight logic or sensor data used in flight decisions**, apply extra care and flag any tradeoffs or edge cases explicitly.
+- **Future direction**: ESP32S3 may eventually be a telemetry/logging coprocessor alongside a dedicated STM32 primary flight computer. The ESP32 retains pyro capability as backup even then. Active control surfaces (loop timing constraints) are planned but not yet implemented. For now, ESP32S3 will be the primary flight controller.
+- **When touching flight logic or sensor data used in flight decisions**, apply extra care and flag any tradeoffs or edge cases explicitly, right at the end of the message so they dont get missed (in addition to inline discussion)
 
 ## Non-blocking rule
 
@@ -92,7 +93,7 @@ Pull the relevant doc into the conversation when working in that area.
 
 - **Base station firmware** has no architecture doc equivalent to `Code architecture - Avionics.md`.
 - **BLE implementation** (`ble.h/.cpp`) has only `rocket ble.md` — no equivalent base station BLE doc.
-- **Hardware**: no doc covering ESP32-C3 memory limits, I2C bus layout, pin assignments (partially in `config.h`), or SEN0140 v2 IMU board specifics.
+- **Hardware**: no doc covering ESP32-S3 memory limits, I2C bus layout, pin assignments (partially in `config.h`), or SEN0140 v2 IMU board specifics.
 - **Test/validation approach**: no doc on how bench testing is done, what a pre-flight check looks like, or what regression testing exists.
 - **Relay devices**: mentioned in commands and backhaul packet format but no architecture doc.
 
