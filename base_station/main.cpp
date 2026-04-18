@@ -761,8 +761,8 @@ void setup() {
 
   initBLE();
 
-  ledcAttach(LED_PIN, 10000, 8);
-  ledcWrite(LED_PIN, 1);
+  ledcAttach(LED_PIN, 10000, 10);
+  ledcWrite(LED_PIN, 50);
 
   pinMode(VEXT_CTRL_PIN, OUTPUT); digitalWrite(VEXT_CTRL_PIN, HIGH);
   pinMode(VBAT_ADC_CTRL_PIN, OUTPUT); digitalWrite(VBAT_ADC_CTRL_PIN, LOW);

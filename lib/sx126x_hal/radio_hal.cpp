@@ -86,6 +86,8 @@ extern "C" sx126x_hal_status_t sx126x_hal_write(
 // The SX126x read protocol inserts one status byte between command and data; the driver
 // handles this by including the NOP byte in the command buffer it passes us.
 
+uint32_t lastBusyDrop;
+uint32_t busyDrops;
 extern "C" sx126x_hal_status_t sx126x_hal_read(
     const void*    context,
     const uint8_t* command,
@@ -107,7 +109,15 @@ extern "C" sx126x_hal_status_t sx126x_hal_read(
             }
         } else {
             // Runtime: slot window missed — drop immediately, never spin
-            Serial.println("HAL: BUSY on read — dropped");
+            uint32_t now=millis();
+            if (lastBusyDrop-now>100){
+                Serial.print("HAL: BUSY on read — dropped x");
+                Serial.println(busyDrops);
+                lastBusyDrop=now;
+                busyDrops=0;
+            } else {
+                busyDrops++;
+            }
             return SX126X_HAL_STATUS_ERROR;
         }
     }

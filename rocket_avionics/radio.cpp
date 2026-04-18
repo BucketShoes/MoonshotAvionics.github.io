@@ -75,8 +75,8 @@ static sx126x_lora_sf_t sfToEnum(uint8_t sf) {
   return (sx126x_lora_sf_t)sf;
 }
 
-static void ledOn()  { ledcWrite(LED_PIN, 16); }
-static void ledOff() { ledcWrite(LED_PIN, 0);   }
+static void ledOn()  { ledcWrite(LED_PIN, 64); } //radio on. show the brighter flash for timing sync (later, might make this separate tx vs rx).
+static void ledOff() { ledcWrite(LED_PIN, txSendingEnabled?1:0);   } //radio off - indicate tx mode
 
 // ===================== INIT =====================
 
