@@ -40,20 +40,18 @@ enum WindowMode : uint8_t {
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN   2
 #define SLOT_DURATION_US    1'000'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
-// Pre-sync: RX window sized to nearly a full slot so we don't miss anything.
-// SLOT_DURATION_US - 20ms margin, converted to RTC steps (15.625µs each).
-#define BS_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 50'000UL)
-#define BS_PRESYNC_RX_TIMEOUT_RAW  ((uint32_t)(BS_PRESYNC_RX_TIMEOUT_US / 15.625f))
+// Base station RX window parameters (converted to RTC steps via /15.625 at use site).
+#define BS_RX_TIMEOUT_US           40'000UL                  // synced telemetry RX window
+#define BS_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 50'000UL)  // pre-sync: nearly full slot
 
-// Base station RX window parameters
-#define BS_RX_EARLY_US        10'000UL    // start RX this many µs before WIN_TELEM
-#define BS_RX_TIMEOUT_US      40'000UL    // RX window duration
-#define BS_RX_TIMEOUT_RAW     ((uint32_t)(BS_RX_TIMEOUT_US / 15.625f))
-#define BS_CMD_TX_OFFSET_US   5'000UL     // fire command this many µs into WIN_CMD
+// Base station TX timing.
+#define BS_RX_EARLY_US             10'000UL    // start RX this many µs before WIN_TELEM
+#define BS_CMD_TX_OFFSET_US        5'000UL     // fire command this many µs into WIN_CMD
 
-#define BS_SYNC_BOOT_DELAY_MS  2'000      // send first sync 2s after boot
-#define BS_PING_INTERVAL_MS    60'000UL    // send ping if no command sent in this long
-#define BS_SYNC_SILENCE_MS     1'200'000UL // send sync only if no telem heard for 20 min
+// Command/sync timing.
+#define BS_SYNC_BOOT_DELAY_MS      2'000UL     // send first sync 2s after boot
+#define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long
+#define BS_SYNC_SILENCE_MS         1'200'000UL // send sync only if no telem heard for 20 min
 
 
 // ===================== RADIO STATE =====================
@@ -160,8 +158,8 @@ size_t bsBuildPingCmdPacket(uint8_t *buf);
 // Main radio update. Call every loop iteration.
 void bsHandleRadio();
 
-// Auto-sync management: send 2s after boot, retry every 60s.
-// Sets bsSyncNeedsQueue when it is time to send. main.cpp handles the actual queuing.
+// Auto-sync & ping management: send sync at boot (2s) or after 20min silence; send ping every 1min.
+// Sets bsSyncNeedsQueue or bsPingNeedsQueue when it is time. main.cpp handles the actual queuing.
 void bsHandleSyncSend();
 
 // Callback invoked from bsHandleRadio() when a good LoRa packet is received.

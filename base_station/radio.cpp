@@ -208,7 +208,8 @@ void bsRadioStartRx() {
   }
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
-  uint32_t timeoutRaw = bsSynced ? BS_RX_TIMEOUT_RAW : BS_PRESYNC_RX_TIMEOUT_RAW;
+  uint32_t timeoutUs = bsSynced ? BS_RX_TIMEOUT_US : BS_PRESYNC_RX_TIMEOUT_US;
+  uint32_t timeoutRaw = (uint32_t)(timeoutUs / 15.625f);
   sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&bsRadioCtx, timeoutRaw);
   if (st == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_RX_ACTIVE;

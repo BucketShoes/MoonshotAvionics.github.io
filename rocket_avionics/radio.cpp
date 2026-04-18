@@ -215,12 +215,6 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
 
 // ===================== RX / TX =====================
 
-// Pre-sync RX window: nearly a full slot period.
-// We want to be listening most of the time to catch any sync from the base.
-// 20ms margin before the next slot so we re-arm cleanly before the next window.
-#define PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 20000UL)
-#define PRESYNC_RX_TIMEOUT_RAW  ((uint32_t)(PRESYNC_RX_TIMEOUT_US / 15.625f))
-
 void radioStartRx() {
   if (digitalRead(LORA_BUSY_PIN)) {
     Serial.println("RX: BUSY — skip");
@@ -232,10 +226,11 @@ void radioStartRx() {
   // between slots, blocking any TX that needs to preempt it.
   bool longListen = radioSynced &&
                     lastValidCmdUs != 0 &&
-                    (micros() - lastValidCmdUs) >= ROCKET_CMD_SILENCE_LONG_LISTEN_US;
-  uint32_t timeoutRaw = !radioSynced             ? PRESYNC_RX_TIMEOUT_RAW :
-                        longListen               ? ROCKET_LONG_RX_TIMEOUT_RAW :
-                                                   ROCKET_RX_TIMEOUT_RAW;
+                    (micros() - lastValidCmdUs) >= ROCKET_CMD_SILENCE_THRESHOLD_US;
+  uint32_t timeoutUs = !radioSynced   ? ROCKET_PRESYNC_RX_TIMEOUT_US :
+                       longListen     ? ROCKET_LONG_RX_TIMEOUT_US :
+                                        ROCKET_RX_TIMEOUT_US;
+  uint32_t timeoutRaw = (uint32_t)(timeoutUs / 15.625f);
   sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRaw);
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_RX_ACTIVE;
@@ -428,9 +423,8 @@ static void radioHandleIrq() {
 //
 // Single slot-based path — anchor=0 pre-sync, anchor=RxDone time when synced.
 // WIN_TELEM: TX telem at slot boundary (or RX if txSendingEnabled=false).
-// WIN_CMD:   RX for the slot. Pre-sync uses PRESYNC_RX_TIMEOUT_RAW (longer window
-//            to catch the base anywhere in the slot). Synced uses ROCKET_RX_TIMEOUT_RAW.
-//            radioStartRx() selects the right timeout based on radioSynced flag.
+// WIN_CMD:   RX for the slot. Pre-sync uses longer timeout (980ms), synced uses short (100ms)
+//            or long (800ms if no command heard in 2min). radioStartRx() picks based on state.
 // LED: on whenever radio is active (RX or TX), off when standby.
 
 static unsigned long lastTelemTxUs = 0;
@@ -483,9 +477,8 @@ void nonblockingRadio() {
   if (radioState == RADIO_TX_ACTIVE) return;  // TX in progress — wait for TxDone IRQ
 
   // Single slot-based path for both pre-sync and synced operation.
-  // Pre-sync: anchor=0, so slots run from boot. RX timeout is longer (PRESYNC_RX_TIMEOUT_RAW)
-  // to give the base station time to be heard anywhere in the slot.
-  // Synced: anchor set from CMD_SET_SYNC RxDone; RX timeout tightened to ROCKET_RX_TIMEOUT_RAW.
+  // Pre-sync: anchor=0, slots run from boot, RX window nearly full slot (980ms).
+  // Synced: anchor from CMD_SET_SYNC RxDone, RX window 100ms (short) or 800ms (long if silent).
   // Either way: one slot machine, one timing system.
   unsigned long now = micros();
   unsigned long elapsed   = now - syncAnchorUs;
@@ -523,8 +516,7 @@ void nonblockingRadio() {
         radioStartRx();
       }
     } else {
-      // WIN_CMD: listen for a command. 100ms timeout (ROCKET_RX_TIMEOUT_RAW) when synced,
-      // presync timeout when not. After timeout, stay standby until next slot.
+      // WIN_CMD: listen for a command. After timeout, stay standby until next slot.
       radioStartRx();
     }
   }

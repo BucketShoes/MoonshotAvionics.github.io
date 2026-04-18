@@ -71,20 +71,16 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 #define SLOT_SEQUENCE_LEN  2
 #define SLOT_DURATION_US   1'000'000UL  // µs
 
-// Rocket WIN_CMD listen window — timeout in SX1262 RTC steps (15.625 µs each).
-#define ROCKET_RX_TIMEOUT_US  100'000UL
-#define ROCKET_RX_TIMEOUT_RAW ((uint32_t)((ROCKET_RX_TIMEOUT_US) / 15.625f))
+// Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
+#define ROCKET_RX_TIMEOUT_US           100'000UL              // short: synced, heard command recently
+#define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 200'000UL)  // long: synced, no command in 2min
+#define ROCKET_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 20'000UL)   // pre-sync: nearly full slot
 
-// Long WIN_CMD listen window: nearly a full slot (same derivation as PRESYNC_RX_TIMEOUT_US).
-// Used when synced but no verified command heard recently.
-#define ROCKET_LONG_RX_TIMEOUT_US   (SLOT_DURATION_US - 200'000UL)   // 800ms at 1s slots
-#define ROCKET_LONG_RX_TIMEOUT_RAW  ((uint32_t)(ROCKET_LONG_RX_TIMEOUT_US / 15.625f))
+// When to switch from short to long listen (no verified command heard).
+#define ROCKET_CMD_SILENCE_THRESHOLD_US  120'000'000UL  // 2 minutes
 
-// Switch to long listen windows if no verified command heard for this long.
-#define ROCKET_CMD_SILENCE_LONG_LISTEN_US  120'000'000UL   // 2 minutes
 
-// After hearing a command, stay in short listen mode for this long.
-#define ROCKET_CMD_SHORT_LISTEN_US   120'000'000UL   // 2 minutes
+
 
 // ===================== SLOT CONFIG =====================
 // Per-slot radio parameters. Enables per-slot frequency, SF, BW, and header mode.
