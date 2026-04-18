@@ -226,14 +226,14 @@ function initCharts() {
     if (!el) return;
     thrustChart = new Chart(el, {
       type: 'line',
-      data: {datasets:[{label:'Accel X (mg)',data:[],borderColor:'rgba(255,136,0,0.85)',backgroundColor:'rgba(255,136,0,0.15)',pointRadius:0,fill:true,tension:0,borderWidth:1}]},
+      data: {datasets:[{label:'Accel X (g)',data:[],borderColor:'rgba(255,136,0,0.85)',backgroundColor:'rgba(255,136,0,0.15)',pointRadius:0,fill:true,tension:0,borderWidth:1}]},
       options: {
         animation: false, responsive: true, maintainAspectRatio: false,
         scales: {
-          x: {type:'linear',display:true,title:{display:true,text:'Time (ms)',color:'#666',font:{size:10}},ticks:{color:'#666',font:{size:9},maxTicksLimit:8},grid:{color:'#1a1a1a'}},
-          y: {ticks:{color:'#888',font:{size:10}},grid:{color:'#222'},title:{display:true,text:'mg',color:'#666',font:{size:10}}}
+          x: {type:'linear',display:true,title:{display:true,text:'Time (s)',color:'#666',font:{size:10}},ticks:{color:'#666',font:{size:9},maxTicksLimit:8},grid:{color:'#1a1a1a'}},
+          y: {ticks:{color:'#888',font:{size:10}},grid:{color:'#222'},title:{display:true,text:'g',color:'#666',font:{size:10}}}
         },
-        plugins:{legend:{labels:{color:'#888',font:{size:10}}},zoom:{pan:{enabled:true,mode:'xy'},zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'xy'}}}
+        plugins:{legend:{labels:{color:'#888',font:{size:10}}}}
       }
     });
   }
@@ -242,6 +242,8 @@ function initCharts() {
     thrustChart.data.datasets[0].data = [];
     delete thrustChart.options.scales.x.min;
     delete thrustChart.options.scales.x.max;
+    delete thrustChart.options.scales.y.min;
+    delete thrustChart.options.scales.y.max;
     thrustChart.update('none');
   }
   function loadThrustCurve(d) {
@@ -251,13 +253,15 @@ function initCharts() {
     var N = d.sampleCount;
     var range = d.maxMg - d.minMg;
     for (var i = 0; i < N; i++) {
-      var x = N > 1 ? i * d.durationMs / (N - 1) : 0;
-      var y = d.minMg + (d.samples[i] / 255) * range;
+      var x = N > 1 ? (i * d.durationMs / (N - 1)) / 1000 : 0;
+      var y = (d.minMg + (d.samples[i] / 255) * range) / 1000;
       pts.push({x: x, y: y});
     }
     thrustChart.data.datasets[0].data = pts;
     thrustChart.options.scales.x.min = 0;
-    thrustChart.options.scales.x.max = d.durationMs;
+    thrustChart.options.scales.x.max = d.durationMs / 1000;
+    thrustChart.options.scales.y.min = d.minMg / 1000;
+    thrustChart.options.scales.y.max = d.maxMg / 1000;
     thrustChart.update('none');
   }
 
@@ -1253,7 +1257,7 @@ function initCharts() {
     for(var k in charts){var c=charts[k];if(c!==src){c.options.scales.x.min=xMin;c.options.scales.x.max=xMax;c.update('none')}}
     chartSyncing=false;
   }
-  function rebuildChartsWithZoom(){if(!charts)return;for(var k in charts){var c=charts[k];if(c.options&&c.options.plugins){c.options.plugins.zoom={zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x',onZoomComplete:function(ctx){syncChartsFrom(ctx.chart)}},pan:{enabled:true,mode:'x',onPanComplete:function(ctx){syncChartsFrom(ctx.chart)}}};c.update()}}}
+  function rebuildChartsWithZoom(){if(!charts)return;for(var k in charts){var c=charts[k];if(c.options&&c.options.plugins){c.options.plugins.zoom={zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x',onZoom:function(ctx){syncChartsFrom(ctx.chart)}},pan:{enabled:true,mode:'x',onPan:function(ctx){syncChartsFrom(ctx.chart)}}};c.update()}}}
 
   // =============================================================
   // VOICE CALLOUTS (Browser TTS — Web Speech API)

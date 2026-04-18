@@ -28,7 +28,8 @@
   .grid.detail-on .card .cv{font-size:10px}
   .charts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
   .cb{background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:4px;touch-action:pan-y !important}
-  .cb canvas{width:100%!important;height:160px!important;touch-action:pan-y !important}
+  .cb canvas{width:100%!important;height:160px!important;touch-action:none !important}
+  .cb canvas#cThrust{touch-action:pan-y !important}
   .tb{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:4px 8px;background:#1a1a1a;border:1px solid #333;border-radius:4px}
   .tb button{background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer}
   .tb button:disabled{opacity:0.3} .tb button.act{background:#063;color:#0f0;border-color:#0a0}
