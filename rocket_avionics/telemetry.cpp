@@ -356,7 +356,7 @@ size_t buildDataPageRecord(uint8_t pageType, uint8_t* buf, size_t maxLen) {
   // numSamples chosen based on current TX PHY: 489 on 1M/2M, 200 on Coded.
   // ATT limit is 517; record header is 2 bytes (len+type), payload header is 6 bytes.
   if (pageType == PAGE_THRUST_CURVE) {
-    uint16_t n = (bleTxPhy == 3) ? 200 : 489;
+    uint16_t n = (bleTxPhy == 3) ? 200 : 210;// 489;
     // record: [len u8][0x0E][6-byte header][n bytes samples] = 2 + 6 + n
     if (maxLen < (size_t)(2 + 6 + n)) return 0;
     size_t recPos = 0;

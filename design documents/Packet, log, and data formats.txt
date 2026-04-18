@@ -157,7 +157,7 @@ DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but
       Sample count varies by transport:
         LoRa SF≤7: 200, SF8: 100, SF9+: 50
         BLE 1M/2M: 489, BLE Coded: 200
-        Logs: 230        
+        Logs: 230. (All numbers subject to change. infer samples from actual length)
       Not in regular LoRa page cycle. Not logged to flash (TODO: log to flash with 230 samples if triggered by launch detection).
       Forced on coast entry (LoRa + BLE), will cover the boost duration; or can be subscribed on ble to cover full sample buffer duration on rolling window
       Coast snapshot window: if BOOST→COAST, covers 1s before boost to coast entry.
