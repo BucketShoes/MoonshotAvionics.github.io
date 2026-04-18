@@ -224,12 +224,12 @@ void radioStartRx() {
   dio1Fired = false;
   // Always use a timeout — continuous RX means the radio never returns to standby
   // between slots, blocking any TX that needs to preempt it.
-  bool longListen = radioSynced &&
-                    lastValidCmdUs != 0 &&
-                    (micros() - lastValidCmdUs) >= ROCKET_CMD_SILENCE_THRESHOLD_US;
-  uint32_t timeoutUs = !radioSynced   ? ROCKET_PRESYNC_RX_TIMEOUT_US :
-                       longListen     ? ROCKET_LONG_RX_TIMEOUT_US :
-                                        ROCKET_RX_TIMEOUT_US;
+  // Pre-sync or synced but silent >2min: use long RX window (nearly full slot).
+  // Otherwise: short window if synced and heard command recently.
+  bool useLongWindow = !radioSynced ||
+                       (lastValidCmdUs != 0 &&
+                        (micros() - lastValidCmdUs) >= ROCKET_CMD_SILENCE_THRESHOLD_US);
+  uint32_t timeoutUs = useLongWindow ? ROCKET_LONG_RX_TIMEOUT_US : ROCKET_RX_TIMEOUT_US;
   uint32_t timeoutRaw = (uint32_t)(timeoutUs / 15.625f);
   sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRaw);
   if (st == SX126X_STATUS_OK) {

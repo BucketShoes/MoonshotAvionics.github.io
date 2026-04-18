@@ -73,8 +73,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
 #define ROCKET_RX_TIMEOUT_US           100'000UL              // short: synced, heard command recently
-#define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 200'000UL)  // long: synced, no command in 2min
-#define ROCKET_PRESYNC_RX_TIMEOUT_US   (SLOT_DURATION_US - 20'000UL)   // pre-sync: nearly full slot
+#define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 20'000UL)   // long: nearly full slot (pre-sync or silent)
 
 // When to switch from short to long listen (no verified command heard).
 #define ROCKET_CMD_SILENCE_THRESHOLD_US  120'000'000UL  // 2 minutes
