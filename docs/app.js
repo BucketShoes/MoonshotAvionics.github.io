@@ -226,7 +226,7 @@ function initCharts() {
     if (!el) return;
     thrustChart = new Chart(el, {
       type: 'line',
-      data: {datasets:[{label:'Accel X (g)',data:[],borderColor:'rgba(255,136,0,0.85)',backgroundColor:'rgba(255,136,0,0.15)',pointRadius:0,fill:true,tension:0,borderWidth:1}]},
+      data: {datasets:[{label:'Thrust Curve (Whoosh!)',data:[],borderColor:'rgba(255,136,0,0.85)',backgroundColor:'rgba(255,136,0,0.15)',pointRadius:0,fill:true,tension:0,borderWidth:1}]},
       options: {
         animation: false, responsive: true, maintainAspectRatio: false,
         scales: {
@@ -257,8 +257,8 @@ function initCharts() {
       pts.push({x: x, y: y});
     }
     thrustChart.data.datasets[0].data = pts;
-    thrustChart.options.scales.x.min = -1;
-    thrustChart.options.scales.x.max = d.durationMs / 1000 + 1;
+    thrustChart.options.scales.x.min = -0.01;
+    thrustChart.options.scales.x.max = d.durationMs / 1000 + 0.01;
     thrustChart.options.scales.y.min = d.minMg / 1000;
     thrustChart.options.scales.y.max = d.maxMg / 1000;
     thrustChart.update();
