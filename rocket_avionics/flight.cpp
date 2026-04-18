@@ -659,7 +659,7 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   // Refuse arm if a coast thrust snapshot is pending LoRa send.
   // thrustLoraForce clears within one WIN_TELEM slot (≤2s), so this is transient.
   if (thrustLoraForce) {
-    return ARM_ERR_REFUSED;
+    return CMD_ERR_REFUSED;
   }
 
   // --- ARMING ---
