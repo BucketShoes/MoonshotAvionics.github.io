@@ -248,7 +248,6 @@ function initCharts() {
   }
   function loadThrustCurve(d) {
     if (!thrustChart) return;
-    clearThrustChart();
     var pts = [];
     var N = d.sampleCount;
     var range = d.maxMg - d.minMg;
@@ -262,7 +261,7 @@ function initCharts() {
     thrustChart.options.scales.x.max = d.durationMs / 1000;
     thrustChart.options.scales.y.min = d.minMg / 1000;
     thrustChart.options.scales.y.max = d.maxMg / 1000;
-    thrustChart.update('none');
+    thrustChart.update();
   }
 
   // Per-page detailed field descriptions for expanded view
