@@ -3,11 +3,6 @@
 Clear-Host
 $pio = "$env:USERPROFILE/.platformio/penv/Scripts/pio.exe"
 
-Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║                   BASE STATION (COM9)                          ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-Write-Host ""
-
 Write-Host "Compressing web assets..." -ForegroundColor Yellow
 . base_station/compress_web.ps1
 

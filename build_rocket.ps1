@@ -3,11 +3,6 @@
 Clear-Host
 $pio = "$env:USERPROFILE/.platformio/penv/Scripts/pio.exe"
 
-Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║                    ROCKET (COM13)                              ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-Write-Host ""
-
 Write-Host "Building rocket..." -ForegroundColor Yellow
 & $pio run -e rocket
 if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; Read-Host "Press Enter to close"; exit 1 }
