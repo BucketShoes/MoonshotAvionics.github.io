@@ -1,111 +1,29 @@
 {
     "version": "2.0.0",
     "tasks": [
-        // ── DEFAULT: Flash + monitor both boards ───────────────────────────
-        // Ctrl+Shift+B. Each board runs in its own dedicated terminal.
-        // Re-running kills the existing terminal (and any monitor holding the port)
-        // before starting fresh. Base station does compress -> firmware -> LittleFS
-        // then becomes a monitor. Rocket does firmware then becomes a monitor.
+        // ── DEFAULT (Ctrl+Shift+B): Build, flash both, then monitor ────────
+        // Sequential: build both → flash both (parallel) → monitor both
+        // Monitors auto-retry if ports aren't ready. Exits cleanly with VSCode.
         {
-            "label": "Flash + Monitor: Both",
-            "dependsOn": ["Flash + Monitor: rocket", "Flash + Monitor: base_station"],
-            "dependsOrder": "parallel",
+            "label": "Build & Flash + Monitor",
+            "dependsOn": [
+                "Build Both",
+                "Flash Both",
+                "Monitor Both"
+            ],
+            "dependsOrder": "sequence",
             "group": { "kind": "build", "isDefault": true },
             "presentation": { "reveal": "always", "panel": "shared" }
         },
 
-        // ── Rocket ─────────────────────────────────────────────────────────
+        // ── Build both in parallel ──────────────────────────────────────────
         {
-            "label": "Flash + Monitor: rocket",
-            "type": "shell",
-            "command": "powershell.exe",
-            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/flash_and_monitor_rocket.ps1"],
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "close": false
-            },
-            "problemMatcher": []
-        },
-
-        // ── Base station ────────────────────────────────────────────────────
-        {
-            "label": "Flash + Monitor: base_station",
-            "type": "shell",
-            "command": "powershell.exe",
-            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/flash_and_monitor_base_station.ps1"],
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "close": false
-            },
-            "problemMatcher": []
-        },
-
-        // ── Upload only (no monitor, no LittleFS compress) ─────────────────
-        {
-            "label": "Upload All",
-            "dependsOn": ["Upload: rocket", "Upload: base_station + LittleFS"],
+            "label": "Build Both",
+            "dependsOn": ["Build: rocket", "Build: base_station"],
             "dependsOrder": "parallel",
             "presentation": { "reveal": "always", "panel": "shared" }
         },
 
-        // ── Rocket upload only ─────────────────────────────────────────────
-        {
-            "label": "Upload: rocket",
-            "type": "shell",
-            "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
-            "args": ["run", "-e", "rocket", "-t", "upload"],
-            "presentation": { "reveal": "always", "panel": "shared" },
-            "problemMatcher": []
-        },
-
-        // ── Base station: compress -> firmware -> sleep -> LittleFS ────────
-        {
-            "label": "Upload: base_station + LittleFS",
-            "dependsOn": [
-                "Compress web assets",
-                "Upload: base_station firmware",
-                "Wait for COM9",
-                "Upload: base_station LittleFS"
-            ],
-            "dependsOrder": "sequence",
-            "presentation": { "reveal": "always", "panel": "shared" }
-        },
-        {
-            "label": "Compress web assets",
-            "type": "shell",
-            "command": "powershell",
-            "args": ["-ExecutionPolicy", "Bypass", "-File", "base_station/compress_web.ps1"],
-            "presentation": { "reveal": "always", "panel": "shared" },
-            "problemMatcher": []
-        },
-        {
-            "label": "Upload: base_station firmware",
-            "type": "shell",
-            "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
-            "args": ["run", "-e", "base_station", "-t", "upload"],
-            "presentation": { "reveal": "always", "panel": "shared" },
-            "problemMatcher": []
-        },
-        {
-            "label": "Wait for COM9",
-            "type": "shell",
-            "command": "Start-Sleep",
-            "args": ["-Seconds", "4"],
-            "presentation": { "reveal": "silent", "panel": "shared" },
-            "problemMatcher": []
-        },
-        {
-            "label": "Upload: base_station LittleFS",
-            "type": "shell",
-            "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
-            "args": ["run", "-e", "base_station", "-t", "uploadfs"],
-            "presentation": { "reveal": "always", "panel": "shared" },
-            "problemMatcher": []
-        },
-
-        // ── Individual tasks (run from Command Palette if needed) ──────────
         {
             "label": "Build: rocket",
             "type": "shell",
@@ -114,24 +32,140 @@
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
+
         {
             "label": "Build: base_station",
             "type": "shell",
-            "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
-            "args": ["run", "-e", "base_station"],
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-Command",
+                ". base_station/compress_web.ps1; & '${userHome}/.platformio/penv/Scripts/pio.exe' run -e base_station"
+            ],
             "presentation": { "reveal": "always", "panel": "shared" },
             "problemMatcher": []
         },
+
+        // ── Flash both in parallel (rocket + base_station+LittleFS) ────────
         {
-            "label": "Monitor: rocket (COM13)",
+            "label": "Flash Both",
+            "dependsOn": [
+                "Flash: rocket",
+                "Flash: base_station + LittleFS"
+            ],
+            "dependsOrder": "parallel",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+
+        {
+            "label": "Flash: rocket",
+            "type": "shell",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
+            "args": ["run", "-e", "rocket", "-t", "upload"],
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+
+        {
+            "label": "Flash: base_station + LittleFS",
+            "dependsOn": [
+                "Flash: base_station firmware",
+                "Wait for reboot (COM9)",
+                "Flash: base_station LittleFS"
+            ],
+            "dependsOrder": "sequence",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+
+        {
+            "label": "Flash: base_station firmware",
+            "type": "shell",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
+            "args": ["run", "-e", "base_station", "-t", "upload"],
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+
+        {
+            "label": "Wait for reboot (COM9)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-Command",
+                "$maxWait = 10; $start = Get-Date; while ((Get-Date) - $start -lt [timespan]::FromSeconds($maxWait)) { if (Get-CimInstance -ClassName Win32_SerialPort -Filter 'Name = \"COM9\"' -ErrorAction SilentlyContinue) { exit 0 }; Start-Sleep -Milliseconds 500 }; exit 0"
+            ],
+            "presentation": { "reveal": "silent", "panel": "shared" },
+            "problemMatcher": []
+        },
+
+        {
+            "label": "Flash: base_station LittleFS",
+            "type": "shell",
+            "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
+            "args": ["run", "-e", "base_station", "-t", "uploadfs"],
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+
+        // ── Monitor both boards (auto-retry, closes with VSCode) ───────────
+        {
+            "label": "Monitor Both",
+            "dependsOn": [
+                "Monitor: rocket (auto-retry)",
+                "Monitor: base_station (auto-retry)"
+            ],
+            "dependsOrder": "parallel",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+
+        {
+            "label": "Monitor: rocket (auto-retry)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", "${workspaceFolder}/monitor_rocket.ps1"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "close": true
+            },
+            "problemMatcher": []
+        },
+
+        {
+            "label": "Monitor: base_station (auto-retry)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", "${workspaceFolder}/monitor_base_station.ps1"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "close": true
+            },
+            "problemMatcher": []
+        },
+
+        // ── Standalone monitor tasks (Command Palette) ───────────────────
+        {
+            "label": "Monitor: rocket only",
             "type": "shell",
             "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
             "args": ["device", "monitor", "-e", "rocket"],
             "presentation": { "reveal": "always", "panel": "dedicated" },
             "problemMatcher": []
         },
+
         {
-            "label": "Monitor: base_station (COM9)",
+            "label": "Monitor: base_station only",
             "type": "shell",
             "command": "${userHome}/.platformio/penv/Scripts/pio.exe",
             "args": ["device", "monitor", "-e", "base_station"],
