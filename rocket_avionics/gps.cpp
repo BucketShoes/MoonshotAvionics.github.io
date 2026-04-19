@@ -152,7 +152,7 @@ void nonblockingGPS() {
       nmeaBuf[nmeaIdx] = '\0';
       parseNMEA(nmeaBuf);
       nmeaIdx = 0;
-      return;  // one sentence per call — caller re-enters next loop iteration
+      //return;  // one sentence per call — caller re-enters next loop iteration
     }
   }
 }
