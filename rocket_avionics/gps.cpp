@@ -139,10 +139,12 @@ static void parseNMEA(const char* sentence) {
 
 void nonblockingGPS() {
   if (!gpsUartStarted) return;
-  // Cap bytes per call so a full buffered burst doesn't spike the loop.
-  // 9600 baud = 960 bytes/sec; 32 bytes keeps this under ~200us worst case.
-  int budget = 32;
-  while (budget-- > 0 && gpsSerial.available()) {
+  // Parse at most one complete NMEA sentence per call. This bounds cost to one
+  // parseNMEA() (dominated by atof on lat/lon) regardless of how many sentences
+  // are buffered. Sentences are ~70-100 bytes; at 115200 baud the FIFO keeps up
+  // easily across calls. Stopping at one sentence also prevents the skew where a
+  // new GGA position is used with a stale DOP from GSA arriving several calls later.
+  while (gpsSerial.available()) {
     char c = gpsSerial.read();
     if (c == '$') nmeaIdx = 0;
     if (nmeaIdx < sizeof(nmeaBuf) - 1) nmeaBuf[nmeaIdx++] = c;
@@ -150,6 +152,7 @@ void nonblockingGPS() {
       nmeaBuf[nmeaIdx] = '\0';
       parseNMEA(nmeaBuf);
       nmeaIdx = 0;
+      return;  // one sentence per call — caller re-enters next loop iteration
     }
   }
 }
