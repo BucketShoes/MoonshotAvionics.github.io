@@ -4,13 +4,14 @@
 
 param([int]$MaxRetries = 20, [int]$RetryDelayMs = 500)
 
+Clear-Host
 $port = "COM9"
 $maxWaitMs = $MaxRetries * $RetryDelayMs
 $elapsed = 0
 
 Write-Host "Waiting for $port to become available (max ${maxWaitMs}ms)..."
 while ($elapsed -lt $maxWaitMs) {
-    if (Get-CimInstance -ClassName Win32_SerialPort -Filter "Name = '$port'" -ErrorAction SilentlyContinue) {
+    if (Get-CimInstance -ClassName Win32_SerialPort -Filter ("Name='{0}'" -f $port) -ErrorAction SilentlyContinue) {
         Write-Host "$port found. Starting monitor..."
         & "$env:USERPROFILE/.platformio/penv/Scripts/pio.exe" device monitor -e base_station
         exit $LASTEXITCODE
