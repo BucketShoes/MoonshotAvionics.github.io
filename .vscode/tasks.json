@@ -2,17 +2,25 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build & Flash + Monitor",
+            "label": "Build rocket",
             "type": "shell",
             "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-File", "${workspaceFolder}/build_and_flash.ps1"
-            ],
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/build_rocket.ps1"],
+            "presentation": { "reveal": "always", "panel": "dedicated", "close": false }
+        },
+        {
+            "label": "Build base_station",
+            "type": "shell",
+            "command": "powershell",
+            "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/build_base_station.ps1"],
+            "presentation": { "reveal": "always", "panel": "dedicated", "close": false }
+        },
+        {
+            "label": "Build & Monitor Both (Split View)",
+            "dependsOn": ["Build rocket", "Build base_station"],
+            "dependsOrder": "parallel",
             "group": { "kind": "build", "isDefault": true },
-            "presentation": { "reveal": "always", "panel": "shared", "close": false },
-            "problemMatcher": []
+            "presentation": { "reveal": "silent", "panel": "new" }
         }
     ]
 }
