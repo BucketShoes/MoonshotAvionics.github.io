@@ -67,9 +67,9 @@ enum WindowMode : uint8_t {
 };
 
 // Compile-time slot sequence. Edit here to change the pattern.
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,  };
 #define SLOT_SEQUENCE_LEN  2
-#define SLOT_DURATION_US   1'000'000UL  // µs
+#define SLOT_DURATION_US   420'000UL  // µs
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
 #define ROCKET_RX_TIMEOUT_US           100'000UL              // short: synced, heard command recently
