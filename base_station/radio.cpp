@@ -54,7 +54,7 @@ uint64_t      bsPendingHeaderValidUs = 0;
 
 static unsigned long bsSyncBootMs     = 0;
 static unsigned long bsLastSyncSendMs = 0;
-static unsigned long bsLastCmdSentMs  = 0;
+unsigned long        bsLastCmdSentMs  = 0;
 unsigned long        bsLastTelemRxMs  = 0;
 
 

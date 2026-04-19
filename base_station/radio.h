@@ -103,6 +103,9 @@ extern float bsBgRssiEma;
 // Track when last rocket telemetry was received (millis).
 extern unsigned long bsLastTelemRxMs;
 
+// Track when last command was sent (millis).
+extern unsigned long bsLastCmdSentMs;
+
 // ===================== COORDINATION FLAGS (main.cpp ↔ radio.cpp) =====================
 
 // Set by bsHandleSyncSend() when a sync or ping packet needs to be built and queued.
