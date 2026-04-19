@@ -356,6 +356,7 @@ void initBLE() {
   bleState.currentTxPhy  = 1;
 
   NimBLEDevice::init(BLE_DEVICE_NAME);
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);  // +9 dBm — max BLE TX power
   NimBLEDevice::setMTU(517);
 
   pServer = NimBLEDevice::createServer();

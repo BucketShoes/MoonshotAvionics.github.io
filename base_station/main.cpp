@@ -737,6 +737,7 @@ void handleBleLogFetch() {
 
 void initBLE() {
   NimBLEDevice::init(WIFI_SSID);
+  NimBLEDevice::setPower(ESP_PWR_LVL_P3);  // +3 dBm — pocket range is plenty
   NimBLEDevice::setMTU(517);
 
   bleServer = NimBLEDevice::createServer();

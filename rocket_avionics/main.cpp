@@ -28,6 +28,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include "esp_wifi.h"
 #include <mbedtls/md.h>
 #include "log_store.h"
 #include "sensors.h"
@@ -376,6 +377,8 @@ void setup() {
   ledcAttach(LED_PIN, 10000, 10);
   ledcWrite(LED_PIN, 128);//post-setup, before set by anything else
   setCpuFrequencyMhz(80);
+  esp_wifi_stop();   // WiFi shares the RF block with BLE; stop it explicitly even though unused
+  esp_wifi_deinit();
   Serial.println("Rocket Telemetry - Heltec Wireless Tracker");
   loopStatStartUs = micros();
   memset(thrustBuf, 0, sizeof(thrustBuf));
