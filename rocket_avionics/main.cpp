@@ -375,7 +375,7 @@ void setup() {
   pinMode(USER_BTN_PIN, INPUT_PULLUP);
   ledcAttach(LED_PIN, 10000, 10);
   ledcWrite(LED_PIN, 128);//post-setup, before set by anything else
-  setCpuFrequencyMhz(240);
+  setCpuFrequencyMhz(80);
   Serial.println("Rocket Telemetry - Heltec Wireless Tracker");
   loopStatStartUs = micros();
   memset(thrustBuf, 0, sizeof(thrustBuf));
