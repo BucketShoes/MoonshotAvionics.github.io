@@ -102,11 +102,10 @@ static void parseRMC(const char* sentence) {
     int year = 2000 + yy;
 
     static const uint16_t mdays[] = {0,31,59,90,120,151,181,212,243,273,304,334};
-    int32_t days = 0;
-    for (int y = 1970; y < year; y++) {
-      days += 365;
-      if ((y%4==0 && y%100!=0) || y%400==0) days++;
-    }
+    // Days since 1970-01-01 using closed-form leap-year count (no loop).
+    int32_t y0 = year - 1;
+    int32_t leaps = (y0/4) - (y0/100) + (y0/400) - (1969/4 - 1969/100 + 1969/400);
+    int32_t days = (year - 1970) * 365 + leaps;
     if (mo >= 1 && mo <= 12) days += mdays[mo-1];
     if (mo > 2 && ((year%4==0 && year%100!=0) || year%400==0)) days++;
     days += dd - 1;
@@ -140,7 +139,10 @@ static void parseNMEA(const char* sentence) {
 
 void nonblockingGPS() {
   if (!gpsUartStarted) return;
-  while (gpsSerial.available()) {
+  // Cap bytes per call so a full buffered burst doesn't spike the loop.
+  // 9600 baud = 960 bytes/sec; 32 bytes keeps this under ~200us worst case.
+  int budget = 32;
+  while (budget-- > 0 && gpsSerial.available()) {
     char c = gpsSerial.read();
     if (c == '$') nmeaIdx = 0;
     if (nmeaIdx < sizeof(nmeaBuf) - 1) nmeaBuf[nmeaIdx++] = c;
