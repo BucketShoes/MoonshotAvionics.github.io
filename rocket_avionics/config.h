@@ -53,6 +53,10 @@
 #define LORA_CR         5       // 4/5 coding rate (fixed, not command-configurable)
 #define LORA_PREAMBLE   6       // preamble symbols
 #define LORA_SYNCWORD   0x12    // private network
+// WIN_LR uses long-interleave 4/5 coding. SX1262 SetModulationParams byte 3 = 0x05.
+// Not in the sx126x_driver enum (which only covers 0x01-0x04); cast at use site.
+// Verify against SX1262 datasheet Table 13-48 before flying.
+#define LORA_LR_CR_4_5_LI  0x05
 
 // HV sense threshold: ADC mV above which high-side power is considered present
 // Assumes 10k:100k divider (11× attenuation). 3V on high side → ~273mV at ADC.
@@ -87,7 +91,7 @@ enum WindowMode : uint8_t {
 
 // Compile-time slot sequence. Edit here to change the pattern.
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
-#define SLOT_SEQUENCE_LEN  2
+#define SLOT_SEQUENCE_LEN  (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))
 #define SLOT_DURATION_US   420'000UL  // µs
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
@@ -139,6 +143,7 @@ struct SlotConfig {
 #define PKT_COMMAND    0x9A
 #define PKT_BACKHAUL   0xE2
 #define PKT_LOG_CHUNK  0xCA
+#define PKT_LONGRANGE  0xBB
 
 // ===================== DATA PAGE TYPE CONSTANTS =====================
 

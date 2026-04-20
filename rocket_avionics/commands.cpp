@@ -168,12 +168,11 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       nvs.putUChar("radio_sf", activeSF);
       nvs.putChar("radio_pwr", activePower);
 
-      // Apply new config. Radio must be in standby; radioApplyConfig() keeps it there.
-      // TODO: @@@ LONG BLOCKING - radioApplyConfig() calls radioWaitBusy() multiple times
-      // (up to 100ms each). CMD_SET_RADIO must be refused while armed (currently it is not).
-      // Add isArmed check before this branch to prevent blocking the armed loop.
+      // Apply new config. BLOCKING — radioApplyConfig_BLOCKING() calls
+      // DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING (up to 100ms each).
+      // TODO: @@@ refuse CMD_SET_RADIO while armed to prevent blocking the armed loop.
       radioStandby();
-      radioApplyConfig();
+      radioApplyConfig_BLOCKING();
       radioStartRx();
 
       Serial.print("Radio set: ch"); Serial.print(ch);

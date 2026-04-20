@@ -76,9 +76,18 @@ void updateActiveFreqBw();
 // Returns true on success.
 bool radioInit();
 
-// Apply a new set of radio parameters (frequency, SF, BW, power) from NVS or
-// a CMD_SET_RADIO command. Radio must be in RADIO_STANDBY.
-void radioApplyConfig();
+// *** BLOCKING — INIT ONLY ***
+// Apply radio parameters (frequency, SF, BW, power) from NVS or CMD_SET_RADIO.
+// Radio must be in RADIO_STANDBY. Contains DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING calls (up to 100ms each).
+// ONLY call from radioInit_BLOCKING() or CMD_SET_RADIO while disarmed.
+void radioApplyConfig_BLOCKING();
+
+// Per-slot radio config enum. Updated at each slot boundary; state machine applies
+// changes non-blockingly one SPI command per loop iteration.
+enum RadioSlotConfig : uint8_t {
+  RADIO_CFG_NORMAL = 0,
+  RADIO_CFG_LR     = 1,
+};
 
 // Start continuous RX (bootstrap mode, no timeout).
 void radioStartRx();
@@ -96,6 +105,10 @@ void radioStandby();
 // anchorUs  = micros() at the sync event
 // slotIdx   = slot index that is current at that anchor
 void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx);
+
+// Build the 3-byte on-air core for the 0xBB long-range packet (dithered lat/lon + low-batt).
+// In WIN_LR slots only the core is transmitted (implicit header). Returns 3.
+size_t buildLRPacketCore(uint8_t* buf);
 
 // Main non-blocking radio update: slot-based TX/RX scheduling or bootstrap RX.
 void nonblockingRadio();

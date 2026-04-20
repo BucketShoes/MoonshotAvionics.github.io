@@ -86,7 +86,7 @@ bool bsRadioInit() {
 
   Serial.println("BS LoRa: resetting...");
   sx126x_hal_reset(&bsRadioCtx);
-  if (!radioWaitBusy(&bsRadioCtx, 100)) {
+  if (!DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx, 100)) {
     Serial.println("BS LoRa init FAIL: BUSY stuck after reset");
     return false;
   }
@@ -105,7 +105,7 @@ bool bsRadioInit() {
   st = sx126x_set_dio3_as_tcxo_ctrl(&bsRadioCtx, SX126X_TCXO_CTRL_1_8V, 320);
   Serial.print("BS LoRa: set_dio3_tcxo 1.8V 5ms -> "); Serial.println(st);
   // After TCXO command, chip re-calibrates — wait for BUSY to clear.
-  if (!radioWaitBusy(&bsRadioCtx, 100)) {
+  if (!DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx, 100)) {
     Serial.println("BS LoRa init FAIL: BUSY stuck after TCXO setup");
     return false;
   }
@@ -125,7 +125,7 @@ bool bsRadioInit() {
   st = sx126x_write_register(&bsRadioCtx, 0x0740, syncWord, 2);
   Serial.print("BS LoRa: syncword 0x14,0x24 (private 0x12) -> "); Serial.println(st);
 
-  bsRadioApplyConfig();
+  bsRadioApplyConfig_BLOCKING();
 
   sx126x_irq_mask_t irqMask = SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT |
                                SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR;
@@ -155,9 +155,9 @@ bool bsRadioInit() {
 }
 
 
-void bsRadioApplyConfig() {
-  // TODO: @@@ LONG BLOCKING - radioWaitBusy calls in bsRadioApplyConfig block up to 100ms each.
-  // Safe only in init or when radio is known idle. Never call while armed or from loop at runtime.
+void bsRadioApplyConfig_BLOCKING() {
+  // BLOCKING — init path only. Contains DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING
+  // calls (up to 100ms each). Only call from bsRadioInit_BLOCKING().
   sx126x_mod_params_lora_t modParams = {};
   modParams.sf   = (sx126x_lora_sf_t)activeSF;
   modParams.bw   = bwKHzToEnum(activeBwKHz);
@@ -167,7 +167,7 @@ void bsRadioApplyConfig() {
   Serial.print("BS applyConfig: mod_params SF="); Serial.print(activeSF);
   Serial.print(" BW="); Serial.print((int)activeBwKHz);
   Serial.print(" CR=4/5 -> "); Serial.println(st);
-  radioWaitBusy(&bsRadioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx);
 
   sx126x_pkt_params_lora_t pktParams = {};
   pktParams.preamble_len_in_symb = LORA_PREAMBLE;
@@ -178,22 +178,79 @@ void bsRadioApplyConfig() {
   st = sx126x_set_lora_pkt_params(&bsRadioCtx, &pktParams);
   Serial.print("BS applyConfig: pkt_params preamble="); Serial.print(LORA_PREAMBLE);
   Serial.print(" explicit_hdr crc_on iq_normal -> "); Serial.println(st);
-  radioWaitBusy(&bsRadioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx);
 
   uint32_t freqHz = (uint32_t)(activeFreqMHz * 1e6f + 0.5f);
   st = sx126x_set_rf_freq(&bsRadioCtx, freqHz);
   Serial.print("BS applyConfig: freq="); Serial.print(freqHz); Serial.print("Hz -> "); Serial.println(st);
-  radioWaitBusy(&bsRadioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx);
 
   // PA config must come BEFORE SetTxParams per SX1262 datasheet §13.1.14.
   sx126x_pa_cfg_params_t paCfg = { .pa_duty_cycle = 0x04, .hp_max = 0x07, .device_sel = 0x00, .pa_lut = 0x01 };
   st = sx126x_set_pa_cfg(&bsRadioCtx, &paCfg);
   Serial.print("BS applyConfig: pa_cfg duty=0x04 hp_max=0x07 device_sel=0 -> "); Serial.println(st);
-  radioWaitBusy(&bsRadioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx);
 
   st = sx126x_set_tx_params(&bsRadioCtx, activePower, SX126X_RAMP_200_US);
   Serial.print("BS applyConfig: tx_params pwr="); Serial.print(activePower); Serial.print("dBm ramp=200us -> "); Serial.println(st);
-  radioWaitBusy(&bsRadioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx);
+}
+
+// ===================== PER-SLOT CONFIG STATE MACHINE =====================
+// Switches radio modulation/packet params non-blockingly between slot types.
+// Issues one SPI command per loop call; skips if BUSY is high (drops, not spins).
+
+static RadioSlotConfig bsAppliedCfg = RADIO_CFG_NORMAL;
+static RadioSlotConfig bsTargetCfg  = RADIO_CFG_NORMAL;
+static uint8_t         bsCfgStep    = 0;
+
+static bool bsNonblockingApplyCfg() {
+  if (bsAppliedCfg == bsTargetCfg) return true;
+  if (digitalRead(LORA_BUSY_PIN)) return false;  // BUSY — try next loop, no spin
+
+  switch (bsCfgStep) {
+    case 0: {
+      sx126x_mod_params_lora_t mp = {};
+      if (bsTargetCfg == RADIO_CFG_LR) {
+        mp.sf   = SX126X_LORA_SF12;
+        mp.bw   = SX126X_LORA_BW_125;
+        mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR_4_5_LI;
+        mp.ldro = 1;
+        Serial.println("BS cfgSM step0: LR mod_params SF12 BW125 CR-LI LDRO");
+      } else {
+        mp.sf   = (sx126x_lora_sf_t)activeSF;
+        mp.bw   = bwKHzToEnum(activeBwKHz);
+        mp.cr   = SX126X_LORA_CR_4_5;
+        mp.ldro = 0;
+        Serial.println("BS cfgSM step0: NORMAL mod_params");
+      }
+      sx126x_set_lora_mod_params(&bsRadioCtx, &mp);
+      bsCfgStep = 1;
+      return false;
+    }
+    case 1: {
+      sx126x_pkt_params_lora_t pp = {};
+      if (bsTargetCfg == RADIO_CFG_LR) {
+        pp.preamble_len_in_symb = 5;
+        pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
+        pp.pld_len_in_bytes     = 3;
+        pp.crc_is_on            = false;
+        Serial.println("BS cfgSM step1: LR pkt_params implicit 3B no-CRC");
+      } else {
+        pp.preamble_len_in_symb = LORA_PREAMBLE;
+        pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
+        pp.pld_len_in_bytes     = 255;
+        pp.crc_is_on            = true;
+        Serial.println("BS cfgSM step1: NORMAL pkt_params explicit CRC");
+      }
+      pp.invert_iq_is_on = false;
+      sx126x_set_lora_pkt_params(&bsRadioCtx, &pp);
+      bsAppliedCfg = bsTargetCfg;
+      bsCfgStep    = 0;
+      return true;
+    }
+  }
+  return true;  // unreachable
 }
 
 // ===================== RX / TX =====================
@@ -335,6 +392,22 @@ static void bsHandleRxDone() {
   sx126x_get_lora_pkt_status(&bsRadioCtx, &pktStatus);
   float snrF  = (float)pktStatus.snr_pkt_in_db;
   float rssiF = (float)pktStatus.rssi_pkt_in_dbm;
+
+  // WIN_LR uses implicit header — no type byte on air. Identify by slot + length.
+  if (bsCurrentSlotIsLR && rxLen == 3) {
+    // Synthesise the 5-byte natural packet format (type + deviceID + 3-byte core)
+    // so bsOnPacketReceived sees a uniform format, the same as if received in normal mode.
+    uint8_t synth[5];
+    synth[0] = PKT_LONGRANGE;
+    synth[1] = FAVORITE_ROCKET_DEVICE_ID;
+    synth[2] = buf[0]; synth[3] = buf[1]; synth[4] = buf[2];
+    Serial.print("BS WIN_LR RX: snr="); Serial.print(snrF, 1);
+    Serial.print(" rssi="); Serial.print(rssiF, 0);
+    Serial.print(" raw=["); Serial.print(buf[0], HEX); Serial.print(" ");
+    Serial.print(buf[1], HEX); Serial.print(" "); Serial.print(buf[2], HEX); Serial.println("]");
+    bsOnPacketReceived(synth, 5, snrF, rssiF);
+    return;
+  }
 
   bool isTelemetry = (rxLen >= 10 && buf[0] == 0xAF && buf[1] == FAVORITE_ROCKET_DEVICE_ID);
   if (isTelemetry) {
@@ -534,8 +607,9 @@ void bsHandleRadio() {
 
 // ===================== MAIN RADIO UPDATE =====================
 
-static bool bsCmdSentThisSlot = false;
+static bool bsCmdSentThisSlot  = false;
 static bool bsRxStartedThisSlot = false;
+static bool bsCurrentSlotIsLR  = false;  // true during WIN_LR slots (for implicit-header RX identification)
 
 // Background RSSI EMA — sampled from get_rssi_inst() every loop while RX_ACTIVE,
 // excluding the first loop after starting RX (radio hasn't settled yet).
@@ -585,24 +659,34 @@ void bsHandleRadio() {
       bsRadioStandby();
     }
 
+    // Update target config. bsNonblockingApplyCfg() will apply it over next loop iterations.
+    bsTargetCfg     = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
+    bsCfgStep       = 0;
+    bsCurrentSlotIsLR = (win == WIN_LR);
+  }
+
+  // Apply config one SPI command per loop. Skip slot action until done.
+  if (!bsNonblockingApplyCfg()) return;
+
+  // Config applied — execute slot action if RX not yet started.
+  if (!bsRxStartedThisSlot) {
     if (win == WIN_TELEM) {
       bsMissedTelemSlots++;
-      // WIN_TELEM: rocket TXes, we RX. Start RX BS_RX_EARLY_US before the slot boundary
-      // so we're already listening when the rocket's packet arrives.
-      // On the first loop of a new WIN_TELEM slot, posInSlot is ~0 so we always start
-      // immediately (we're already past the -BS_RX_EARLY_US lead point).
-      // The radio was stopped above; start RX now.
+      // WIN_TELEM: rocket TXes, we RX. Start immediately (posInSlot ~0 on first loop).
       bsRadioStartRx();
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;  // fresh window — skip first RSSI sample
+    } else if (win == WIN_LR) {
+      // WIN_LR: rocket TXes with implicit header SF12/BW125. Listen with long timeout.
+      bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50000UL) / 15.625f));
+      bsRxStartedThisSlot = true;
+      bsBgRssiReady = false;
     }
-    // WIN_CMD: TX is dispatched by main.cpp via bsWinCmdReady at posInSlot >= BS_CMD_TX_OFFSET_US.
-    // Don't start RX here — stay standby until TX fires (and any RX-after-TX can be added later).
+    // WIN_CMD: TX is dispatched by main.cpp via bsWinCmdReady below.
   }
 
   // WIN_TELEM: RX was started at slot boundary. After it times out (RxDone or Timeout IRQ
   // set state to STANDBY), stay standby for the rest of the slot. Do not restart.
-  // This is what keeps the LED off between the 40ms listen window and the next slot.
 
   // WIN_CMD: signal TX dispatch point.
   if (win == WIN_CMD && !bsCmdSentThisSlot && posInSlot >= BS_CMD_TX_OFFSET_US) {

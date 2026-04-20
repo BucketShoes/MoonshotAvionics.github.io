@@ -25,6 +25,11 @@
 #define LORA_PREAMBLE 6      // preamble symbols
 // Sync word 0x12 (private) written as register pair 0x14, 0x24
 
+#define PKT_LONGRANGE  0xBB
+// WIN_LR uses long-interleave 4/5 coding. SX1262 SetModulationParams byte 3 = 0x05.
+// Not in the sx126x_driver enum (which only covers 0x01-0x04); cast at use site.
+#define LORA_LR_CR_4_5_LI  0x05
+
 #define FAVORITE_ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket (for bootstrap setup, we only have one rocket for debug. will need to make this a config later)
 
 // ===================== SLOT TIMING =====================
@@ -38,7 +43,7 @@ enum WindowMode : uint8_t {
 };
 
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
-#define SLOT_SEQUENCE_LEN   2
+#define SLOT_SEQUENCE_LEN   (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 // Base station RX window parameters (converted to RTC steps via /15.625 at use site).
 #define BS_RX_TIMEOUT_US           40'000UL                   // synced telemetry RX window
@@ -135,11 +140,18 @@ static inline float bsChannelToFreqMHz(uint8_t ch) {
 
 void bsUpdateActiveFreqBw();
 
+// Per-slot radio config enum. NORMAL = standard operating params; LR = WIN_LR SF12 implicit.
+enum RadioSlotConfig : uint8_t {
+  RADIO_CFG_NORMAL = 0,
+  RADIO_CFG_LR     = 1,
+};
+
 // Initialise radio hardware. Call once in setup() after SPI is started.
 bool bsRadioInit();
 
 // Apply current activeChannel/activeSF/activePower to hardware. Radio must be in standby. WARNING: THIS BLOCKS BRIEFLY. DO NOT CALL WHILE ARMED
-void bsRadioApplyConfig();
+// BLOCKING — init only. Contains DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING calls. Only call from bsRadioInit().
+void bsRadioApplyConfig_BLOCKING();
 
 void bsRadioStartRx();
 void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps);

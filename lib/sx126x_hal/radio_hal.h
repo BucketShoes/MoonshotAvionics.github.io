@@ -63,24 +63,26 @@ void radioMcpwmInit(uint8_t dio1Pin);
 
 // *** BLOCKING — INIT ONLY. NEVER CALL WHILE ARMED OR FROM LOOP() ***
 //
-// radioWaitBusy() spins reading the SX1262 BUSY pin (an output from the radio,
-// read-only to the ESP32) until the radio deasserts it, or timeoutMs elapses.
+// DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING() spins reading
+// the SX1262 BUSY pin until the radio deasserts it, or timeoutMs elapses.
 // This can block for up to timeoutMs milliseconds (default 100ms).
 //
 // WHY THIS EXISTS: the SX1262 reasserts BUSY briefly after every SPI command
 // while it processes it. During radio init, commands are sent back-to-back; each
 // one must wait for BUSY to clear before the next is sent, or the HAL will drop
 // it (BUSY=high -> immediate error return, no retry). During normal operation the
-// slot machine ensures BUSY is low before issuing any command, so this is not needed.
+// slot machine checks BUSY before issuing commands (non-blocking drop on high).
 //
 // SAFETY: This firmware targets >1000 Hz loop rate while armed. Pyro channels
-// are driven by the main loop; any block >1ms risks a misfire or failure to fire.
-// radioWaitBusy() can block up to 100ms — NEVER call it from any code path
-// reachable while armed=true. radioInit() and bsRadioInit() run in setup() only
-// and are safe. If radio power-cycling while armed is ever added, a non-blocking
-// approach (state machine with timeout) must be used instead.
-inline bool radioWaitBusy(const sx126x_hal_context_t* ctx, uint32_t timeoutMs = 100) {
-    //DO NOT CALL THIS CODE WHILE THE ROCKET MIGHT BE ARMED!!!!
+// and future active control surfaces are driven by the main loop; any block >1ms
+// risks a misfire, failure to fire, or loss of control authority. 100ms is
+// ABSOLUTELY NOT acceptable while armed.
+// ONLY call from functions named *_BLOCKING, which are ONLY called from setup().
+// Per-slot radio config switching MUST use the nonblockingApplyCfg state machine
+// (one SPI command per loop iteration, BUSY-check-and-skip, no spinning).
+// If radio power-cycling while armed is ever added, use a non-blocking state machine.
+inline bool DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(
+    const sx126x_hal_context_t* ctx, uint32_t timeoutMs = 100) {
     unsigned long t0 = millis();
     while (digitalRead(ctx->busy)) {
         if ((millis() - t0) >= timeoutMs) return false;

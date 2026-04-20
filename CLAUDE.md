@@ -24,8 +24,9 @@ All functions called from `loop()` while armed **must** be non-blocking (naming 
 
 - `executeLogDownload()` is the only intentionally blocking call and is refused while armed.
 - Sector erases in `nonblockingLogging()` block ~30–50ms. This is a **known defect**, acceptable only because active control is not yet implemented. It is on the TODO list to fix before active control surfaces are added. Do not treat it as a precedent.
-- `radioWaitBusy()` in `radio_hal.h` blocks up to 100ms. It is **init-only** (called from `setup()` paths only) and has a prominent warning. Never call it from any code reachable while armed.
-- If radio power-cycling while armed is ever added, a non-blocking state machine must be used instead of `radioWaitBusy()`.
+- `DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING()` in `radio_hal.h` blocks up to 100ms. It is **init-only** (called from `setup()` paths only, inside functions named `*_BLOCKING`). Never call it from any code reachable while armed. 100ms is absolutely unacceptable while armed — this will kill pyro timing or starve active aero controls.
+- **Per-slot radio config switching** (e.g. WIN_LR ↔ normal) **must use the `nonblockingApplyCfg` / `bsNonblockingApplyCfg` state machine** pattern: one SPI command per loop iteration, check-and-skip if BUSY is high, never spin. Do not use `*_BLOCKING` functions for slot transitions.
+- If radio power-cycling while armed is ever added, a non-blocking state machine must be used instead of `*_BLOCKING` calls.
 
 ## System overview
 

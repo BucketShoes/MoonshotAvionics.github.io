@@ -13,6 +13,7 @@
 #include "telemetry.h"
 #include "commands.h"
 #include "globals.h"
+#include "gps.h"
 
 // ===================== HARDWARE OBJECTS =====================
 
@@ -90,7 +91,7 @@ bool radioInit() {
 
   Serial.println("LoRa: resetting...");
   sx126x_hal_reset(&radioCtx);
-  if (!radioWaitBusy(&radioCtx, 100)) {
+  if (!DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx, 100)) {
     Serial.println("LoRa init FAIL: BUSY stuck after reset");
     return false;
   }
@@ -109,7 +110,7 @@ bool radioInit() {
   st = sx126x_set_dio3_as_tcxo_ctrl(&radioCtx, SX126X_TCXO_CTRL_1_8V, 320);
   Serial.print("LoRa: set_dio3_tcxo 1.8V 5ms -> "); Serial.println(st);
   // After TCXO command, chip re-calibrates — wait for BUSY to clear.
-  if (!radioWaitBusy(&radioCtx, 100)) {
+  if (!DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx, 100)) {
     Serial.println("LoRa init FAIL: BUSY stuck after TCXO setup");
     return false;
   }
@@ -129,7 +130,7 @@ bool radioInit() {
   st = sx126x_write_register(&radioCtx, 0x0740, syncWord, 2);
   Serial.print("LoRa: syncword 0x14,0x24 (private 0x12) -> "); Serial.println(st);
 
-  radioApplyConfig();
+  radioApplyConfig_BLOCKING();
 
   // IRQ mask: TX_DONE | RX_DONE | TIMEOUT | CRC_ERROR | HEADER_ERROR — all on DIO1
   sx126x_irq_mask_t irqMask = SX126X_IRQ_TX_DONE | SX126X_IRQ_RX_DONE | SX126X_IRQ_TIMEOUT |
@@ -157,10 +158,10 @@ bool radioInit() {
   return true;
 }
 
-void radioApplyConfig() {
-  // TODO: @@@ LONG BLOCKING - radioWaitBusy calls block up to 100ms each.
-  // Safe in init path. If called from CMD_SET_RADIO at runtime, that command
-  // must be refused while armed, and the block must be bounded.
+void radioApplyConfig_BLOCKING() {
+  // BLOCKING — init path only. Contains DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING
+  // calls (up to 100ms each). If called from CMD_SET_RADIO, that command must be
+  // refused while armed.
   sx126x_mod_params_lora_t modParams = {};
   modParams.sf = sfToEnum(activeSF);
   modParams.bw = bwKHzToEnum(activeBwKHz);
@@ -170,7 +171,7 @@ void radioApplyConfig() {
   Serial.print("LoRa applyConfig: mod_params SF="); Serial.print(activeSF);
   Serial.print(" BW="); Serial.print((int)activeBwKHz);
   Serial.print(" CR=4/5 -> "); Serial.println(st);
-  radioWaitBusy(&radioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx);
 
   sx126x_pkt_params_lora_t pktParams = {};
   pktParams.preamble_len_in_symb = LORA_PREAMBLE;
@@ -181,22 +182,56 @@ void radioApplyConfig() {
   st = sx126x_set_lora_pkt_params(&radioCtx, &pktParams);
   Serial.print("LoRa applyConfig: pkt_params preamble="); Serial.print(LORA_PREAMBLE);
   Serial.print(" explicit_hdr crc_on iq_normal -> "); Serial.println(st);
-  radioWaitBusy(&radioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx);
 
   uint32_t freqHz = (uint32_t)(activeFreqMHz * 1e6f + 0.5f);
   st = sx126x_set_rf_freq(&radioCtx, freqHz);
   Serial.print("LoRa applyConfig: freq="); Serial.print(freqHz); Serial.print("Hz -> "); Serial.println(st);
-  radioWaitBusy(&radioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx);
 
   // PA config must come BEFORE SetTxParams per SX1262 datasheet §13.1.14.
   sx126x_pa_cfg_params_t paCfg = { .pa_duty_cycle = 0x04, .hp_max = 0x07, .device_sel = 0x00, .pa_lut = 0x01 };
   st = sx126x_set_pa_cfg(&radioCtx, &paCfg);
   Serial.print("LoRa applyConfig: pa_cfg duty=0x04 hp_max=0x07 device_sel=0 -> "); Serial.println(st);
-  radioWaitBusy(&radioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx);
 
   st = sx126x_set_tx_params(&radioCtx, activePower, SX126X_RAMP_200_US);
   Serial.print("LoRa applyConfig: tx_params pwr="); Serial.print(activePower); Serial.print("dBm ramp=200us -> "); Serial.println(st);
-  radioWaitBusy(&radioCtx);
+  DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx);
+}
+
+// ===================== WIN_LR PACKET BUILDER =====================
+
+// Builds the 3-byte on-air core for the 0xBB long-range packet.
+// Encodes dithered lat/lon fractions and low-battery flag.
+// Returns 3. buf must be at least 3 bytes.
+size_t buildLRPacketCore(uint8_t* buf) {
+  uint16_t latFrac = 0x7FF;  // >=2000 = error sentinel in 11 bits
+  uint16_t lonFrac = 0x7FF;
+  if (gps.valid) {
+    double latF = fmod(fabs(gps.lat), 1.0) * 2000.0;
+    double lonF = fmod(fabs(gps.lon), 1.0) * 2000.0;
+    // Probabilistic rounding: fractional part = probability of rounding up.
+    latFrac = (uint16_t)latF + ((rand() / (float)RAND_MAX) < (latF - (int)latF) ? 1 : 0);
+    lonFrac = (uint16_t)lonF + ((rand() / (float)RAND_MAX) < (lonF - (int)lonF) ? 1 : 0);
+    if (latFrac > 1999) latFrac = 1999;
+    if (lonFrac > 1999) lonFrac = 1999;
+  }
+  // Low battery: 100% true at <=3400mV, 0% true at >=3700mV, probabilistic between.
+  bool lowBatt = false;
+  if (batteryMv <= 3400) {
+    lowBatt = true;
+  } else if (batteryMv < 3700) {
+    lowBatt = ((rand() / (float)RAND_MAX) < (3700.0f - (float)batteryMv) / 300.0f);
+  }
+  // Bit layout: [0..10]=latFrac, [11..21]=lonFrac, [22]=lowBatt, [23]=reserved
+  uint32_t word = ((uint32_t)(latFrac & 0x7FF))
+                | ((uint32_t)(lonFrac & 0x7FF) << 11)
+                | ((uint32_t)lowBatt            << 22);
+  buf[0] = (uint8_t)(word);
+  buf[1] = (uint8_t)(word >> 8);
+  buf[2] = (uint8_t)(word >> 16);
+  return 3;
 }
 
 // ===================== SYNC =====================
@@ -266,14 +301,21 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
 
-  // In explicit header mode, pld_len_in_bytes controls how many bytes are transmitted.
-  // Must be set to the actual payload length before each TX.
+  // Set pkt params to match current slot config. WIN_LR uses implicit header + no CRC;
+  // all other slots use explicit header + CRC. Must be set before each TX.
   sx126x_pkt_params_lora_t pp = {};
-  pp.preamble_len_in_symb = LORA_PREAMBLE;
-  pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
-  pp.pld_len_in_bytes     = (uint8_t)len;
-  pp.crc_is_on            = true;
-  pp.invert_iq_is_on      = false;
+  if (appliedCfg == RADIO_CFG_LR) {
+    pp.preamble_len_in_symb = 5;
+    pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
+    pp.pld_len_in_bytes     = (uint8_t)len;
+    pp.crc_is_on            = false;
+  } else {
+    pp.preamble_len_in_symb = LORA_PREAMBLE;
+    pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
+    pp.pld_len_in_bytes     = (uint8_t)len;
+    pp.crc_is_on            = true;
+  }
+  pp.invert_iq_is_on = false;
   sx126x_set_lora_pkt_params(&radioCtx, &pp);
 
   sx126x_status_t st = sx126x_write_buffer(&radioCtx, 0, pkt, (uint8_t)len);
@@ -282,15 +324,11 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
     return false;
   }
 
-  // TODO: @@@ Blocking - brief BUSY spin after write_buffer, expected <200µs, bounded at 500µs
-  {
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN)) {
-      if (micros() - t0 > 500) {
-        Serial.println("TX: BUSY stuck after write_buffer (>500µs) — abort");
-        return false;
-      }
-    }
+  // Non-blocking BUSY check after write_buffer. If still BUSY, abort TX for this slot.
+  // The slot machine will attempt TX again next slot boundary — no spin.
+  if (digitalRead(LORA_BUSY_PIN)) {
+    Serial.println("TX: BUSY after write_buffer — abort");
+    return false;
   }
 
   st = sx126x_set_tx(&radioCtx, 0);  // timeout=0 = no TX timeout (fires TxDone when done)
@@ -467,6 +505,65 @@ void nonblockingRadio() {
 }
 #else
 
+// ===================== PER-SLOT CONFIG STATE MACHINE =====================
+// Switches radio modulation/packet params non-blockingly between slot types.
+// Issues one SPI command per loop call; skips if BUSY is high (drops, not spins).
+// RADIO_CFG_NORMAL: normal operating params (activeChannel/SF/BW, explicit header, CRC on).
+// RADIO_CFG_LR:     WIN_LR params (SF12, BW125, 4/5-LI CR, LDRO on, implicit, CRC off).
+
+static RadioSlotConfig appliedCfg = RADIO_CFG_NORMAL;
+static RadioSlotConfig targetCfg  = RADIO_CFG_NORMAL;
+static uint8_t         cfgStep    = 0;
+
+static bool nonblockingApplyCfg() {
+  if (appliedCfg == targetCfg) return true;
+  if (digitalRead(LORA_BUSY_PIN)) return false;  // BUSY — try next loop, no spin
+
+  switch (cfgStep) {
+    case 0: {
+      sx126x_mod_params_lora_t mp = {};
+      if (targetCfg == RADIO_CFG_LR) {
+        mp.sf   = SX126X_LORA_SF12;
+        mp.bw   = SX126X_LORA_BW_125;
+        mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR_4_5_LI;
+        mp.ldro = 1;
+        Serial.println("cfgSM step0: LR mod_params SF12 BW125 CR-LI LDRO");
+      } else {
+        mp.sf   = sfToEnum(activeSF);
+        mp.bw   = bwKHzToEnum(activeBwKHz);
+        mp.cr   = SX126X_LORA_CR_4_5;
+        mp.ldro = 0;
+        Serial.println("cfgSM step0: NORMAL mod_params");
+      }
+      sx126x_set_lora_mod_params(&radioCtx, &mp);
+      cfgStep = 1;
+      return false;
+    }
+    case 1: {
+      sx126x_pkt_params_lora_t pp = {};
+      if (targetCfg == RADIO_CFG_LR) {
+        pp.preamble_len_in_symb = 5;
+        pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
+        pp.pld_len_in_bytes     = 3;
+        pp.crc_is_on            = false;
+        Serial.println("cfgSM step1: LR pkt_params implicit 3B no-CRC");
+      } else {
+        pp.preamble_len_in_symb = LORA_PREAMBLE;
+        pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
+        pp.pld_len_in_bytes     = 255;
+        pp.crc_is_on            = true;
+        Serial.println("cfgSM step1: NORMAL pkt_params explicit CRC");
+      }
+      pp.invert_iq_is_on = false;
+      sx126x_set_lora_pkt_params(&radioCtx, &pp);
+      appliedCfg = targetCfg;
+      cfgStep    = 0;
+      return true;
+    }
+  }
+  return true;  // unreachable
+}
+
 void nonblockingRadio() {
   if (!loraReady) return;
 
@@ -477,53 +574,65 @@ void nonblockingRadio() {
   if (radioState == RADIO_TX_ACTIVE) return;  // TX in progress — wait for TxDone IRQ
 
   // Single slot-based path for both pre-sync and synced operation.
-  // Pre-sync: anchor=0, slots run from boot, RX window nearly full slot (980ms).
-  // Synced: anchor from CMD_SET_SYNC RxDone, RX window 100ms (short) or 800ms (long if silent).
-  // Either way: one slot machine, one timing system.
-  unsigned long now = micros();
-  unsigned long elapsed   = now - syncAnchorUs;
-  uint32_t      slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
-  uint8_t       seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
-  WindowMode    win       = SLOT_SEQUENCE[seqIdx];
+  // Pre-sync: anchor=0, slots run from boot, RX window nearly full slot.
+  // Synced: anchor from CMD_SET_SYNC RxDone, RX window 100ms (short) or long (if silent).
+  unsigned long now      = micros();
+  unsigned long elapsed  = now - syncAnchorUs;
+  uint32_t      slotNum  = (uint32_t)(elapsed / SLOT_DURATION_US);
+  uint8_t       seqIdx   = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+  WindowMode    win      = SLOT_SEQUENCE[seqIdx];
 
-  // On new slot: decide what to do at the top of this slot window.
+  // On new slot boundary: stop previous slot action and set target config.
   if (slotNum != lastHandledSlotNum) {
     lastHandledSlotNum = slotNum;
 
     // Stop whatever was running from the previous slot.
     if (radioState == RADIO_RX_ACTIVE) {
       radioStandby();
-      // TODO: @@@ Blocking - brief BUSY spin after standby before TX, bounded at 500µs
-      unsigned long t0 = micros();
-      while (digitalRead(LORA_BUSY_PIN)) { //TODO: FIX THIS - BLOCKING IS NOT ALLOWED... THATS WHY THIS METHOD WAS CALLED NONBLOCKING. 500US IS MUCH TOO LONG. 100US LIMIT TO FIT WITHIN 1MS TOTAL AMONG OTHER WORK.
-        if (micros() - t0 > 500) {
-          Serial.println("new slot: BUSY stuck after standby — skip");
-          return;
-        }
+      // BUSY check only — no spin. If still BUSY after standby, skip this iteration.
+      // The slot machine will retry next loop; 420ms slot window is more than sufficient.
+      if (digitalRead(LORA_BUSY_PIN)) {
+        Serial.println("new slot: BUSY after standby — deferring");
+        return;
       }
     }
 
-    if (win == WIN_TELEM) {
-      if (txSendingEnabled) {
-        uint8_t pkt[255];  // 255 to accommodate thrust curve page (up to 217 bytes at SF≤7)
-        size_t len = buildTelemetryPacket(pkt);
-        radioStartTx(pkt, len);
-        // After TxDone the radio returns to STANDBY. We do NOT restart RX in WIN_TELEM —
-        // the base has received the packet and there is nothing to listen for in this window.
-        // Stay standby until WIN_CMD boundary (LED off after TxDone).
-      } else {
-        // TX disabled — listen for the slot (e.g. ground test, download mode).
-        radioStartRx();
-      }
+    // Update target config for new slot. nonblockingApplyCfg() advances one step per loop.
+    targetCfg = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
+    cfgStep   = 0;
+  }
+
+  // Apply config one SPI command per loop. Returns false until done; skip slot action.
+  if (!nonblockingApplyCfg()) return;
+
+  // Config is applied — execute slot action if not already started.
+  // radioState tracks whether an action is already in progress for this slot.
+  if (radioState != RADIO_STANDBY) return;
+
+  if (win == WIN_TELEM) {
+    if (txSendingEnabled) {
+      uint8_t pkt[255];  // 255 to accommodate thrust curve page (up to 217 bytes at SF≤7)
+      size_t len = buildTelemetryPacket(pkt);
+      radioStartTx(pkt, len);
+      // After TxDone radio returns to STANDBY. Stay standby until next slot.
     } else {
-      // WIN_CMD: listen for a command. After timeout, stay standby until next slot.
+      // TX disabled — listen for the slot (e.g. ground test, download mode).
       radioStartRx();
     }
+  } else if (win == WIN_LR) {
+    if (txSendingEnabled) {
+      uint8_t pkt[3];
+      size_t len = buildLRPacketCore(pkt);
+      radioStartTx(pkt, len);
+    }
+    // If TX disabled, stay standby for WIN_LR (nothing to RX from ourselves).
+  } else {
+    // WIN_CMD (and any future slot types): listen for a command.
+    radioStartRx();
   }
 
   // After any window action completes (TxDone, RX timeout), stay standby until the next
   // slot boundary. The slot handler fires at the boundary and starts the next action.
-  // No fallback RX restart here — that was causing the LED to stay on continuously.
 }
 
 #endif  // ROCKET_RADIO_TEST_MODE

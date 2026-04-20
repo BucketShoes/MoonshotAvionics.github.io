@@ -196,8 +196,9 @@ void nonblockingInit() {
       }
       updateActiveFreqBw();
       // Re-apply config with NVS values if radio is ready (radioInit already called).
+      // BLOCKING — only reached during init state machine before loop() is armed.
       if (loraReady) {
-        radioApplyConfig();
+        radioApplyConfig_BLOCKING();
       }
       Serial.print("Radio config: ch"); Serial.print(activeChannel);
       Serial.print(" "); Serial.print(activeFreqMHz, 1); Serial.print("MHz SF");

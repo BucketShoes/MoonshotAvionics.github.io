@@ -344,6 +344,17 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF)
     latestTelem.timestamp = nowMs; latestTelem.valid = true;
   }
 
+  if (len >= 5 && buf[0] == PKT_LONGRANGE) {
+    uint32_t word   = (uint32_t)buf[2] | ((uint32_t)buf[3] << 8) | ((uint32_t)buf[4] << 16);
+    uint16_t latFrac = (uint16_t)(word & 0x7FF);
+    uint16_t lonFrac = (uint16_t)((word >> 11) & 0x7FF);
+    bool     lowBatt = (word >> 22) & 1;
+    bool     gpsErr  = (latFrac >= 2000 || lonFrac >= 2000);
+    Serial.print("LR packet: lat="); Serial.print(gpsErr ? -1 : (int)latFrac);
+    Serial.print(" lon="); Serial.print(gpsErr ? -1 : (int)lonFrac);
+    Serial.print(" lowbatt="); Serial.println(lowBatt ? "YES" : "NO");
+  }
+
   uint8_t wsBuf[268];
   memcpy(wsBuf, &snrF, 4);
   memcpy(wsBuf + 4, &rssiF, 4);
@@ -501,7 +512,7 @@ static void dispatchCmdTx() {
         bsNvs.putChar("bh_pwr", bhPower);
       }
       bsRadioStandby();
-      bsRadioApplyConfig();
+      bsRadioApplyConfig_BLOCKING();
       bsRadioStartRx();
       return;
     }
