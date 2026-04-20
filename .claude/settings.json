@@ -7,7 +7,8 @@
       "Bash(pio run:*)",
       "Bash(~/.platformio/penv/bin/pio run:*)",
       "Bash(/c/Users/Kaldosh/.platformio/penv/Scripts/pio.exe run:*)",
-      "Bash(grep -E \"\\\\.\\(h|cpp|ino\\)$\")"
+      "Bash(grep -E \"\\\\.\\(h|cpp|ino\\)$\")",
+      "Read(%APPDATA%/Arduino15/packages/esp32/tools/tools/esp32s3-libs/**)"
     ]
   }
 }
