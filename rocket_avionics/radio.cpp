@@ -495,7 +495,7 @@ void nonblockingRadio() {
       radioStandby();
       // TODO: @@@ Blocking - brief BUSY spin after standby before TX, bounded at 500µs
       unsigned long t0 = micros();
-      while (digitalRead(LORA_BUSY_PIN)) {
+      while (digitalRead(LORA_BUSY_PIN)) { //TODO: FIX THIS - BLOCKING IS NOT ALLOWED... THATS WHY THIS METHOD WAS CALLED NONBLOCKING. 500US IS MUCH TOO LONG. 100US LIMIT TO FIT WITHIN 1MS TOTAL AMONG OTHER WORK.
         if (micros() - t0 > 500) {
           Serial.println("new slot: BUSY stuck after standby — skip");
           return;

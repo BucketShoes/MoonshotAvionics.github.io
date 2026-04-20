@@ -55,6 +55,24 @@ These define the over-the-air and over-WebSocket message framing. The type byte 
       (N bytes: concatenated flash records, each with their 
        own length/type/timestamp/payload as stored in flash)
       --- total: 7 + N bytes, N limited by radio packet size ---
+
+0xBB  Long range packet - This packet is typically transmitted with special radio settings to enable maximum range.
+As such, it has an extremely limited payload. When sent over special radio settings, the packet type is inferred and only the 4 byte core is sent. In all other cases (normal radio, logs, parsing, etc, the packet will have normal headers added, not just the core. i.e. the packet type 0xBB and length, etc are all inferred and included before logging
+The intention of this packet is to get close. More packets gets you closer statistically due to dithering. Once close, you can get into radio range for normal telemerty, the normal telem will give the precision to actually locate the rocket. Limited packets gives useful information in even any one packet; but more information from multiple due to dithering of values.
+Typically this is sent in WIN_LR time slots. Please implement WIN_LR slot type. Because this uses implicit headers, the reciever must know the expected settings: SF:12, BW: 125, Coding Rate: LI4/5, LDRO: ON, Preamble: 5, Header disabled(implicit), Length: 3 bytes. CRC:Off.
+This packet is also valid over normal radio settings (with the packet type 0xBB and the device id included)
+    uint8 type (0xBB) (skipped in on-air format in special radio modes. present in all other formats, and valid if handled in normal radio mode with this type present)
+    uint8 device id of the transmitter
+    ===== core payload (the following is included in all transports)
+    payload bits:
+    [0..10] latitude fractional decimal digits within current cell, dithered. 0-1999 valid. this represents steps approx 75meters.  value >=2000 = error
+    [11..21] longitude. e.g. for 151.1234567, ignore 151 (cell assumed from launch location); use 0.1234567*2000=246.91356 so 91.356% chance of rounding up (to 247) else round down (to 246)
+    [22] low battery - 100% true at 3400mv or below. 0% true at 3700mv or above
+    [23] reserved
+
+
+
+
 ```
 
 DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but can also be logged directly, include details from specific sensors)

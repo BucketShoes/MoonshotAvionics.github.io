@@ -1,6 +1,6 @@
 // ota.cpp — OTA firmware update implementation for rocket_avionics.
 // See ota.h for the public API and flow description.
-
+//Warning: several methods in this file have long delays or blocking. These should generally only be used while disarmed.
 #include <Arduino.h>
 #include <esp_ota_ops.h>
 #include <mbedtls/md.h>
@@ -210,7 +210,7 @@ uint8_t otaHandleFinalize(const uint8_t* firmwareHmac, uint32_t expectedSize) {
 
   Serial.println("OTA: image verified, boot partition set — rebooting");
   otaQueueNotify(OTA_STATUS_OK);
-  delay(500);  // allow the notify to drain before reboot
+  delay(500);  // allow the notify to drain before reboot.
   esp_restart();
   return CMD_OK;  // unreachable
 }

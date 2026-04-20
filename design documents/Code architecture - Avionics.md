@@ -172,3 +172,5 @@ ARCHITECTURE.md - Description of every file including pre-existing ones (sensors
 Modified files
 rocket_avionics.ino — now only contains setup(), loop(), the init state machine, battery/button/peaks/loop-stats functions, global definitions, and the default HMAC key.
 flight.h — added #define isArmed (flightState.armed) so commands.cpp and telemetry.cpp can use it without importing the macro from main.
+
+Additional references, board pinouts, specs and datasheets in .\References

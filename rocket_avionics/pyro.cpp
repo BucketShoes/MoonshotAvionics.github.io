@@ -52,6 +52,8 @@ static rmt_symbol_word_t pyroSyms[3] = {};
 // ===================== INIT =====================
 
 void pyroInit() {
+  //NOTE: this uses 3 RMT channels, so is incompatible with upcoming hardware for esp32C3, which only has 2 tx channels.
+
   // Output pins: drive LOW before handing to RMT so the gate is never left floating
   pinMode(PYRO_CH1_PIN, OUTPUT); digitalWrite(PYRO_CH1_PIN, LOW);
   pinMode(PYRO_CH2_PIN, OUTPUT); digitalWrite(PYRO_CH2_PIN, LOW);

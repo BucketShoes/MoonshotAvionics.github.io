@@ -483,9 +483,12 @@ void loop() {
   nonblockingBle();
   t1 = micros(); slotUs[SLOT_BLE] = t1 - t0; t0 = t1;
 
-  //  nonblockingEskfBenchmark();
+    //nonblockingEskfBenchmark();
   t1 = micros(); slotUs[SLOT_ESKF] = t1 - t0; t0 = t1;
 
+  //this is defined elsewhere. commented out for this build mode. turned on/off as needed.
+  //it is important that this loop run max 1 ms in worst case otherwise active control could be impaired and cause a crash injuring people or property
+  //processActiveAerodynamicControlSurfaces();
 
 
 

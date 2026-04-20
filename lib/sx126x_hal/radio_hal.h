@@ -80,6 +80,7 @@ void radioMcpwmInit(uint8_t dio1Pin);
 // and are safe. If radio power-cycling while armed is ever added, a non-blocking
 // approach (state machine with timeout) must be used instead.
 inline bool radioWaitBusy(const sx126x_hal_context_t* ctx, uint32_t timeoutMs = 100) {
+    //DO NOT CALL THIS CODE WHILE THE ROCKET MIGHT BE ARMED!!!!
     unsigned long t0 = millis();
     while (digitalRead(ctx->busy)) {
         if ((millis() - t0) >= timeoutMs) return false;

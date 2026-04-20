@@ -86,7 +86,7 @@ enum WindowMode : uint8_t {
 };
 
 // Compile-time slot sequence. Edit here to change the pattern.
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,  };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
 #define SLOT_SEQUENCE_LEN  2
 #define SLOT_DURATION_US   420'000UL  // µs
 
