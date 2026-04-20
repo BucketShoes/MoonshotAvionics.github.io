@@ -9,6 +9,7 @@
 // Always verify changes against flight phases document. Note that briefs here may be out of date.
 
 #include "flight.h"
+#include "pyro.h"
 #include "ota.h"
 #include "globals.h"
 
@@ -260,12 +261,13 @@ static void enterPhase(FlightPhase newPhase, unsigned long nowUs) {
   Serial.print("FLIGHT: ");
   static const char* phaseNames[] = {
     "IDLE", "PAD_READY", "BOOST", "COAST", "APOGEE",
-    "DROGUE", "MAIN_DEPLOY", "DESCENT", "LANDED"
+    "DROGUE", "MAIN_DEPLOY", "DESCENT", "LANDED",
+    "GROUND_TEST", "SLEEP", "STARTUP", "12", "13", "14", "ERROR"
   };
-  if (oldPhase <= 8) { Serial.print(phaseNames[oldPhase]); }
+  if (oldPhase < 16) { Serial.print(phaseNames[oldPhase]); }
   else { Serial.print(oldPhase); }
   Serial.print(" -> ");
-  if (newPhase <= 8) { Serial.println(phaseNames[newPhase]); }
+  if (newPhase < 16) { Serial.println(phaseNames[newPhase]); }
   else { Serial.println(newPhase); }
 }
 
@@ -405,9 +407,11 @@ static void checkApogeeDetect(unsigned long nowUs) {
   // Apogee = fast EMA is not rising vs previous loop (flat or falling).
   // Strictly increasing means we're still climbing; flat means topped out.
   // A venturi spike would have resumed climbing after settling, so won't be flat.
+  // Enters PHASE_APOGEE for one loop pass (for logging visibility); that case
+  // fires the drogue and immediately advances to PHASE_DROGUE.
   if (flightState.baroFast.valueCm <= flightState.prevBaroFastCm) {
     flightState.apogeeEntryUs = nowUs;
-    enterPhase(PHASE_DROGUE, nowUs);
+    enterPhase(PHASE_APOGEE, nowUs);
   }
 }
 
@@ -579,18 +583,38 @@ void nonblockingFlight() {
       checkApogeeDetect(nowUs);
       break;
 
+    case PHASE_APOGEE:
+      // *** SAFETY-CRITICAL: fires drogue pyro channel ***
+      // One loop pass in this phase for logging/telemetry visibility.
+      // pyroFire() is non-blocking (rmt_transmit queues and returns immediately).
+      // RMT hardware cuts the pin after drogueFireMs regardless of CPU state.
+      pyroFire(flightState.config.drogueChannel, flightState.config.drogueFireMs);
+      enterPhase(PHASE_DROGUE, nowUs);
+      break;
+
     case PHASE_DROGUE:
       // Check for main deploy
       checkMainDeploy(nowUs);
       break;
 
     case PHASE_MAIN_DEPLOY:
+      // *** SAFETY-CRITICAL: fires main pyro/nichrome channel on first entry ***
+      // mainDeployFired prevents re-firing on subsequent loop passes in this phase.
+      if (!flightState.mainDeployFired) {
+        pyroFire(flightState.config.mainChannel, flightState.config.mainFireMs);
+        flightState.mainDeployFired = true;
+      }
       // Check for landing
       checkLanding(nowUs);
       break;
 
     case PHASE_LANDED:
       // Still armed — waiting for DISARM command
+      break;
+
+    case PHASE_GROUND_TEST:
+      // Armed for ground testing. No flight transitions run.
+      // Exit via DISARM command.
       break;
 
     default:
@@ -604,25 +628,35 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   unsigned long nowUs = micros();
 
   bool forceArm = false;
+  bool testMode  = false;
   FlightConfig cfg;
-  cfg.boostAccelMg = DEFAULT_BOOST_ACCEL_MG;
-  cfg.boostAltM = DEFAULT_BOOST_ALT_M;
-  cfg.coastAltM = DEFAULT_COAST_ALT_M;
+  cfg.boostAccelMg  = DEFAULT_BOOST_ACCEL_MG;
+  cfg.boostAltM     = DEFAULT_BOOST_ALT_M;
+  cfg.coastAltM     = DEFAULT_COAST_ALT_M;
   cfg.mainDeployAltM = DEFAULT_MAIN_DEPLOY_ALT_M;
+  cfg.drogueFireMs  = DEFAULT_DROGUE_FIRE_MS;
+  cfg.mainFireMs    = DEFAULT_MAIN_FIRE_MS;
+  cfg.drogueChannel = DEFAULT_DROGUE_CHANNEL;
+  cfg.mainChannel   = DEFAULT_MAIN_CHANNEL;
 
   if (paramsLen == 0 || params == nullptr) {
-    // Legacy: no params = force arm with defaults
+    // No params: force arm with defaults, PAD_READY phase
     forceArm = true;
-  } else if (paramsLen == 9) {
-    // Full params: 8 bytes config + 1 byte flags
-    cfg.boostAccelMg = (uint16_t)(params[0] | (params[1] << 8));
-    cfg.boostAltM    = (uint16_t)(params[2] | (params[3] << 8));
-    cfg.coastAltM    = (uint16_t)(params[4] | (params[5] << 8));
+  } else if (paramsLen >= 9) {
+    // 9-byte (old) or 13-byte (new) format
+    cfg.boostAccelMg   = (uint16_t)(params[0] | (params[1] << 8));
+    cfg.boostAltM      = (uint16_t)(params[2] | (params[3] << 8));
+    cfg.coastAltM      = (uint16_t)(params[4] | (params[5] << 8));
     cfg.mainDeployAltM = (uint16_t)(params[6] | (params[7] << 8));
-    uint8_t flags    = params[8];
+    uint8_t flags      = params[8];
     forceArm = (flags & 0x01) != 0;
+    testMode = (flags & 0x02) != 0;
+    if (paramsLen >= 13) {
+      cfg.drogueFireMs = (uint16_t)(params[9]  | (params[10] << 8));
+      cfg.mainFireMs   = (uint16_t)(params[11] | (params[12] << 8));
+    }
   } else {
-    // Bad param length — shouldn't reach here if caller validates, but just force defaults
+    // Unexpected length — force defaults
     forceArm = true;
   }
 
@@ -663,10 +697,12 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   }
 
   // --- ARMING ---
+  pyroClearLatches();
   flightState.config = cfg;
   flightState.armed = true;
-  flightState.phase = PHASE_PAD_READY;
-  flightState.armFlags = forceArm ? 0x01 : 0x00;
+  flightState.phase = testMode ? PHASE_GROUND_TEST : PHASE_PAD_READY;
+  flightState.armFlags = (forceArm ? 0x01 : 0x00) | (testMode ? 0x02 : 0x00);
+  flightState.mainDeployFired = false;
 
   // Lock orientation based on current accel X axis
   if (accelData.valid) {
@@ -708,10 +744,14 @@ uint8_t flightTryArm(const uint8_t* params, size_t paramsLen) {
   flightState.landBaro.reset();
   flightState.landAccelEmaValid = false;
 
-  Serial.print("PAD READY: boostG="); Serial.print(cfg.boostAccelMg);
+  Serial.print(testMode ? "GROUND_TEST" : "PAD_READY");
+  Serial.print(": boostG="); Serial.print(cfg.boostAccelMg);
   Serial.print(" boostAlt="); Serial.print(cfg.boostAltM);
   Serial.print(" coastAlt="); Serial.print(cfg.coastAltM);
   Serial.print(" mainAlt="); Serial.print(cfg.mainDeployAltM);
+  Serial.print(" drogueMs="); Serial.print(cfg.drogueFireMs);
+  Serial.print(" mainMs="); Serial.print(cfg.mainFireMs);
+  Serial.print(" ch="); Serial.print(cfg.drogueChannel); Serial.print("/"); Serial.print(cfg.mainChannel);
   Serial.print(" force="); Serial.print(forceArm);
   Serial.print(" orient="); Serial.println(flightState.orientXPositive ? "X+" : "X-");
 

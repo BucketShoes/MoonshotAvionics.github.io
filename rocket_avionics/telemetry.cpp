@@ -6,6 +6,7 @@
 #include "gps.h"
 #include "sensors.h"
 #include "flight.h"
+#include "pyro.h"
 #include "commands.h"
 #include "radio.h"
 #include "globals.h"
@@ -13,7 +14,7 @@
 // ===================== LOG PAGE CONFIG =====================
 //back reference index
 static const uint8_t LOG_PAGE_TYPE[] = {
-  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E
+  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
 };
 
 LogPageConfig logPages[LOGI_COUNT] = {
@@ -31,6 +32,7 @@ LogPageConfig logPages[LOGI_COUNT] = {
   {10000000, 0, 0 },  // Radio health
   {10000000, 0, 0 },  // Timestamp
   { 0,       0, 0 },  // Thrust curve: intervalUs=0, never written to flash
+  { 1000000, 0, 0 },  // Pyro status
 };
 
 // ===================== PAGE CYCLE =====================
@@ -39,7 +41,7 @@ LogPageConfig logPages[LOGI_COUNT] = {
 static const uint8_t PAGE_CYCLE[] = {
   0x01, 0x02, 0x03, 0x02, 0x04, 0x02, 0x05, 0x02,
   0x06, 0x02, 0x08, 0x02, 0x09, 0x02, 0x0A, 0x02,
-  0x0B, 0x02, 0x0C, 0x02, 0x0D
+  0x0B, 0x02, 0x0C, 0x02, 0x0D, 0x02, 0x0F
 };
 static const uint8_t PAGE_CYCLE_COUNT = sizeof(PAGE_CYCLE) / sizeof(PAGE_CYCLE[0]);
 static uint8_t pageIndex = 0;
@@ -94,9 +96,9 @@ static uint16_t buildStateFlags() {
   uint16_t flags = 0;
   flags |= ((uint16_t)flightGetPhase() & 0x0F);  // [3:0] flight phase
   if (isArmed) flags |= (1 << 4);                // [4] armed
-  // [5] pyro ch1 fired — TODO
-  // [6] pyro ch2 fired — TODO
-  // [7] chute released — TODO
+  if (pyroState.ch1Fired) flags |= (1 << 5);    // [5] pyro ch1 fired
+  if (pyroState.ch2Fired) flags |= (1 << 6);    // [6] pyro ch2 fired
+  if (pyroState.ch3Fired) flags |= (1 << 7);    // [7] pyro ch3 fired
   if (batteryMv > 0 && batteryMv < 3300) flags |= (1 << 8);  // [8] low battery
   if (flightBaroOk())    flags |= (1 << 9);   // [9] baro ok
   if (flightAccelOk())   flags |= (1 << 10);  // [10] accel ok
@@ -208,10 +210,18 @@ static void buildPage0A(uint8_t* buf, size_t* pos) {
   writeU16(buf, pos, lastAck.invalidHmacCount);
 }
 
-// Page 0x0B: Flight status (8 bytes)
+// Page 0x0B: Flight status (6 bytes)
 static void buildPage0B(uint8_t* buf, size_t* pos) {
   writeS32(buf, pos, flightState.msSinceLaunch);
-  writeU16(buf, pos, 0);  // pyro/chute flags TODO
+  uint16_t pyroFlags = 0;
+  if (pyroState.ch1Fired) pyroFlags |= (1 << 0);
+  if (pyroState.ch2Fired) pyroFlags |= (1 << 1);
+  if (pyroState.ch3Fired) pyroFlags |= (1 << 2);
+  if (pyroState.ch1Continuity) pyroFlags |= (1 << 4);
+  if (pyroState.ch2Continuity) pyroFlags |= (1 << 5);
+  if (pyroState.ch3Continuity) pyroFlags |= (1 << 6);
+  if (pyroState.hvPresent)     pyroFlags |= (1 << 8);
+  writeU16(buf, pos, pyroFlags);
 }
 
 // Page 0x0C: Radio health (5 bytes)
@@ -229,6 +239,30 @@ static void buildPage0D(uint8_t* buf, size_t* pos) {
     buf[(*pos)++] = (uint8_t)(t & 0xFF);
     t >>= 8;
   }
+}
+
+// Page 0x0F: Pyro status (6 bytes)
+// uint8 flags: [0]=ch1_continuity [1]=ch2_continuity [2]=ch3_continuity [3]=hv_present
+//              [4]=ch1_fired [5]=ch2_fired [6]=ch3_fired [7]=any_active (CPU estimate)
+// uint8 active_channel (0/1/2/3)
+// uint16 active_duration_ms
+// uint16 hv_millivolts
+static void buildPage0F(uint8_t* buf, size_t* pos) {
+  uint8_t flags = 0;
+  if (pyroState.ch1Continuity) flags |= (1 << 0);
+  if (pyroState.ch2Continuity) flags |= (1 << 1);
+  if (pyroState.ch3Continuity) flags |= (1 << 2);
+  if (pyroState.hvPresent)     flags |= (1 << 3);
+  if (pyroState.ch1Fired)      flags |= (1 << 4);
+  if (pyroState.ch2Fired)      flags |= (1 << 5);
+  if (pyroState.ch3Fired)      flags |= (1 << 6);
+  if (pyroState.activeChannel) flags |= (1 << 7);
+  writeU8(buf, pos, flags);
+  writeU8(buf, pos, pyroState.activeChannel);
+  uint16_t durMs = (pyroState.fireDurationUs > 0)
+    ? (uint16_t)constrain(pyroState.fireDurationUs / 1000UL, 0UL, 65535UL) : 0;
+  writeU16(buf, pos, durMs);
+  writeU16(buf, pos, pyroState.hvMillivolts);
 }
 
 // Page 0x0E: Thrust curve — X-axis acceleration ring buffer snapshot (variable length)
@@ -315,6 +349,7 @@ static void dispatchBuildPage(uint8_t pageType, uint8_t* buf, size_t* pos) {
     case 0x0B: buildPage0B(buf, pos); break;
     case 0x0C: buildPage0C(buf, pos); break;
     case 0x0D: buildPage0D(buf, pos); break;
+    case 0x0F: buildPage0F(buf, pos); break;
     // 0x07 (Kalman) not yet implemented
   }
 }

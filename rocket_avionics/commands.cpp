@@ -6,6 +6,7 @@
 #include "commands.h"
 #include "radio.h"
 #include "flight.h"
+#include "pyro.h"
 #include "log_store.h"
 #include "globals.h"
 #include "telemetry.h"
@@ -59,9 +60,9 @@ uint32_t readU32(const uint8_t* buf) {
 
 static int expectedParamLen(uint8_t cmdId) {
   switch (cmdId) {
-    case CMD_ARM:           return -1;  // 0 (legacy) or 9 (params+flags)
+    case CMD_ARM:           return -1;  // 0 (legacy), 9 (old params+flags), or 13 (new with fire durations)
     case CMD_DISARM:        return 0;
-    case CMD_FIRE_PYRO:     return 3;   // channel(1) + duration(2)
+    case CMD_FIRE_PYRO:     return -1;  // 3 (channel + duration) or 4 (+ flags byte)
     case CMD_SET_TX_RATE:   return 1;   // rate(1)
     case CMD_SET_RADIO:     return 3;   // channel(1) + SF(1) + power(1)
     case CMD_OTA_BEGIN:     return 0;
@@ -92,7 +93,7 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
   switch (cmdId) {
 
     case CMD_ARM: {
-      if (paramsLen != 0 && paramsLen != 9) { result = CMD_ERR_BAD_PARAMS; break; }
+      if (paramsLen != 0 && paramsLen != 9 && paramsLen != 13) { result = CMD_ERR_BAD_PARAMS; break; }
       uint8_t armResult = flightTryArm(params, paramsLen);
       if (armResult == ARM_OK) {
         if (logStoreOk) {
@@ -116,11 +117,25 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       result = CMD_OK;
       break;
 
-    case CMD_FIRE_PYRO:
+    case CMD_FIRE_PYRO: {
+      if (paramsLen != 3 && paramsLen != 4) { result = CMD_ERR_BAD_PARAMS; break; }
       if (!isArmed) { result = CMD_ERR_REFUSED; break; }
-      // TODO: implement pyro fire (parse channel + duration, set GPIO high, main loop cuts off)
-      result = CMD_ERR_UNKNOWN;
+      uint8_t  ch       = params[0];
+      uint16_t dur      = (uint16_t)(params[1] | (params[2] << 8));
+      uint8_t  flags    = (paramsLen >= 4) ? params[3] : 0;
+      bool stayInPhase  = (flags & 0x01) != 0;
+      if (ch < 1 || ch > 3 || dur == 0) { result = CMD_ERR_BAD_PARAMS; break; }
+      pyroFire(ch, dur);
+      if (!stayInPhase && flightState.phase != PHASE_GROUND_TEST) {
+        // Transition to GROUND_TEST so launch detect can't misfire from shock
+        unsigned long nowUs = micros();
+        (void)nowUs;  // enterPhase is static in flight.cpp; call the public transition
+        // Direct state write is safe here: GROUND_TEST has no entry actions in enterPhase
+        flightState.phase = PHASE_GROUND_TEST;
+      }
+      result = CMD_OK;
       break;
+    }
 
     case CMD_SET_TX_RATE: {
       int8_t rate = (int8_t)params[0];

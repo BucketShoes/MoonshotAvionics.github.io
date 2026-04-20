@@ -156,7 +156,7 @@
   var fetchSpeedRecs = 0, fetchSpeedBytes = 0, fetchSpeedStartMs = 0;
   var fetchAutoNav = true; // auto-navigate to latest session after each batch
   var dlSpeedRecs = 0, dlSpeedBytes = 0, dlSpeedStartMs = 0;
-  var PHASES = ['idle','pad_ready','boost','coast','apogee','drogue','main_deploy','descent','landed','9','10','11','12','13','14','error'];
+  var PHASES = ['idle','pad_ready','boost','coast','apogee','drogue','main_deploy','descent','landed','ground_test','sleep','startup','12','13','14','error'];
 
   function pad2(n){return n<10?'0'+n:''+n}
   function pad3(n){return n<10?'00'+n:n<100?'0'+n:''+n}
@@ -190,6 +190,27 @@
     var samples=new Uint8Array(v.buffer,v.byteOffset+o+6,nSamples);
     return{durationMs:durationMs,minMg:minMg8*8,maxMg:maxMg8*8,sampleCount:nSamples,samples:samples};
   },f:function(d){return d.sampleCount+' samples, '+d.durationMs+'ms, '+d.minMg+'..'+d.maxMg+' mg'}};
+  // Page 0x0F: Pyro Status (6 bytes)
+  // flags u8: [0]=ch1_cont [1]=ch2_cont [2]=ch3_cont [3]=hv_present [4]=ch1_fired [5]=ch2_fired [6]=ch3_fired [7]=active
+  // active_channel u8, active_duration_ms u16, hv_millivolts u16
+  PD[15]={n:'Pyro',s:6,d:function(v,o){
+    var fl=v.getUint8(o);
+    return{
+      ch1_cont:!!(fl&1),ch2_cont:!!(fl&2),ch3_cont:!!(fl&4),
+      hv_present:!!(fl&8),
+      ch1_fired:!!(fl&16),ch2_fired:!!(fl&32),ch3_fired:!!(fl&64),
+      active:!!(fl&128),
+      active_ch:v.getUint8(o+1),
+      dur_ms:v.getUint16(o+2,true),
+      hv_mv:v.getUint16(o+4,true)
+    };
+  },f:function(d){
+    var cont=(d.ch1_cont?'1':'_')+(d.ch2_cont?'2':'_')+(d.ch3_cont?'3':'_');
+    var fired=(d.ch1_fired?'1':'_')+(d.ch2_fired?'2':'_')+(d.ch3_fired?'3':'_');
+    var hv=d.hv_present?('HV:'+d.hv_mv+'mV'):'no-HV';
+    var act=d.active?('ch'+d.active_ch+' '+d.dur_ms+'ms'):'idle';
+    return 'cont:'+cont+' fired:'+fired+' '+hv+' '+act;
+  }};
 
   var charts = null;
   function makeChart(id, ds) {
@@ -1275,6 +1296,7 @@ function initCharts() {
   // State tracking — reset when we say "FTS is safe"
   var vSaidArmed = false;
   var vSaidReadyLast = 0; // timestamp of last "ready to launch" callout
+  var vSaidGroundTestLast = 0; // timestamp of last "ground test" callout
   var vSaidBoost = false;
   var vSaidCoast = false;
   var vSaidApogee = false;
@@ -1285,6 +1307,7 @@ function initCharts() {
   function voiceReset() {
     vSaidArmed = false;
     vSaidReadyLast = 0;
+    vSaidGroundTestLast = 0;
     vSaidBoost = false;
     vSaidCoast = false;
     vSaidApogee = false;
@@ -1345,8 +1368,8 @@ function initCharts() {
   function voiceOnTelem(p, ph, arm, fusAltM) {
     var moon = (voiceMode === 'moonshot');
 
-    // "Armed" — first time armed flag is set or phase=pad_ready(1)
-    if ((arm || ph === 1) && !vSaidArmed) {
+    // "Armed" — first time armed flag is set or phase=pad_ready(1) or phase=ground_test(9)
+    if ((arm || ph === 1 || ph === 9) && !vSaidArmed) {
       vSaidArmed = true;
       vSaidSafe = false; // now we need to watch for disarm
       voiceSay(moon ? 'Flight Termination System is armed' : 'Armed');
@@ -1358,6 +1381,15 @@ function initCharts() {
       if (now - vSaidReadyLast > 30000) {
         vSaidReadyLast = now;
         voiceSay(moon ? 'Moonshot is ready to launch' : 'Ready to launch');
+      }
+    }
+
+    // "Ground test" / "Static fire" — phase=ground_test(9), every 30s
+    if (ph === 9 && vSaidArmed) {
+      var now3 = Date.now();
+      if (now3 - vSaidGroundTestLast > 30000) {
+        vSaidGroundTestLast = now3;
+        voiceSay(moon ? 'Static fire' : 'Ground test');
       }
     }
 
@@ -1430,9 +1462,9 @@ function initCharts() {
   var derivedKeyBytes = null; // Uint8Array(32)
 
   var CMD_HELP = {
-    '0x01': 'ARM: Arm rocket. Sets log protection 60s back. Activates buzzer.',
+    '0x01': 'ARM: Arm rocket (13-byte params). test_mode flag enters GROUND_TEST phase instead of PAD_READY. Sets log protection 60s back.',
     '0x02': 'DISARM: Return to idle. Refused if pyro/chute active.',
-    '0x03': 'FIRE PYRO/CHUTE: Energise channel for N ms. Requires armed. Ground test only.',
+    '0x03': 'FIRE PYRO/CHUTE: Energise channel for N ms (RMT hardware-timed). Requires armed. Transitions to GROUND_TEST unless stay_in_phase flag set.',
     '0x10': 'SET TX RATE: +N=Hz (1-127), -N=sec between, 0=stop telemetry.',
     '0x12': 'SET ROCKET RADIO: Channel, SF, TX power. Stored to NVS.',
     '0x30': 'SET RELAY RADIO: Primary + backhaul settings. Stored to NVS.',
@@ -1508,11 +1540,34 @@ function initCharts() {
   function buildParams(cmdId) {
     var buf = [];
     switch (cmdId) {
-      case 0x03:
+      case 0x01: {
+        // ARM — always 13-byte format
+        var boostG  = parseInt(document.getElementById('p01-boostG').value)  || 3000;
+        var boostA  = parseInt(document.getElementById('p01-boostAlt').value) || 100;
+        var coastA  = parseInt(document.getElementById('p01-coastAlt').value) || 200;
+        var mainA   = parseInt(document.getElementById('p01-mainAlt').value)  || 100;
+        var forceArm= document.getElementById('p01-force').checked  ? 1 : 0;
+        var testMode= document.getElementById('p01-test').checked   ? 2 : 0;
+        var flags   = forceArm | testMode;
+        var drogMs  = parseInt(document.getElementById('p01-drogMs').value)   || 3000;
+        var mainMs  = parseInt(document.getElementById('p01-mainMs').value)   || 3000;
+        buf.push(boostG & 0xFF, (boostG >> 8) & 0xFF);
+        buf.push(boostA & 0xFF, (boostA >> 8) & 0xFF);
+        buf.push(coastA & 0xFF, (coastA >> 8) & 0xFF);
+        buf.push(mainA  & 0xFF, (mainA  >> 8) & 0xFF);
+        buf.push(flags & 0xFF);
+        buf.push(drogMs & 0xFF, (drogMs >> 8) & 0xFF);
+        buf.push(mainMs & 0xFF, (mainMs >> 8) & 0xFF);
+        break;
+      }
+      case 0x03: {
         buf.push(parseInt(document.getElementById('p03-ch').value) & 0xFF);
         var dur = parseInt(document.getElementById('p03-dur').value) & 0xFFFF;
         buf.push(dur & 0xFF, (dur >> 8) & 0xFF);
+        var stay = document.getElementById('p03-stay').checked ? 1 : 0;
+        buf.push(stay & 0xFF);
         break;
+      }
       case 0x10:
         buf.push(parseInt(document.getElementById('p10-rate').value) & 0xFF);
         break;

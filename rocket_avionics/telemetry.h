@@ -46,6 +46,7 @@ enum LogPageIdx {
   LOGI_RADIO_HEALTH,  // 0x0C
   LOGI_TIMESTAMP,     // 0x0D
   LOGI_THRUST_CURVE,  // 0x0E (intervalUs=0: never written to flash; BLE capture + LoRa forced send only)
+  LOGI_PYRO_STATUS,   // 0x0F
   LOGI_COUNT
 };
 

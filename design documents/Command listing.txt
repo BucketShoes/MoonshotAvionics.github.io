@@ -14,8 +14,24 @@ Channel 96+ will be reserved for other usage, like FSK or other modulations
 Rocket commands (only meaningful to rockets, bases/relays just log, no implementation/parsing):
 ```
 0x01  ARM
-      Params: none
-      Effect: set armed flag, transition to pad_ready phase, activate buzzer, set log protection point at 60 seconds before now (i.e. logs from then onwards wont overwrite until disarm and then re-arm at a different point. log ring buffer just stops logging when full)
+      Params (variable length):
+        0 bytes: force arm with defaults, enters PAD_READY phase
+        9 bytes (old format):
+          uint16 boostAccelMg     — total accel threshold for launch detect (mg, pythagoras)
+          uint16 boostAltM        — altitude AGL threshold for boost alt trigger (m)
+          uint16 coastAltM        — altitude AGL for coast alt/alt-only launch trigger (m)
+          uint16 mainDeployAltM   — altitude AGL for main chute deploy (m)
+          uint8  flags            — bit0=force_arm (skip stability checks), bit1=test_mode
+        13 bytes (new format, adds fire durations):
+          ...same as 9-byte above...
+          uint16 drogueFireMs     — drogue igniter pulse duration (ms)
+          uint16 mainFireMs       — main igniter/nichrome pulse duration (ms)
+      Effect: set armed flag, set log protection 60s back, activate buzzer.
+        If test_mode (flags bit1): enters GROUND_TEST phase (pyro fires allowed, no launch detect).
+        Otherwise: enters PAD_READY phase (normal flight mode).
+        Pyro fired latches (ch1/ch2/ch3) are cleared on arm.
+      Defaults: boostAccelMg=3000, boostAltM=100, coastAltM=200, mainDeployAltM=100,
+                drogueFireMs=3000, mainFireMs=3000
 
 0x02  DISARM
       Params: none
@@ -23,11 +39,18 @@ Rocket commands (only meaningful to rockets, bases/relays just log, no implement
       Refused if pyro/chute active/energized or any in-progress action (must wait for them to finish, or de-energize).
 
 0x03  FIRE PYRO/CHUTE
-      Params: uint8 channel (pyro1=1,pryo2=2,chute=3), uint16 duration ms
-      Effect: energise pyro MOSFET for specified duration. 
-      Requires armed state. Non-blocking: sets GPIO high, 
-      main loop turns it off after duration expires. This is intended for ground testing. normal pyro/chute will be automatic trigger
-      Refused if not armed.
+      Params:
+        uint8  channel      — pyro1=1, pyro2=2, chute=3
+        uint16 durationMs   — pulse duration in ms (RMT hardware-timed; guaranteed cutoff)
+        uint8  flags        — (optional, 4th byte) bit0=stay_in_phase
+      Effect: energise pyro MOSFET gate for specified duration.
+        Non-blocking: RMT hardware drives GPIO HIGH then cuts LOW automatically.
+        By default (stay_in_phase=0), transitions phase to GROUND_TEST after firing
+        so that shock from the charge cannot trigger launch detect.
+        If stay_in_phase=1, phase is unchanged (use for manual override/recovery only).
+      Requires armed state. Refused if not armed.
+      This is intended for ground testing. Normal flight pyro/chute triggers are automatic
+      (drogue at apogee, main at mainDeployAltM).
 
 0x10  SET TX RATE
       Params: int8 rate
@@ -149,3 +172,29 @@ OTA STATE MACHINE:
 OTA_LOCKED → (CMD_OTA_BEGIN) → OTA_ERASING → OTA_RECEIVING → (CMD_OTA_FINALIZE) → OTA_VERIFYING → (reboot) → OTA_LOCKED
 ```
 The target OTA partition is always esp_ota_get_next_update_partition(NULL) — whichever slot is not currently running. Alternates between app0/app1 each flash.
+
+FLIGHT PHASES (telemetry state flags [3:0]):
+```
+0   IDLE          — unarmed, waiting for ARM command
+1   PAD_READY     — armed, on pad, launch detect active
+2   BOOST         — launch detected, motor burning
+3   COAST          — motor burned out, still climbing
+4   APOGEE        — apogee detected (one loop pass); drogue fires here, then advances to DROGUE
+5   DROGUE        — drogue deployed, descending
+6   MAIN_DEPLOY   — below main deploy altitude; main igniter/nichrome fires on entry
+7   DESCENT       — (currently not explicitly set; future use)
+8   LANDED        — rocket on ground; waiting for DISARM
+9   GROUND_TEST   — armed for ground testing; all flight transitions suppressed; exit via DISARM
+10  SLEEP         — display/format only, not yet implemented
+11  STARTUP       — display/format only, not yet implemented
+15  ERROR         — fault state
+```
+
+PYRO CHANNELS:
+```
+ch1 — drogue ejection (GPIO 45); fires at APOGEE phase entry
+ch2 — main ejection (GPIO 46); fires at MAIN_DEPLOY phase entry (default config)
+ch3 — chute nichrome/servo (GPIO 6); fires at MAIN_DEPLOY if mainChannel=3 (config)
+      ch2 and ch3 are mutually exclusive per flight; config selects which fires at main deploy.
+```
+RMT hardware drives each channel GPIO — pulse cutoff is guaranteed by hardware even if CPU is busy, sleeping, or reset.

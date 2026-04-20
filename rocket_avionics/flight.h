@@ -52,16 +52,19 @@
 // ===================== FLIGHT PHASES =====================
 // These values are used in the telemetry state flags [3:0]
 enum FlightPhase : uint8_t {
-  PHASE_IDLE        = 0,
-  PHASE_PAD_READY   = 1,
-  PHASE_BOOST       = 2,
-  PHASE_COAST       = 3,
-  PHASE_APOGEE      = 4,   // reserved/skipped — transitions straight to drogue
-  PHASE_DROGUE      = 5,
-  PHASE_MAIN_DEPLOY = 6,
-  PHASE_DESCENT     = 7,
-  PHASE_LANDED      = 8,
-  PHASE_ERROR       = 15
+  PHASE_IDLE         = 0,
+  PHASE_PAD_READY    = 1,
+  PHASE_BOOST        = 2,
+  PHASE_COAST        = 3,
+  PHASE_APOGEE       = 4,   // used for one loop at apogee; fires drogue then advances to DROGUE
+  PHASE_DROGUE       = 5,
+  PHASE_MAIN_DEPLOY  = 6,
+  PHASE_DESCENT      = 7,
+  PHASE_LANDED       = 8,
+  PHASE_GROUND_TEST  = 9,   // armed, pyro can fire, no flight transitions run; exit via DISARM
+  PHASE_SLEEP        = 10,  // display/format only — not yet implemented
+  PHASE_STARTUP      = 11,  // display/format only — not yet implemented
+  PHASE_ERROR        = 15
 };
 
 // ===================== ARM RESULT CODES =====================
@@ -177,6 +180,14 @@ struct FlightConfig {
   uint16_t coastAltM;        // altitude AGL for coast alt trigger / alt-only launch
   uint16_t mainDeployAltM;   // altitude AGL for main chute deploy
 
+  // Pyro fire durations (from ARM params bytes 9-12, or defaults)
+  uint16_t drogueFireMs;     // drogue igniter pulse duration
+  uint16_t mainFireMs;       // main igniter/nichrome pulse duration
+
+  // Pyro channel routing (compile-time defaults; not yet in ARM params)
+  uint8_t  drogueChannel;    // 1 or 2 — which output fires at apogee
+  uint8_t  mainChannel;      // 2 or 3 — which output fires at main deploy (never same as drogue)
+
   // Hardcoded stability thresholds (not configurable)
   // Arming: accel total 800-1200mg, single axis 700-1300mg
   // Arming: gyro < 50 deg/s per axis
@@ -185,10 +196,14 @@ struct FlightConfig {
 };
 
 // Default flight config (used when ARM has no params, or as fallback)
-#define DEFAULT_BOOST_ACCEL_MG   3000
-#define DEFAULT_BOOST_ALT_M      100
-#define DEFAULT_COAST_ALT_M      200
+#define DEFAULT_BOOST_ACCEL_MG    3000
+#define DEFAULT_BOOST_ALT_M       100
+#define DEFAULT_COAST_ALT_M       200
 #define DEFAULT_MAIN_DEPLOY_ALT_M 100
+#define DEFAULT_DROGUE_FIRE_MS    3000
+#define DEFAULT_MAIN_FIRE_MS      3000
+#define DEFAULT_DROGUE_CHANNEL    1
+#define DEFAULT_MAIN_CHANNEL      2
 
 // Arming stability duration requirement
 #define ARM_STABILITY_DURATION_US 10000000UL  // 10 seconds
@@ -291,9 +306,14 @@ struct FlightState {
   int32_t msSinceLaunch;
 
   // ARM command flags byte layout:
-  // bit 0: force arm (ignore stability/error checks)
-  // bits 1-7: reserved
+  // bit 0: force_arm (ignore stability/error checks)
+  // bit 1: test_mode (arm into GROUND_TEST instead of PAD_READY)
+  // bits 2-7: reserved
   uint8_t armFlags;
+
+  // Set on first main-deploy firing; prevents re-fire on subsequent loop passes.
+  // Cleared on arm (alongside other flight state).
+  bool mainDeployFired;
 };
 
 extern FlightState flightState;
@@ -311,8 +331,10 @@ void flightInit();
 void nonblockingFlight();
 
 // Attempt to arm. Returns ARM_OK or ARM_ERR_* code.
-// params: pointer to 9 bytes of ARM command params, or nullptr for defaults+force.
-// paramsLen: 0 for legacy (defaults+force), 9 for full params.
+// paramsLen 0:  force arm, all defaults, PAD_READY phase.
+// paramsLen 9:  old format — boostAccelMg/boostAltM/coastAltM/mainDeployAltM + flags byte.
+// paramsLen 13: new format — above + drogueFireMs + mainFireMs.
+// flags byte: bit0=force_arm, bit1=test_mode (enters GROUND_TEST instead of PAD_READY).
 uint8_t flightTryArm(const uint8_t* params, size_t paramsLen);
 
 // Disarm. Always succeeds (caller must check pyro state before calling).

@@ -39,6 +39,7 @@
 #include "radio.h"
 #include "commands.h"
 #include "telemetry.h"
+#include "pyro.h"
 #include "ble.h"
 
 // ===================== GLOBAL DEFINITIONS =====================
@@ -234,6 +235,7 @@ void nonblockingInit() {
     case INIT_SENSORS:
       sensorsInit();
       flightInit();
+      pyroInit();
       initState = INIT_DONE;
       break;
 
@@ -427,11 +429,11 @@ void nonblockingEskfBenchmark() {
 
 enum LoopSlot {
   SLOT_INIT = 0, SLOT_GPS, SLOT_BUTTON, SLOT_BATTERY,
-  SLOT_SENSORS, SLOT_THRUST, SLOT_FLIGHT, SLOT_PEAKS, SLOT_LOGGING, SLOT_RADIO,
+  SLOT_SENSORS, SLOT_THRUST, SLOT_FLIGHT, SLOT_PYRO, SLOT_PEAKS, SLOT_LOGGING, SLOT_RADIO,
   SLOT_BLE, SLOT_STATS, SLOT_ESKF, SLOT_COUNT
 };
 static const char* slotNames[] = {
-  "init", "gps", "btn", "batt", "sens", "thrust", "flight", "peak", "log", "radio", "ble", "stats", "eskf"
+  "init", "gps", "btn", "batt", "sens", "thrust", "flight", "pyro", "peak", "log", "radio", "ble", "stats", "eskf"
 };
 unsigned long slotUs[SLOT_COUNT];
 
@@ -465,6 +467,9 @@ void loop() {
 
   nonblockingFlight();
   t1 = micros(); slotUs[SLOT_FLIGHT] = t1 - t0; t0 = t1;
+
+  nonblockingPyro();
+  t1 = micros(); slotUs[SLOT_PYRO] = t1 - t0; t0 = t1;
 
   nonblockingPeakTracking();
   t1 = micros(); slotUs[SLOT_PEAKS] = t1 - t0; t0 = t1;

@@ -208,12 +208,34 @@
   </div>
   <div class="cmd-help" id="cmd-help-text"></div>
 
+  <div class="cmd-params" id="params-0x01">
+    <div class="cmd-row">
+      <label>Boost G:</label><input type="number" id="p01-boostG" value="3000" min="500" max="30000" style="width:60px"> mg
+      <label>Boost Alt:</label><input type="number" id="p01-boostAlt" value="100" min="10" max="5000" style="width:55px"> m
+    </div>
+    <div class="cmd-row">
+      <label>Coast Alt:</label><input type="number" id="p01-coastAlt" value="200" min="10" max="5000" style="width:55px"> m
+      <label>Main Alt:</label><input type="number" id="p01-mainAlt" value="100" min="10" max="5000" style="width:55px"> m
+    </div>
+    <div class="cmd-row">
+      <label>Drogue ms:</label><input type="number" id="p01-drogMs" value="3000" min="100" max="10000" style="width:60px">
+      <label>Main ms:</label><input type="number" id="p01-mainMs" value="3000" min="100" max="10000" style="width:60px">
+    </div>
+    <div class="cmd-row">
+      <label><input type="checkbox" id="p01-force"> Force arm</label>
+      <label><input type="checkbox" id="p01-test"> Ground test mode</label>
+    </div>
+  </div>
   <div class="cmd-params" id="params-0x03">
     <div class="cmd-row">
       <label>Channel:</label>
       <select id="p03-ch"><option value="1">1 Pyro1</option><option value="2">2 Pyro2</option><option value="3">3 Chute</option></select>
       <label>Duration:</label>
       <input type="number" id="p03-dur" value="500" min="1" max="65535"> ms
+    </div>
+    <div class="cmd-row">
+      <label><input type="checkbox" id="p03-stay"> Stay in current phase</label>
+      <span style="font-size:10px;color:#888">(default: transition to GROUND_TEST)</span>
     </div>
   </div>
   <div class="cmd-params" id="params-0x10">

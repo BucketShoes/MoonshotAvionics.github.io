@@ -28,6 +28,19 @@
 #define VBAT_ADC_CTRL_PIN 2
 #define VBAT_MULTIPLIER   4.9f
 
+// Pyro channel MOSFET gates (low-side; high side controlled by remove-before-flight switch)
+#define PYRO_CH1_PIN       45   // drogue ejection charge
+#define PYRO_CH2_PIN       46   // main ejection charge
+#define PYRO_CH3_PIN       6    // chute nichrome cut (future: servo on separate RMT channel)
+
+// Pyro sense (continuity detect, internal pulldown; high = wire connected)
+// Pins shared with TFT but CS stays deselected — usable as GPIO
+#define PYRO_SENSE_CH1_PIN 39
+#define PYRO_SENSE_CH2_PIN 40
+#define PYRO_SENSE_CH3_PIN 41
+// High-side voltage sense (10k:100k divider; >3V on high side → remove-before-flight armed)
+#define PYRO_HV_SENSE_PIN  42
+
 // ===================== GENERAL CONFIG =====================
 
 #define GPS_BAUD      115200
@@ -40,6 +53,12 @@
 #define LORA_CR         5       // 4/5 coding rate (fixed, not command-configurable)
 #define LORA_PREAMBLE   6       // preamble symbols
 #define LORA_SYNCWORD   0x12    // private network
+
+// HV sense threshold: ADC mV above which high-side power is considered present
+// Assumes 10k:100k divider (11× attenuation). 3V on high side → ~273mV at ADC.
+// We use 250mV (≈2.75V high-side) as the threshold to be slightly conservative.
+#define PYRO_HV_PRESENT_MV    2750   // high-side mV threshold for hvPresent flag
+#define PYRO_HV_DIVIDER_RATIO 11     // (10k + 100k) / 10k
 
 // Default channel if NVS is erased (0xFF). Channel 65 = BW500, 917.5 MHz.
 #define DEFAULT_CHANNEL  65
@@ -124,6 +143,7 @@ struct SlotConfig {
 // ===================== DATA PAGE TYPE CONSTANTS =====================
 
 #define PAGE_THRUST_CURVE      0x0E   // X-axis accel ring buffer (variable length, not logged to flash)
+#define PAGE_PYRO_STATUS       0x0F   // Pyro channel state, continuity, HV sense (6 bytes)
 
 // ===================== THRUST CURVE =====================
 
