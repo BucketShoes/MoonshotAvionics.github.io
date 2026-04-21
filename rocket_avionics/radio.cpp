@@ -526,11 +526,12 @@ static bool nonblockingApplyCfg() {
     case 0: {
       sx126x_mod_params_lora_t mp = {};
       if (targetCfg == RADIO_CFG_LR) {
-        mp.sf   = SX126X_LORA_SF11;
-        mp.bw   = SX126X_LORA_BW_125;
+        mp.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
+        mp.bw   = bwKHzToEnum(activeBwKHz);  // follows activeChannel — change via CMD_SET_RADIO
         mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR_4_5_LI;
         mp.ldro = 1;
-        Serial.println("cfgSM step0: LR mod_params SF12 BW125 CR-LI LDRO");
+        Serial.print("cfgSM step0: LR mod_params SF"); Serial.print(LORA_LR_SF);
+        Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
       } else {
         mp.sf   = sfToEnum(activeSF);
         mp.bw   = bwKHzToEnum(activeBwKHz);

@@ -26,8 +26,10 @@
 // Sync word 0x12 (private) written as register pair 0x14, 0x24
 
 #define PKT_LONGRANGE  0xBB
-// WIN_LR uses long-interleave 4/5 coding. SX1262 SetModulationParams byte 3 = 0x05.
-// Not in the sx126x_driver enum (which only covers 0x01-0x04); cast at use site.
+// WIN_LR slot config. BW follows activeChannel (same as normal slots).
+// SF is separate — reduce for bench testing to shorten air time.
+// LI coding rate: SX1262 SetModulationParams byte 3 = 0x05 (4/5 long-interleave).
+#define LORA_LR_SF         11
 #define LORA_LR_CR_4_5_LI  0x05
 
 #define FAVORITE_ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket (for bootstrap setup, we only have one rocket for debug. will need to make this a config later)

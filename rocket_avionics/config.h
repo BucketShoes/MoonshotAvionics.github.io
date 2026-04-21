@@ -53,9 +53,12 @@
 #define LORA_CR         5       // 4/5 coding rate (fixed, not command-configurable)
 #define LORA_PREAMBLE   6       // preamble symbols
 #define LORA_SYNCWORD   0x12    // private network
-// WIN_LR uses long-interleave 4/5 coding. SX1262 SetModulationParams byte 3 = 0x05.
+// WIN_LR slot config. BW follows activeChannel (same as normal slots — changeable via CMD_SET_RADIO,
+// and BW500 is fine for bench testing). SF is separate because LR uses a higher SF than normal
+// telem but you may want to reduce it during bench testing to shorten air time.
+// LI coding rate: SX1262 SetModulationParams byte 3 = 0x05 (4/5 long-interleave).
 // Not in the sx126x_driver enum (which only covers 0x01-0x04); cast at use site.
-// Verify against SX1262 datasheet Table 13-48 before flying.
+#define LORA_LR_SF         11   // WIN_LR spreading factor. Change here for bench testing.
 #define LORA_LR_CR_4_5_LI  0x05
 
 // HV sense threshold: ADC mV above which high-side power is considered present
