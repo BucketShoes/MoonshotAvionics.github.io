@@ -56,10 +56,12 @@
 // WIN_LR slot config. BW follows activeChannel (same as normal slots — changeable via CMD_SET_RADIO,
 // and BW500 is fine for bench testing). SF is separate because LR uses a higher SF than normal
 // telem but you may want to reduce it during bench testing to shorten air time.
-// LI (long-interleave) CR 0x05 is only valid at SF5/SF6 per SX1262 datasheet.
-// At SF11 it causes undefined behaviour (BUSY stuck for seconds). Use standard 4/5.
-#define LORA_LR_SF         11   // WIN_LR spreading factor. Change here for bench testing.
-#define LORA_LR_CR_4_5_LI  SX126X_LORA_CR_4_5  // standard 4/5 — LI only valid SF5/6
+// WIN_LR spreading factor. Change here for bench testing (lower SF = shorter airtime).
+#define LORA_LR_SF    11
+// WIN_LR coding rate. 0x05 = 4/5 long-interleave (LI). Not in sx126x_driver enum; cast at use site.
+// TODO: @@@ confirm whether LI is causing the stuck-BUSY seen in testing, or find real cause.
+// If LI is the problem, replace with SX126X_LORA_CR_4_5 (standard 4/5 = 0x01).
+#define LORA_LR_CR    SX126X_LORA_CR_4_5 //SX126X_LORA_CR_4_5 for normal 4/5 or li4/5 is 0x05
 
 // HV sense threshold: ADC mV above which high-side power is considered present
 // Assumes 10k:100k divider (11× attenuation). 3V on high side → ~273mV at ADC.

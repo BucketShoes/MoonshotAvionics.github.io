@@ -240,7 +240,7 @@ static void bsApplyCfgIfNeeded() {
   if (bsTargetCfg == RADIO_CFG_LR) {
     mp.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
     mp.bw   = bwKHzToEnum(activeBwKHz);
-    mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR_4_5_LI;
+    mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR;
     mp.ldro = 1;
     Serial.print("BS applyCfg: LR SF"); Serial.print(LORA_LR_SF);
     Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
