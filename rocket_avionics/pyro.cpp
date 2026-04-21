@@ -115,19 +115,12 @@ void nonblockingPyro() {
   pyroState.ch2Continuity = (digitalRead(PYRO_SENSE_CH2_PIN) != 0);
   pyroState.ch3Continuity = (digitalRead(PYRO_SENSE_CH3_PIN) != 0);
 
-  // HV sense: Arduino ADC read (blocking, ~20–50 µs max — acceptable per-loop cost).
-  // 10k:100k divider → ADC pin sees V_hv / PYRO_HV_DIVIDER_RATIO.
-  // EMA with 10% weight smooths noise while tracking slow supply changes.
-  uint32_t rawMv = analogReadMilliVolts(PYRO_HV_SENSE_PIN);
-  uint32_t hvMv  = (uint32_t)rawMv * PYRO_HV_DIVIDER_RATIO;
-  if (pyroState.hvMillivolts == 0) {
-    // First reading: seed the EMA rather than starting from 0
-    pyroState.hvMillivolts = (uint16_t)hvMv;
-  } else {
-    // 10% weight on new sample
-    pyroState.hvMillivolts = (uint16_t)((pyroState.hvMillivolts * 9 + hvMv) / 10);
-  }
-  pyroState.hvPresent = (pyroState.hvMillivolts >= PYRO_HV_PRESENT_MV);
+  // HV sense: Arduino ADC read (~20–50 µs on a valid ADC pin).
+  // WARNING: GPIO 42 is not ADC-capable on ESP32-S3 (ADC1: GPIO 1-10, ADC2: GPIO 11-20).
+  // analogReadMilliVolts() on a non-ADC pin fails and stalls ~23ms — skip until pin is correct.
+  // TODO: @@@ move PYRO_HV_SENSE_PIN to a real ADC-capable GPIO and re-enable this block.
+  // pyroState.hvMillivolts and hvPresent remain 0/false (conservative — won't falsely show HV armed).
+  (void)0;
 }
 
 // ===================== FIRE =====================
