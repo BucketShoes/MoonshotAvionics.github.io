@@ -456,7 +456,8 @@ static void dispatchCmdTx() {
 
   if (!bsRadioStartTx(cmdTx.pkt, cmdTx.pktLen)) {
     bsSyncTxInFlight = false;
-    Serial.println("CMD TX start fail");
+    Serial.println("CMD TX start fail — dropping, will re-queue");
+    cmdTx.active = false;  // don't retry this slot; sync/ping logic will re-queue next cycle
     return;
   }
 

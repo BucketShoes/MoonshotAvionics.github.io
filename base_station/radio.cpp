@@ -650,9 +650,12 @@ void bsHandleRadio() {
       bsRadioStandby();
     }
 
-    // Update target config. bsNonblockingApplyCfg() will apply it over next loop iterations.
-    bsTargetCfg     = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
-    bsCfgStep       = 0;
+    // Update target config. Only restart the sequence if target changed.
+    RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
+    if (newTarget != bsTargetCfg) {
+      bsTargetCfg = newTarget;
+      bsCfgStep   = 0;
+    }
     bsCurrentSlotIsLR = (win == WIN_LR);
   }
 

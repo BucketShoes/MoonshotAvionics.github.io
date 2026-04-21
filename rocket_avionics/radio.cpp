@@ -593,17 +593,15 @@ void nonblockingRadio() {
     // Stop whatever was running from the previous slot.
     if (radioState == RADIO_RX_ACTIVE) {
       radioStandby();
-      // BUSY check only — no spin. If still BUSY after standby, skip this iteration.
-      // The slot machine will retry next loop; 420ms slot window is more than sufficient.
-      if (digitalRead(LORA_BUSY_PIN)) {
-        Serial.println("new slot: BUSY after standby — deferring");
-        return;
-      }
     }
 
-    // Update target config for new slot. nonblockingApplyCfg() advances one step per loop.
-    targetCfg = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
-    cfgStep   = 0;
+    // Update target config. Do this regardless of BUSY — the config state machine
+    // will defer its SPI commands until BUSY clears on its own loop iterations.
+    RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
+    if (newTarget != targetCfg) {
+      targetCfg = newTarget;
+      cfgStep   = 0;
+    }
   }
 
   // Apply config one SPI command per loop. Returns false until done; skip slot action.
