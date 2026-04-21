@@ -668,6 +668,7 @@ void bsHandleRadio() {
       bsBgRssiReady = false;  // fresh window — skip first RSSI sample
     } else if (win == WIN_LR) {
       // WIN_LR: rocket TXes with implicit header SF12/BW125. Listen with longer timeout, since the symol rate is lower, we need more time to catch a few symbols if there is one happening.
+      //TODO: this should be slightly longer, due to the slower symbol rate; but just because the packet is long doesnt mean we need to listen longer - timeout is how long to wait for the START of a detection, not how long to finish
       bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50000UL) / 15.625f));
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;

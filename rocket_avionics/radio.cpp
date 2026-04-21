@@ -526,7 +526,7 @@ static bool nonblockingApplyCfg() {
     case 0: {
       sx126x_mod_params_lora_t mp = {};
       if (targetCfg == RADIO_CFG_LR) {
-        mp.sf   = SX126X_LORA_SF12;
+        mp.sf   = SX126X_LORA_SF11;
         mp.bw   = SX126X_LORA_BW_125;
         mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR_4_5_LI;
         mp.ldro = 1;
