@@ -207,8 +207,34 @@ void bsRadioApplyConfig_BLOCKING() {
 // Two SPI commands back-to-back; BUSY between them spins up to 100µs (typical: <20µs).
 // Called once per slot boundary change, not every loop.
 
+// Millisecond timestamp of first observed BUSY-stuck condition this session.
+// 0 = not currently stuck. Used to trigger re-init after prolonged lockup.
+static unsigned long bsBusyStuckSinceMs = 0;
+
+// Called whenever we observe BUSY high when we need the radio to be idle.
+// Triggers a full re-init after 1 second of continuous stuck-BUSY.
+static void bsCheckBusyWatchdog() {
+  if (!digitalRead(LORA_BUSY_PIN)) { bsBusyStuckSinceMs = 0; return; }
+  unsigned long now = millis();
+  if (bsBusyStuckSinceMs == 0) { bsBusyStuckSinceMs = now; return; }
+  if (now - bsBusyStuckSinceMs >= 1000) {
+    Serial.println("BS LoRa: BUSY stuck >1s — resetting radio");
+    bsBusyStuckSinceMs = 0;
+    bsAppliedCfg = RADIO_CFG_NORMAL;  // force re-apply after reinit
+    bsTargetCfg  = RADIO_CFG_NORMAL;
+    bsRadioState = BS_RADIO_STANDBY;
+    bsRadioInit();  // blocking, but only on total lockup — acceptable on base station
+  }
+}
+
 static void bsApplyCfgIfNeeded() {
   if (bsAppliedCfg == bsTargetCfg) return;
+
+  if (digitalRead(LORA_BUSY_PIN)) {
+    bsCheckBusyWatchdog();
+    return;  // retry next slot boundary
+  }
+  bsBusyStuckSinceMs = 0;
 
   sx126x_mod_params_lora_t mp = {};
   if (bsTargetCfg == RADIO_CFG_LR) {
@@ -256,8 +282,10 @@ static void bsApplyCfgIfNeeded() {
 void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (digitalRead(LORA_BUSY_PIN)) {
     Serial.println("BS RX: BUSY — skip");
+    bsCheckBusyWatchdog();
     return;
   }
+  bsBusyStuckSinceMs = 0;
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
   sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&bsRadioCtx, timeoutRtcSteps);
@@ -278,8 +306,10 @@ void bsRadioStartRx() {
 bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
   if (digitalRead(LORA_BUSY_PIN)) {
     Serial.println("BS TX: BUSY — drop");
+    bsCheckBusyWatchdog();
     return false;
   }
+  bsBusyStuckSinceMs = 0;
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
 
