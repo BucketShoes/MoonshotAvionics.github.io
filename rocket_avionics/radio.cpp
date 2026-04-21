@@ -575,9 +575,12 @@ void nonblockingRadio() {
   uint8_t       seqIdx   = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
   WindowMode    win      = SLOT_SEQUENCE[seqIdx];
 
+  static bool slotActionDone = false;  // true after TX fired or RX started this slot
+
   // On new slot boundary: stop previous slot action and set target config.
   if (slotNum != lastHandledSlotNum) {
     lastHandledSlotNum = slotNum;
+    slotActionDone = false;
 
     if (radioState == RADIO_RX_ACTIVE) radioStandby();
 
@@ -589,13 +592,14 @@ void nonblockingRadio() {
   }
 
   if (radioState != RADIO_STANDBY) return;
+  if (slotActionDone) return;  // TX complete or RX started — wait for next slot boundary
 
+  slotActionDone = true;
   if (win == WIN_TELEM) {
     if (txSendingEnabled) {
       uint8_t pkt[255];  // 255 to accommodate thrust curve page (up to 217 bytes at SF≤7)
       size_t len = buildTelemetryPacket(pkt);
       radioStartTx(pkt, len);
-      // After TxDone radio returns to STANDBY. Stay standby until next slot.
     } else {
       // TX disabled — listen for the slot (e.g. ground test, download mode).
       radioStartRx();
@@ -611,9 +615,6 @@ void nonblockingRadio() {
     // WIN_CMD (and any future slot types): listen for a command.
     radioStartRx();
   }
-
-  // After any window action completes (TxDone, RX timeout), stay standby until the next
-  // slot boundary. The slot handler fires at the boundary and starts the next action.
 }
 
 #endif  // ROCKET_RADIO_TEST_MODE
