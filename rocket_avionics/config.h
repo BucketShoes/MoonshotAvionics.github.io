@@ -56,10 +56,10 @@
 // WIN_LR slot config. BW follows activeChannel (same as normal slots — changeable via CMD_SET_RADIO,
 // and BW500 is fine for bench testing). SF is separate because LR uses a higher SF than normal
 // telem but you may want to reduce it during bench testing to shorten air time.
-// LI coding rate: SX1262 SetModulationParams byte 3 = 0x05 (4/5 long-interleave).
-// Not in the sx126x_driver enum (which only covers 0x01-0x04); cast at use site.
+// LI (long-interleave) CR 0x05 is only valid at SF5/SF6 per SX1262 datasheet.
+// At SF11 it causes undefined behaviour (BUSY stuck for seconds). Use standard 4/5.
 #define LORA_LR_SF         11   // WIN_LR spreading factor. Change here for bench testing.
-#define LORA_LR_CR_4_5_LI  0x05
+#define LORA_LR_CR_4_5_LI  SX126X_LORA_CR_4_5  // standard 4/5 — LI only valid SF5/6
 
 // HV sense threshold: ADC mV above which high-side power is considered present
 // Assumes 10k:100k divider (11× attenuation). 3V on high side → ~273mV at ADC.
@@ -93,7 +93,8 @@ enum WindowMode : uint8_t {
 };
 
 // Compile-time slot sequence. Edit here to change the pattern.
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
+
 #define SLOT_SEQUENCE_LEN   (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 

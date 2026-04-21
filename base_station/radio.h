@@ -28,9 +28,9 @@
 #define PKT_LONGRANGE  0xBB
 // WIN_LR slot config. BW follows activeChannel (same as normal slots).
 // SF is separate — reduce for bench testing to shorten air time.
-// LI coding rate: SX1262 SetModulationParams byte 3 = 0x05 (4/5 long-interleave).
+// LI CR 0x05 only valid at SF5/SF6 per SX1262 datasheet. Use standard 4/5 at SF11.
 #define LORA_LR_SF         11
-#define LORA_LR_CR_4_5_LI  0x05
+#define LORA_LR_CR_4_5_LI  SX126X_LORA_CR_4_5  // standard 4/5 — LI only valid SF5/6
 
 #define FAVORITE_ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket (for bootstrap setup, we only have one rocket for debug. will need to make this a config later)
 
@@ -44,7 +44,7 @@ enum WindowMode : uint8_t {
   WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
 };
 
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
 #define SLOT_SEQUENCE_LEN   (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 
