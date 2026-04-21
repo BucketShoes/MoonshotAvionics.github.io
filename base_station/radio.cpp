@@ -262,28 +262,9 @@ static bool bsNonblockingApplyCfg() {
 // Synced RX window: listen early (BS_RX_EARLY_US before slot) for duration BS_RX_TIMEOUT_US.
 // Both defined in radio.h.
 
-void bsRadioStartRx() {
-  if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.println("BS RX: BUSY — skip");
-    return;
-  }
-  sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
-  dio1Fired = false;
-  uint32_t timeoutUs = bsSynced ? BS_RX_TIMEOUT_US : BS_LONG_RX_TIMEOUT_US;
-  uint32_t timeoutRaw = (uint32_t)(timeoutUs / 15.625f);
-  sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&bsRadioCtx, timeoutRaw);
-  if (st == SX126X_STATUS_OK) {
-    bsRadioState = BS_RADIO_RX_ACTIVE;
-    bsLedOn();
-  } else {
-    Serial.print("BS RX: start fail st="); Serial.println(st);
-    bsRadioState = BS_RADIO_STANDBY;
-  }
-}
-
 void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.println("BS RX(timeout): BUSY — skip");
+    Serial.println("BS RX: BUSY — skip");
     return;
   }
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
@@ -293,9 +274,14 @@ void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
     bsRadioState = BS_RADIO_RX_ACTIVE;
     bsLedOn();
   } else {
-    Serial.print("BS RX(timeout): start fail st="); Serial.println(st);
+    Serial.print("BS RX: start fail st="); Serial.println(st);
     bsRadioState = BS_RADIO_STANDBY;
   }
+}
+
+void bsRadioStartRx() {
+  uint32_t timeoutUs  = bsSynced ? BS_RX_TIMEOUT_US : BS_LONG_RX_TIMEOUT_US;
+  bsRadioStartRxTimeout((uint32_t)(timeoutUs / 15.625f));
 }
 
 bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
@@ -681,7 +667,7 @@ void bsHandleRadio() {
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;  // fresh window — skip first RSSI sample
     } else if (win == WIN_LR) {
-      // WIN_LR: rocket TXes with implicit header SF12/BW125. Listen with long timeout.
+      // WIN_LR: rocket TXes with implicit header SF12/BW125. Listen with longer timeout, since the symol rate is lower, we need more time to catch a few symbols if there is one happening.
       bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50000UL) / 15.625f));
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;
