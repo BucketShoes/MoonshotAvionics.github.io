@@ -40,6 +40,12 @@ float   activeBwKHz   = 500.0f;
 bool        loraReady  = false;
 RadioState  radioState = RADIO_OFF;
 
+// ===================== PER-SLOT CONFIG STATE (forward-declared for radioStartTx) =====================
+
+static RadioSlotConfig appliedCfg = RADIO_CFG_NORMAL;
+static RadioSlotConfig targetCfg  = RADIO_CFG_NORMAL;
+static uint8_t         cfgStep    = 0;
+
 // ===================== SLOT CLOCK STATE =====================
 
 bool          radioSynced        = false;
@@ -510,10 +516,7 @@ void nonblockingRadio() {
 // Issues one SPI command per loop call; skips if BUSY is high (drops, not spins).
 // RADIO_CFG_NORMAL: normal operating params (activeChannel/SF/BW, explicit header, CRC on).
 // RADIO_CFG_LR:     WIN_LR params (SF12, BW125, 4/5-LI CR, LDRO on, implicit, CRC off).
-
-static RadioSlotConfig appliedCfg = RADIO_CFG_NORMAL;
-static RadioSlotConfig targetCfg  = RADIO_CFG_NORMAL;
-static uint8_t         cfgStep    = 0;
+// State variables declared earlier (before radioStartTx) so radioStartTx can read appliedCfg.
 
 static bool nonblockingApplyCfg() {
   if (appliedCfg == targetCfg) return true;

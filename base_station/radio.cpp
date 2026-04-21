@@ -39,6 +39,13 @@ int8_t  bhPower   = DEFAULT_BH_POWER;
 BsRadioState bsRadioState = BS_RADIO_STANDBY;
 bool         bsLoraReady  = false;
 
+// ===================== PER-SLOT CONFIG STATE (forward-declared for bsHandleRxDone) =====================
+
+static RadioSlotConfig bsAppliedCfg    = RADIO_CFG_NORMAL;
+static RadioSlotConfig bsTargetCfg     = RADIO_CFG_NORMAL;
+static uint8_t         bsCfgStep       = 0;
+static bool            bsCurrentSlotIsLR = false;
+
 // ===================== SLOT CLOCK STATE =====================
 
 bool          bsSynced           = false;
@@ -199,10 +206,7 @@ void bsRadioApplyConfig_BLOCKING() {
 // ===================== PER-SLOT CONFIG STATE MACHINE =====================
 // Switches radio modulation/packet params non-blockingly between slot types.
 // Issues one SPI command per loop call; skips if BUSY is high (drops, not spins).
-
-static RadioSlotConfig bsAppliedCfg = RADIO_CFG_NORMAL;
-static RadioSlotConfig bsTargetCfg  = RADIO_CFG_NORMAL;
-static uint8_t         bsCfgStep    = 0;
+// State variables declared earlier (before bsHandleRxDone) so that function can read bsCurrentSlotIsLR.
 
 static bool bsNonblockingApplyCfg() {
   if (bsAppliedCfg == bsTargetCfg) return true;
@@ -609,7 +613,7 @@ void bsHandleRadio() {
 
 static bool bsCmdSentThisSlot  = false;
 static bool bsRxStartedThisSlot = false;
-static bool bsCurrentSlotIsLR  = false;  // true during WIN_LR slots (for implicit-header RX identification)
+// bsCurrentSlotIsLR declared earlier (before bsHandleRxDone uses it)
 
 // Background RSSI EMA — sampled from get_rssi_inst() every loop while RX_ACTIVE,
 // excluding the first loop after starting RX (radio hasn't settled yet).
