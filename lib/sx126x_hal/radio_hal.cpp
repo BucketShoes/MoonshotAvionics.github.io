@@ -107,6 +107,10 @@ extern "C" sx126x_hal_status_t sx126x_hal_read(
                     return SX126X_HAL_STATUS_ERROR;
                 }
             }
+        } else if (c->allowBusyRead) {
+            // Caller has explicitly permitted this read while BUSY (e.g. get_rssi_inst during RX).
+            // The flag is single-use — clear it so the next read is gated normally.
+            const_cast<sx126x_hal_context_t*>(c)->allowBusyRead = false;
         } else {
             // Runtime: slot window missed — drop immediately, never spin
             uint32_t now=millis();

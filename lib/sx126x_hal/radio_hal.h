@@ -10,15 +10,15 @@
 //   3. Pass &context as the first argument to all sx126x_* calls.
 //
 // BUSY handling:
-//   BUSY is an OUTPUT from the SX1262 that goes high while it is processing a
-//   command. The ESP32 only reads this pin — never writes it.
-//   hal_write/hal_read check BUSY before each SPI transaction. If BUSY is high
-//   the call returns SX126X_HAL_STATUS_ERROR immediately — no spinning. The
-//   caller must ensure the radio is ready; a BUSY error means the window was
-//   missed and the operation should be dropped (logged, not retried in-place).
-//   The no-spin policy is intentional: slot windows are exact and mandatory.
-//   Missing one is correct behaviour; spinning to catch up would corrupt timing.
-//   Exception: initMode=true enables spinning during radio init (setup() only).
+//   BUSY is an OUTPUT from the SX1262. It goes high both during SPI command
+//   processing (~µs) AND for the entire duration of any active RX or TX operation
+//   (hundreds of ms). The ESP32 only reads this pin — never writes it.
+//   hal_write checks BUSY and drops immediately if high (no spinning at runtime).
+//   hal_read does the same, UNLESS ctx->allowBusyRead is set — that flag permits
+//   one read while BUSY (for commands valid during RX, e.g. get_rssi_inst) and is
+//   cleared by the HAL after each use. All radio calls are from loop() — no ISR
+//   concurrency — so this flag is safe without atomics.
+//   initMode=true enables spinning during radio init (setup() only).
 //
 // DIO1 interrupt:
 //   DIO1 is connected to a GPIO interrupt (RISING edge). The ISR captures
@@ -34,12 +34,16 @@
 
 struct sx126x_hal_context_t {
     SPIClass* spi;
-    uint8_t   nss;      // chip-select (active low, driven by HAL)
-    uint8_t   busy;     // BUSY pin — SX1262 output, ESP32 reads only, never writes
-    uint8_t   rst;      // reset pin (active low, held low 1 ms then released)
-    bool      initMode; // true during radio init: HAL spins on BUSY instead of dropping.
-                        // Set to false before returning from radioInit()/bsRadioInit().
-                        // NEVER set true outside of init — spinning blocks the main loop.
+    uint8_t   nss;           // chip-select (active low, driven by HAL)
+    uint8_t   busy;          // BUSY pin — SX1262 output, ESP32 reads only, never writes
+    uint8_t   rst;           // reset pin (active low, held low 1 ms then released)
+    bool      initMode;      // true during radio init: HAL spins on BUSY instead of dropping.
+                             // Set to false before returning from radioInit()/bsRadioInit().
+                             // NEVER set true outside of init — spinning blocks the main loop.
+    bool      allowBusyRead; // true: skip BUSY check for the next hal_read call only.
+                             // Use for read-only commands valid while radio is mid-RX/TX
+                             // (e.g. get_rssi_inst). HAL clears this flag after each use.
+                             // Safe: all radio calls are from loop() — no concurrency.
 };
 
 // ===================== DIO1 CAPTURE STATE =====================

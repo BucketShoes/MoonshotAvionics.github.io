@@ -20,11 +20,12 @@
 SPIClass loraSPI(FSPI);
 
 sx126x_hal_context_t radioCtx = {
-  .spi      = &loraSPI,
-  .nss      = LORA_NSS_PIN,
-  .busy     = LORA_BUSY_PIN,
-  .rst      = LORA_RST_PIN,
-  .initMode = true,  // cleared to false at end of radioInit()
+  .spi           = &loraSPI,
+  .nss           = LORA_NSS_PIN,
+  .busy          = LORA_BUSY_PIN,
+  .rst           = LORA_RST_PIN,
+  .initMode      = true,   // cleared to false at end of radioInit()
+  .allowBusyRead = false,
 };
 
 // ===================== ACTIVE RADIO CONFIG =====================

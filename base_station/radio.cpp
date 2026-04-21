@@ -15,11 +15,12 @@
 SPIClass bsLoraSPI(FSPI);
 
 sx126x_hal_context_t bsRadioCtx = {
-  .spi      = &bsLoraSPI,
-  .nss      = LORA_NSS_PIN,
-  .busy     = LORA_BUSY_PIN,
-  .rst      = LORA_RST_PIN,
-  .initMode = true,  // cleared to false at end of bsRadioInit()
+  .spi           = &bsLoraSPI,
+  .nss           = LORA_NSS_PIN,
+  .busy          = LORA_BUSY_PIN,
+  .rst           = LORA_RST_PIN,
+  .initMode      = true,   // cleared to false at end of bsRadioInit()
+  .allowBusyRead = false,
 };
 
 // ===================== ACTIVE RADIO CONFIG =====================
@@ -645,6 +646,7 @@ void bsHandleRadio() {
       bsBgRssiReady = true;  // first loop — skip sample, allow from next loop onward
     } else {
       int16_t rssiDbm = 0;
+      bsRadioCtx.allowBusyRead = true;  // get_rssi_inst is valid while radio is mid-RX
       if (sx126x_get_rssi_inst(&bsRadioCtx, &rssiDbm) == SX126X_STATUS_OK) {
         if (!bsBgRssiInit) { bsBgRssiEma = (float)rssiDbm; bsBgRssiInit = true; }
         else bsBgRssiEma += BG_RSSI_ALPHA * ((float)rssiDbm - bsBgRssiEma);
