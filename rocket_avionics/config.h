@@ -31,7 +31,7 @@
 // Pyro channel MOSFET gates (low-side; high side controlled by remove-before-flight switch)
 #define PYRO_CH1_PIN       45   // drogue ejection charge
 #define PYRO_CH2_PIN       46   // main ejection charge
-#define PYRO_CH3_PIN       6    // chute nichrome cut (future: servo on separate RMT channel)
+#define PYRO_CH3_PIN       42    // chute nichrome cut (future: servo on separate RMT channel)
 
 // Pyro sense (continuity detect, internal pulldown; high = wire connected)
 // Pins shared with TFT but CS stays deselected — usable as GPIO
@@ -39,7 +39,7 @@
 #define PYRO_SENSE_CH2_PIN 40
 #define PYRO_SENSE_CH3_PIN 41
 // High-side voltage sense (10k:100k divider; >3V on high side → remove-before-flight armed)
-#define PYRO_HV_SENSE_PIN  42
+#define PYRO_HV_SENSE_PIN  6
 
 // ===================== GENERAL CONFIG =====================
 
