@@ -20,7 +20,13 @@
 #include <Wire.h>
 #include "telemetry.h"
 
-// I2C pin config comes from board_config.h via config.h (SENSOR_SDA_PIN, SENSOR_SCL_PIN).
+// ===================== I2C PIN CONFIG =====================
+// Choose two free GPIOs from the Heltec Wireless Tracker headers.
+// GPIO4 (SDA) and GPIO5 (SCL) are on J3 pins 8 and 7 — both are
+// ADC1/TOUCH pins with no conflicting connected peripherals.
+// Change these if your wiring differs.
+#define SENSOR_SDA_PIN  4
+#define SENSOR_SCL_PIN  5
 
 // ===================== I2C ADDRESSES =====================
 #define ADXL345_ADDR    0x53  // SDO grounded on SEN0140

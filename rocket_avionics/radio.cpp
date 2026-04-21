@@ -148,13 +148,6 @@ bool radioInit() {
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   Serial.println("LoRa: IRQ cleared");
 
-#ifdef LORA_FEM_EN_PIN
-  pinMode(LORA_FEM_EN_PIN,  OUTPUT); digitalWrite(LORA_FEM_EN_PIN,  HIGH);
-  pinMode(LORA_FEM_CTL_PIN, OUTPUT); digitalWrite(LORA_FEM_CTL_PIN, HIGH);
-  pinMode(LORA_FEM_PA_PIN,  OUTPUT); digitalWrite(LORA_FEM_PA_PIN,  LOW);
-  Serial.println("LoRa: FEM EN+CTL high, PA low");
-#endif
-
   radioMcpwmInit(LORA_DIO1_PIN);
   Serial.print("LoRa: DIO1 interrupt attached on GPIO"); Serial.println(LORA_DIO1_PIN);
 
@@ -344,18 +337,12 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
     return false;
   }
 
-#ifdef LORA_FEM_PA_PIN
-  digitalWrite(LORA_FEM_PA_PIN, HIGH);
-#endif
   st = sx126x_set_tx(&radioCtx, 0);  // timeout=0 = no TX timeout (fires TxDone when done)
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_TX_ACTIVE;
     ledOn();
     return true;
   }
-#ifdef LORA_FEM_PA_PIN
-  digitalWrite(LORA_FEM_PA_PIN, LOW);
-#endif
   Serial.print("TX: set_tx fail st="); Serial.println(st);
   radioState = RADIO_STANDBY;
   return false;
@@ -440,9 +427,6 @@ static void radioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     radioState = RADIO_STANDBY;
-#ifdef LORA_FEM_PA_PIN
-    digitalWrite(LORA_FEM_PA_PIN, LOW);
-#endif
     ledOff();
   }
 
