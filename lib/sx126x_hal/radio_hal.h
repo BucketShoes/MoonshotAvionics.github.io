@@ -43,7 +43,9 @@ struct sx126x_hal_context_t {
     bool      allowBusyRead; // true: skip BUSY check for the next hal_read call only.
                              // Use for read-only commands valid while radio is mid-RX/TX
                              // (e.g. get_rssi_inst). HAL clears this flag after each use.
-                             // Safe: all radio calls are from loop() — no concurrency.
+                             // TODO: @@@ when SPI goes async, this must become a per-transaction
+                             // parameter (not a context flag) — a queued transaction can complete
+                             // after a second caller has already modified this flag.
 };
 
 // ===================== DIO1 CAPTURE STATE =====================

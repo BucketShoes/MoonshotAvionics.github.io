@@ -521,10 +521,10 @@ void loop() {
 //this list is incomplete. any new additions should add here: the goal is a strict 1ms loop max.
 //log clearing - 40,000 us max (needs hardware change to move to separate memory) - this is completely unusable for active aero. for active aero, logging needs to be disabled. is it just barely under the safe max for pyro (delying a pyro may result in nondeployment of parachutes. leaving a pyro energised may destroy the chutes or set the rocket on fire. (or overheat the battery with excessive sustained discharge rate)
 //of the 1000 us budget, we have:
-//lora spi wait - 120us max - spin while spi transaction, or syncronous sends. should usually complete within this, otherwise the radio may go into indetermined state, the state is not properly tracked if timeout. this needs to be fixed to be async spi, but for now its low enough that we have higher priorities
+//lora spi wait - 120us max - spin while spi transaction, or syncronous sends. should usually complete within this, otherwise the radio may go into indetermined state, the state is not properly tracked if timeout. this needs to be fixed to be async spi, but for now its low enough that we have higher priorities.
 //ble packets - 10us - some of the larges captures can be a fairly big packet. the ble itself is background, but building them is foreground. if this becomes a problem we will disable ble in flight
 //thrust curve - 10us - scanning a large buffer and rescaling floats. triggered by coast entry mid-flight
-//ESKF - 600us - this is the priority reason everything else needs to be short. needs approx 60,000 flops, and is the reason we need to keep the timing down on everything else. this is part of the main flight controls for position tracking, and is needed to get reliable orientation while under high thrust and while weightless without a gravity reference, which is necesary for active control to be useful to keep the rocket within the safe recovery area
+//ESKF - 800us - this is the priority reason everything else needs to be short. needs approx 60,000 flops, and is the reason we need to keep the timing down on everything else. this is part of the main flight controls for position tracking, and is needed to get reliable orientation while under high thrust and while weightless without a gravity reference, which is necesary for active control to be useful to keep the rocket within the safe recovery area
 
 //TODO: add more as noticed
 

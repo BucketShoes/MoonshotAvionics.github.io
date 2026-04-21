@@ -20,7 +20,12 @@ Most of this codebase is cosmetic or tracking-only (telemetry display, logging, 
 
 **This is a safety-critical hard requirement, not a style preference.** Pyro channels are driven by the main loop. Any block >1ms while armed risks a misfire, a late fire, or a charge staying energised too long. Active control surfaces (planned) have tighter requirements than pyro. The 1ms max is a per-iteration ceiling, not an average.
 
-All functions called from `loop()` while armed **must** be non-blocking (naming convention: `nonblocking` prefix). **Do not introduce any blocking call — even "infrequent" or "only sometimes" — without explicit approval.** Infrequency is not a justification.
+"Non-blocking" has three tiers — classify any new work explicitly:
+- **≤1µs:** Always fine if limited to finitely many during any loop() iteration. No tracking needed.
+- **≤100µs:** Acceptable if bounded and added to the timing budget list in `main.cpp`. Must not push total over 1ms.
+- **>100µs or unbounded:** Not acceptable in armed path. Must be a state machine, gated behind `!isArmed()`, or not added at all.
+
+**BLE caveat is local to BLE.** BLE was added with an explicit "disable during flight if needed" mentality, based on testing. In general, major new features will also be subject to being removed or didsabled during flight if they can't achieve the timing limits, but approaches used in ble don't necesarily translate to general functionality.
 
 - `executeLogDownload()` is the only intentionally blocking call and is refused while armed.
 - Sector erases in `nonblockingLogging()` block ~30–50ms. This is a **known defect**, acceptable only because active control is not yet implemented. It is on the TODO list to fix before active control surfaces are added. Do not treat it as a precedent.
