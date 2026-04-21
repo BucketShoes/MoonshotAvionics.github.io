@@ -43,7 +43,6 @@ bool         bsLoraReady  = false;
 
 static RadioSlotConfig bsAppliedCfg    = RADIO_CFG_NORMAL;
 static RadioSlotConfig bsTargetCfg     = RADIO_CFG_NORMAL;
-static uint8_t         bsCfgStep       = 0;
 static bool            bsCurrentSlotIsLR = false;
 
 // ===================== SLOT CLOCK STATE =====================
@@ -645,13 +644,11 @@ void bsHandleRadio() {
     RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
     if (newTarget != bsTargetCfg) {
       bsTargetCfg = newTarget;
-      bsCfgStep   = 0;
     }
     bsCurrentSlotIsLR = (win == WIN_LR);
   }
 
-  // Apply config one SPI command per loop. Skip slot action until done.
-  if (!bsNonblockingApplyCfg()) return;
+  bsApplyCfgIfNeeded();
 
   // Config applied — execute slot action if RX not yet started.
   if (!bsRxStartedThisSlot) {

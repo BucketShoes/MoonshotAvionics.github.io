@@ -512,4 +512,17 @@ void loop() {
     }
     Serial.println();
   }
+
+
+
+
+  //Max Time Budget: 
+//The following list is all the pl;aces known to take a meaningful fraction of the 1ms time limit. for safety, we must assume worst case unless logic prevents it otherwise, i.e. assuming asll the slowest paths run in a single loop
+//this list is incomplete. any new additions should add here: the goal is a strict 1ms loop max.
+//log clearing - 40,000 us max - this is completely unusable for active aero. for active aero, logging needs to be disabled. is it just barely under the safe max for pyro (delying a pyro may result in nondeployment of parachutes. leaving a pyro energised may destroy the chutes or set the rocket on fire. (or overheat the battery with excessive sustained discharge rate)
+//lora spi wait - 100us max - spin while spi transaction. should usually complete within this, otherwise the radio may go into indetermined state, the state is not properly tracked if timeout.
+//TODO: add more as noticed
+
+
+
 }

@@ -456,8 +456,8 @@ static void dispatchCmdTx() {
 
   if (!bsRadioStartTx(cmdTx.pkt, cmdTx.pktLen)) {
     bsSyncTxInFlight = false;
-    Serial.println("CMD TX start fail — dropping, will re-queue");
-    cmdTx.active = false;  // don't retry this slot; sync/ping logic will re-queue next cycle
+    Serial.println("CMD TX start fail — will retry next WIN_CMD slot");
+    // Leave cmdTx.active true — packet stays queued and retries next slot.
     return;
   }
 
@@ -978,6 +978,5 @@ void loop() {
   if (wifiEnabled) ws.cleanupClients();
 
 }
-
 
 
