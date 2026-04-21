@@ -44,7 +44,6 @@ RadioState  radioState = RADIO_OFF;
 
 static RadioSlotConfig appliedCfg = RADIO_CFG_NORMAL;
 static RadioSlotConfig targetCfg  = RADIO_CFG_NORMAL;
-static uint8_t         cfgStep    = 0;
 
 // ===================== SLOT CLOCK STATE =====================
 
@@ -511,61 +510,51 @@ void nonblockingRadio() {
 }
 #else
 
-// ===================== PER-SLOT CONFIG STATE MACHINE =====================
-// Switches radio modulation/packet params non-blockingly between slot types.
-// Issues one SPI command per loop call; skips if BUSY is high (drops, not spins).
-// RADIO_CFG_NORMAL: normal operating params (activeChannel/SF/BW, explicit header, CRC on).
-// RADIO_CFG_LR:     WIN_LR params (SF12, BW125, 4/5-LI CR, LDRO on, implicit, CRC off).
-// State variables declared earlier (before radioStartTx) so radioStartTx can read appliedCfg.
+// ===================== PER-SLOT CONFIG SWITCH =====================
+// Applies slot radio params when targetCfg differs from appliedCfg.
+// Two SPI commands back-to-back; BUSY between them spins up to 100µs (typical: <20µs).
+// Called once per slot boundary — not every loop — so 100µs is well within budget.
 
-static bool nonblockingApplyCfg() {
-  if (appliedCfg == targetCfg) return true;
-  if (digitalRead(LORA_BUSY_PIN)) return false;  // BUSY — try next loop, no spin
+static void applyCfgIfNeeded() {
+  if (appliedCfg == targetCfg) return;
 
-  switch (cfgStep) {
-    case 0: {
-      sx126x_mod_params_lora_t mp = {};
-      if (targetCfg == RADIO_CFG_LR) {
-        mp.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
-        mp.bw   = bwKHzToEnum(activeBwKHz);  // follows activeChannel — change via CMD_SET_RADIO
-        mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR_4_5_LI;
-        mp.ldro = 1;
-        Serial.print("cfgSM step0: LR mod_params SF"); Serial.print(LORA_LR_SF);
-        Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
-      } else {
-        mp.sf   = sfToEnum(activeSF);
-        mp.bw   = bwKHzToEnum(activeBwKHz);
-        mp.cr   = SX126X_LORA_CR_4_5;
-        mp.ldro = 0;
-        Serial.println("cfgSM step0: NORMAL mod_params");
-      }
-      sx126x_set_lora_mod_params(&radioCtx, &mp);
-      cfgStep = 1;
-      return false;
-    }
-    case 1: {
-      sx126x_pkt_params_lora_t pp = {};
-      if (targetCfg == RADIO_CFG_LR) {
-        pp.preamble_len_in_symb = 5;
-        pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
-        pp.pld_len_in_bytes     = 3;
-        pp.crc_is_on            = false;
-        Serial.println("cfgSM step1: LR pkt_params implicit 3B no-CRC");
-      } else {
-        pp.preamble_len_in_symb = LORA_PREAMBLE;
-        pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
-        pp.pld_len_in_bytes     = 255;
-        pp.crc_is_on            = true;
-        Serial.println("cfgSM step1: NORMAL pkt_params explicit CRC");
-      }
-      pp.invert_iq_is_on = false;
-      sx126x_set_lora_pkt_params(&radioCtx, &pp);
-      appliedCfg = targetCfg;
-      cfgStep    = 0;
-      return true;
-    }
+  sx126x_mod_params_lora_t mp = {};
+  if (targetCfg == RADIO_CFG_LR) {
+    mp.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
+    mp.bw   = bwKHzToEnum(activeBwKHz);
+    mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR_4_5_LI;
+    mp.ldro = 1;
+    Serial.print("applyCfg: LR SF"); Serial.print(LORA_LR_SF);
+    Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
+  } else {
+    mp.sf   = sfToEnum(activeSF);
+    mp.bw   = bwKHzToEnum(activeBwKHz);
+    mp.cr   = SX126X_LORA_CR_4_5;
+    mp.ldro = 0;
+    Serial.println("applyCfg: NORMAL");
   }
-  return true;  // unreachable
+  sx126x_set_lora_mod_params(&radioCtx, &mp);
+
+  // Wait for BUSY to clear between the two SPI commands. Typical: <20µs. Hard cap: 100µs.
+  unsigned long t0 = micros();
+  while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 100) {}
+
+  sx126x_pkt_params_lora_t pp = {};
+  if (targetCfg == RADIO_CFG_LR) {
+    pp.preamble_len_in_symb = 5;
+    pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
+    pp.pld_len_in_bytes     = 3;
+    pp.crc_is_on            = false;
+  } else {
+    pp.preamble_len_in_symb = LORA_PREAMBLE;
+    pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
+    pp.pld_len_in_bytes     = 255;
+    pp.crc_is_on            = true;
+  }
+  pp.invert_iq_is_on = false;
+  sx126x_set_lora_pkt_params(&radioCtx, &pp);
+
+  appliedCfg = targetCfg;
 }
 
 void nonblockingRadio() {
@@ -590,25 +579,15 @@ void nonblockingRadio() {
   if (slotNum != lastHandledSlotNum) {
     lastHandledSlotNum = slotNum;
 
-    // Stop whatever was running from the previous slot.
-    if (radioState == RADIO_RX_ACTIVE) {
-      radioStandby();
-    }
+    if (radioState == RADIO_RX_ACTIVE) radioStandby();
 
-    // Update target config. Do this regardless of BUSY — the config state machine
-    // will defer its SPI commands until BUSY clears on its own loop iterations.
     RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
-    if (newTarget != targetCfg) {
-      targetCfg = newTarget;
-      cfgStep   = 0;
-    }
+    if (newTarget != targetCfg) targetCfg = newTarget;
+
+    // Apply config if it changed. Two SPI commands with up to 100µs spin between them.
+    applyCfgIfNeeded();
   }
 
-  // Apply config one SPI command per loop. Returns false until done; skip slot action.
-  if (!nonblockingApplyCfg()) return;
-
-  // Config is applied — execute slot action if not already started.
-  // radioState tracks whether an action is already in progress for this slot.
   if (radioState != RADIO_STANDBY) return;
 
   if (win == WIN_TELEM) {
