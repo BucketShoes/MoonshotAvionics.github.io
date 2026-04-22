@@ -269,6 +269,19 @@ void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_RX_ACTIVE;
     ledOnRX();
+    {
+      uint64_t nowUs     = (uint64_t)micros();
+      uint64_t elapsed   = nowUs - (uint64_t)syncAnchorUs;
+      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+      uint8_t  seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+      uint32_t timeoutUs = (uint32_t)(timeoutRtcSteps * 15.625f);
+      Serial.print("RxStart: posInSlot="); Serial.print(posInSlot);
+      Serial.print("us slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" win="); Serial.print((int)SLOT_SEQUENCE[seqIdx]);
+      Serial.print(" timeout="); Serial.print(timeoutUs); Serial.println("us");
+    }
   } else {
     Serial.print("RX: start fail st="); Serial.println(st);
     radioState = RADIO_STANDBY;
@@ -333,6 +346,18 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_TX_ACTIVE;
     ledOnTX();
+    {
+      uint64_t nowUs     = (uint64_t)micros();
+      uint64_t elapsed   = nowUs - (uint64_t)syncAnchorUs;
+      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+      uint8_t  seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+      Serial.print("TxStart: posInSlot="); Serial.print(posInSlot);
+      Serial.print("us slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" win="); Serial.print((int)SLOT_SEQUENCE[seqIdx]);
+      Serial.print(" len="); Serial.println((unsigned)len);
+    }
     return true;
   }
   Serial.print("TX: set_tx fail st="); Serial.println(st);
@@ -454,6 +479,16 @@ static void radioHandleIrq() {
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     radioState = RADIO_STANDBY;
     ledOff();
+    {
+      uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
+      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+      uint8_t  seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+      Serial.print("RxTimeout: posInSlot="); Serial.print(posInSlot);
+      Serial.print("us slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" win="); Serial.println((int)SLOT_SEQUENCE[seqIdx]);
+    }
   }
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {

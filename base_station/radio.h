@@ -76,10 +76,10 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 #define BS_SYNC_RETRY_INTERVAL_MS  10'000UL     // nominal period between tight-mode retries - to leave time to see if we hear any telem
 #define BS_SYNC_RETRY_WALK_MS      340UL       // phase offset added to each retry
                                                // (<SLOT_DURATION so retries walk through slot phases)
-#define BS_SYNC_TIGHT_RETRIES      20UL         // how many retries to make at the tight interval
+#define BS_SYNC_TIGHT_RETRIES      200UL         // how many retries to make at the tight interval
 #define BS_SYNC_BACKOFF_MS         240'000UL   // after tight-mode retries exhaust, retry once per this
                                                // (still with WALK added so backoff retries also sweep phases)
-#define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long
+#define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long (so the rocket knows it can reduce listen time safely)
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
 // Applies to both base and rocket. Indicates a missed DIO1 IRQ (or stuck DIO1 line).
