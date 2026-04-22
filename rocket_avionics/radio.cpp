@@ -506,6 +506,7 @@ void nonblockingRadio() {
 
 static void applyCfgIfNeeded() {
   if (appliedCfg == targetCfg) return;
+  if (radioState != RADIO_STANDBY) return;  // defer until RX/TX completes naturally
 
   sx126x_mod_params_lora_t mp = {};
   if (targetCfg == RADIO_CFG_LR) {
@@ -566,17 +567,29 @@ void nonblockingRadio() {
 
   static bool slotActionDone = false;  // true after TX fired or RX started this slot
 
-  // On new slot boundary: stop previous slot action and set target config.
+  // On new slot boundary: never force standby on an active RX. If radioState is still
+  // RADIO_RX_ACTIVE, the SX1262 is either still in the preamble detection window or actively
+  // receiving a packet. The hardware timeout (no preamble) or packet-end IRQ will return it
+  // to STANDBY on its own. Forcing standby mid-packet loses the frame.
+  // applyCfgIfNeeded() is a no-op while RX_ACTIVE and will retry next slot boundary.
+  // Safety cutoff: if RX has been active for more than 2 full slots, something is stuck
+  // (e.g. DIO1 missed or IRQ handler failed) — force standby to recover.
+  static unsigned long rxActiveStartUs = 0;
+  if (radioState == RADIO_RX_ACTIVE && rxActiveStartUs == 0) rxActiveStartUs = now;
+  if (radioState != RADIO_RX_ACTIVE) rxActiveStartUs = 0;
+  if (radioState == RADIO_RX_ACTIVE && (now - rxActiveStartUs) > 2 * SLOT_DURATION_US) {
+    Serial.println("RADIO: RX stuck >2 slots — forcing standby");
+    radioStandby();
+    rxActiveStartUs = 0;
+  }
+
   if (slotNum != lastHandledSlotNum) {
     lastHandledSlotNum = slotNum;
     slotActionDone = false;
 
-    if (radioState == RADIO_RX_ACTIVE) radioStandby();
-
     RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
     if (newTarget != targetCfg) targetCfg = newTarget;
 
-    // Apply config if it changed. Two SPI commands with up to 100µs spin between them.
     applyCfgIfNeeded();
   }
 
