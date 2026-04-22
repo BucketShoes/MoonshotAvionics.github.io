@@ -65,6 +65,8 @@ Implementation detail: `radioSetSynced()` on the rocket resets `lastHandledSlotN
 The exact mapping from slot index to slot type shifts with the sequence; nothing
 load-bearing should assume "slot N is always type X".
 
+Conceptually, the sync choice is - sending any sync (whether it works or not) ruins timing of any existing anchors; so don't send it unless you know you have no chance. However, once you've sent one, go for it until you get it working; then dont touch. The time limit is for FHSS rules on how often a single channel can be used (commands dont hop, only rocket packets), but ideally it would be nearly constant until we hear something back.
+
 ## 4. Sending sync — triggers
 
 - **Automatic, internal** (base only, while `!bsSynced`):

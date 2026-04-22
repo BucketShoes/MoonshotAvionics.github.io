@@ -90,19 +90,19 @@ enum WindowMode : uint8_t {
   WIN_TELEM  = 0,  // rocket TX telemetry / base RX
   WIN_CMD     = 1,  // base TX commands / rocket RX
   WIN_OFF    = 2,  // radio off — neither side active
-  WIN_LR     = 3,  // future: long-range low-rate TX with very small payload
+  WIN_LR     = 3,  // long-range low-rate TX with very small payload
   WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
 };
 
 // Compile-time slot sequence. Edit here to change the pattern.
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
 
 #define SLOT_SEQUENCE_LEN   (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
-#define ROCKET_RX_TIMEOUT_US           100'000UL                        // short: synced + heard base recently
+#define ROCKET_RX_TIMEOUT_US           100'000UL                        // short: synced + heard base recently, save battery
 #define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 20'000UL)    // long: pre-sync, or base-silent lost-rocket fallback
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
@@ -118,6 +118,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 // 124s = slightly more than 2 ping intervals (60s each), so rounding/jitter
 // cannot make this fire after missing only one ping.
 // Widening the window does NOT clear radioSynced and does NOT trigger any TX.
+// The main putrpose of this time is to safe power when we know we are safe.
 #define ROCKET_NO_BASE_HEARD_THRESHOLD_US  124'000'000UL  // 124 seconds (>2 ping intervals)
 
 
