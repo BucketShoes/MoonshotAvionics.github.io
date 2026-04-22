@@ -43,12 +43,19 @@ static PyroChannel pyroChannels[3] = {
 
 static rmt_symbol_word_t pyroSyms[3] = {};
 
-// RMT_CLK_SRC_RC_FAST is ~17.5 MHz. We use a resolution of 100 Hz (10 ms/tick).
-// 17,500,000 / 100 = 175,000 — this is set as the prescaler target; the IDF driver
-// finds the nearest achievable integer division. At 100 Hz resolution the tick is
-// 10 ms ±some RC drift; acceptable for igniter durations (seconds range).
-#define PYRO_RMT_RESOLUTION_HZ  100    // 10 ms per tick
-#define PYRO_MS_PER_TICK        10     // must match 1000/PYRO_RMT_RESOLUTION_HZ
+// RMT_CLK_SRC_RC_FAST is ~17.5 MHz. ESP32-S3 RMT prescaler is 8-bit (div 1–256),
+// so resolution_hz must be >= 17,500,000/256 ≈ 68,360 Hz.
+// 1 MHz gives div≈17 (within range). 1 µs per tick.
+//
+// duration0 is 15 bits → max 32767 ticks = 32 ms per symbol. Too short for igniter
+// pulses (default 3000 ms). ESP32-S3 loop_count is also 10 bits → max 1023 repeats.
+//
+// Solution: symbol duration = ceil(durationMs / 1023) ms; loop_count = ceil(durationMs /
+// symbolMs). This keeps both fields in range for any duration up to ~33 s, accurate to
+// ±1 ms per loop boundary. Hardware drives pin LOW at EOT — cutoff guaranteed.
+#define PYRO_RMT_RESOLUTION_HZ  1000000  // 1 µs per tick; div≈17 (within 8-bit limit)
+#define PYRO_TICKS_PER_MS       1000     // 1000 ticks = 1 ms at 1 MHz
+#define PYRO_MAX_LOOP_COUNT     1023     // ESP32-S3 RMT hardware loop count register limit
 
 // ===================== INIT =====================
 
@@ -143,24 +150,26 @@ void pyroFire(uint8_t channel, uint16_t durationMs) {
   PyroChannel& ch = pyroChannels[channel - 1];
   if (ch.rmt == nullptr) return;  // init failed for this channel
 
-  // Convert ms to RMT ticks (10 ms/tick). Round up so short durations don't become 0.
-  uint16_t ticks = (durationMs + PYRO_MS_PER_TICK - 1) / PYRO_MS_PER_TICK;
-  if (ticks == 0) ticks = 1;
+  // Symbol duration scaled so loop_count fits in 10-bit hardware register (max 1023).
+  // symbolMs = ceil(durationMs / 1023); loop_count = ceil(durationMs / symbolMs).
+  // Accuracy: ±symbolMs per pulse (≤1 ms for durations ≤1023 ms, ≤3 ms for ≤3069 ms).
+  uint16_t symbolMs   = (durationMs + PYRO_MAX_LOOP_COUNT - 1) / PYRO_MAX_LOOP_COUNT;
+  if (symbolMs == 0) symbolMs = 1;
+  uint16_t loopCount  = (durationMs + symbolMs - 1) / symbolMs;
 
-  // Single-shot symbol: HIGH for ticks, then LOW for 1 tick (end-of-transmission marker)
   rmt_symbol_word_t& sym = pyroSyms[channel - 1];
   sym.level0    = 1;
-  sym.duration0 = ticks;
+  sym.duration0 = (uint16_t)(symbolMs * PYRO_TICKS_PER_MS);  // HIGH for symbolMs
   sym.level1    = 0;
-  sym.duration1 = 1;
+  sym.duration1 = 1;  // 1-tick gap between loop iterations (1 µs; negligible)
 
   if (channel == 1) pyroState.ch1Fired = true;
   else if (channel == 2) pyroState.ch2Fired = true;
   else if (channel == 3) pyroState.ch3Fired = true;
 
   rmt_transmit_config_t tx_cfg = {};
-  tx_cfg.loop_count      = 0;  // single shot
-  tx_cfg.flags.eot_level = 0;  // hardware drives pin LOW at end of transmission
+  tx_cfg.loop_count      = (int)loopCount;
+  tx_cfg.flags.eot_level = 0;  // hardware drives pin LOW at end-of-transmission
 
   rmt_transmit(ch.rmt, ch.encoder, &sym, sizeof(rmt_symbol_word_t), &tx_cfg);
 
