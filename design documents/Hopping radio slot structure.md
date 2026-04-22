@@ -71,13 +71,19 @@ Conceptually, the sync choice is - sending any sync (whether it works or not) ru
 
 - **Automatic, internal** (base only, while `!bsSynced`):
   - First attempt fires `BS_SYNC_BOOT_DELAY_MS` after boot.
-  - If still unsynced, retry every `BS_SYNC_RETRY_WALK_MS` (340 ms).
-    This is deliberately **less than** `SLOT_DURATION_US` so successive attempts land at
-    different phases of the rocket's slot cycle — each attempt sweeps offset by 340 ms
-    from the previous, hitting a fresh phase of the rocket's listen window.
+  - If still unsynced, the next retry fires after
+    `BS_SYNC_RETRY_INTERVAL_MS + BS_SYNC_RETRY_WALK_MS` (≈2000 ms + 340 ms).
+    **INTERVAL** is "how often" — a modest cadence so we don't hammer NVS with nonce writes.
+    **WALK** is a phase shift added to every retry: because WALK < `SLOT_DURATION_US`, each
+    successive attempt's TX lands at a different phase of the rocket's slot cycle, sweeping
+    through all possible offsets over several retries. Conceptually, WALK behaves like
+    "add 340 ms to the anchor time" for the purpose of this one TX — without mutating the
+    actual `bsSyncAnchorUs` (that only changes on TxDone of a successful sync).
   - Cap at `BS_SYNC_TIGHT_RETRIES` (6) attempts in this tight mode.
-  - After the tight-mode cap is exhausted, fall back to one attempt per `BS_SYNC_BACKOFF_MS`
-    (120 s) indefinitely. This avoids hammering NVS with nonce writes.
+  - After the tight-mode cap is exhausted, fall back to one attempt per
+    `BS_SYNC_BACKOFF_MS + BS_SYNC_RETRY_WALK_MS` (~120 s + 340 ms) indefinitely. The walk
+    stays applied so backoff retries keep sweeping phases rather than landing at a fixed
+    offset forever.
   - All of this stops immediately if `bsSynced` becomes true.
 - **User-initiated via BLE/WS**: queued through `queueCommandTx()` with whatever parameters
   the browser supplied (do not override `waitMs`). Same packet bytes, same re-anchor on
@@ -192,9 +198,10 @@ handles the next slot (losing only the 10 ms early-listen cushion, not the slot 
 | `BS_RX_TIMEOUT_US` | 40 ms | Base synced RX window |
 | `BS_LONG_RX_TIMEOUT_US` | 370 ms | Base pre-sync RX window |
 | `BS_SYNC_BOOT_DELAY_MS` | 2000 ms | Base sends first sync this long after boot |
-| `BS_SYNC_RETRY_WALK_MS` | 340 ms | Offset between tight-retry attempts |
+| `BS_SYNC_RETRY_INTERVAL_MS` | 2000 ms | Nominal "how often" base period for tight-mode retries |
+| `BS_SYNC_RETRY_WALK_MS` | 340 ms | Phase offset added to each retry; cumulatively sweeps slot phases |
 | `BS_SYNC_TIGHT_RETRIES` | 6 | Max retries in tight mode before backing off |
-| `BS_SYNC_BACKOFF_MS` | 120000 ms | Retry interval after tight mode exhausted |
+| `BS_SYNC_BACKOFF_MS` | 120000 ms | Base period after tight mode exhausted (WALK still added) |
 | `BS_PING_INTERVAL_MS` | 60000 ms | Ping cadence |
 | `ROCKET_RX_TIMEOUT_US` | 100 ms | Rocket WIN_CMD RX while synced + heard base recently |
 | `ROCKET_LONG_RX_TIMEOUT_US` | 400 ms | Rocket WIN_CMD RX while unsynced or long-silent |

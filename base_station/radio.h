@@ -64,10 +64,21 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 // can force one via the UI). There is NO silence-based resync — long telem silence is treated
 // as signal quality, not lost sync. A prior auto-resync-on-silence was harmful and has been removed.
 #define BS_SYNC_BOOT_DELAY_MS      2'000UL     // first attempt fires this long after boot
-#define BS_SYNC_RETRY_WALK_MS      340UL       // wait this long between tight-mode retries
+
+// How often retries are sent while still unsynced. BS_SYNC_RETRY_INTERVAL_MS is the base
+// period; BS_SYNC_RETRY_WALK_MS is added on top so each attempt's TX phase drifts by WALK
+// relative to the previous. Over successive attempts this sweeps through all phases of
+// the rocket's slot cycle.
+//   actual_tight_period = BS_SYNC_RETRY_INTERVAL_MS + BS_SYNC_RETRY_WALK_MS
+//   actual_backoff_period = BS_SYNC_BACKOFF_MS + BS_SYNC_RETRY_WALK_MS
+// The command channel is not hopped and is not bandwidth-sensitive, so a modest retry
+// cadence is fine — we just need to not hammer NVS with nonce writes.
+#define BS_SYNC_RETRY_INTERVAL_MS  10'000UL     // nominal period between tight-mode retries
+#define BS_SYNC_RETRY_WALK_MS      340UL       // phase offset added to each retry
                                                // (<SLOT_DURATION so retries walk through slot phases)
-#define BS_SYNC_TIGHT_RETRIES      6UL         // how many retries to make at the walk interval
+#define BS_SYNC_TIGHT_RETRIES      6UL         // how many retries to make at the tight interval
 #define BS_SYNC_BACKOFF_MS         120'000UL   // after tight-mode retries exhaust, retry once per this
+                                               // (still with WALK added so backoff retries also sweep phases)
 #define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.

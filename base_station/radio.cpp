@@ -465,6 +465,19 @@ static void bsRadioHandleIrq() {
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
     bsLedOff();
+    // Log TxDone timing relative to the current slot. For CMD_SET_SYNC this is the
+    // moment the anchor is set; for regular commands this should be near BS_CMD_TX_OFFSET_US
+    // into a WIN_CMD slot.
+    {
+      uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
+      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+      uint8_t  seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+      Serial.print("BS TxDone: posInSlot="); Serial.print(posInSlot);
+      Serial.print("us slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" win="); Serial.println((int)SLOT_SEQUENCE[seqIdx]);
+    }
     if (bsSyncTxInFlight) {
       bsSyncTxInFlight = false;
       bsSetSyncedFromTx(eventUs);
@@ -473,6 +486,18 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
+    // Log RxDone timing relative to the current slot. Helps diagnose whether packets
+    // arrive centred in the expected slot or leaking across boundaries (= drift/jitter).
+    {
+      uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
+      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+      uint8_t  seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+      Serial.print("BS RxDone: posInSlot="); Serial.print(posInSlot);
+      Serial.print("us slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" win="); Serial.println((int)SLOT_SEQUENCE[seqIdx]);
+    }
     bsHandleRxDone();
     bsLedOff();
   }
@@ -508,11 +533,9 @@ bool bsPingNeedsQueue  = false;
 bool bsSyncTxInFlight  = false;
 bool bsWinCmdReady     = false;
 
-// Auto-sync attempt counter. Only advances while !bsSynced. Used to switch from tight-mode
-// walk retries (340ms spacing, BS_SYNC_TIGHT_RETRIES attempts) to slow-backoff retries
-// (BS_SYNC_BACKOFF_MS spacing, indefinite) once the walk has swept through a few slot phases.
-// Reset to 0 would only matter if we re-enter the unsynced state, which currently cannot happen
-// without a reboot (bsSynced is never cleared except by initialisation).
+// Auto-sync attempt counter. Only advances while !bsSynced. Controls tight-vs-backoff
+// cadence. Reset to 0 only matters if we re-enter the unsynced state, which currently
+// cannot happen without a reboot (bsSynced is never cleared except by initialisation).
 static uint32_t bsSyncAttemptCount = 0;
 
 void bsHandleSyncSend() {
@@ -528,14 +551,16 @@ void bsHandleSyncSend() {
       // First attempt: fires BS_SYNC_BOOT_DELAY_MS after boot.
       timeForSync = (now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS;
     } else if (bsSyncAttemptCount < BS_SYNC_TIGHT_RETRIES) {
-      // Tight-mode walk: each retry BS_SYNC_RETRY_WALK_MS after the previous. Because the
-      // walk interval is less than SLOT_DURATION, successive attempts land at different phases
-      // of the rocket's slot cycle — deliberately unaligned so we catch the rocket's listen window.
-      timeForSync = (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_WALK_MS;
+      // Tight mode: period = INTERVAL + WALK. INTERVAL sets how often we send; WALK shifts
+      // the TX timing phase relative to the previous attempt so successive attempts land
+      // at different phases of the rocket's slot cycle.
+      timeForSync = (now - bsLastSyncSendMs) >=
+                    (BS_SYNC_RETRY_INTERVAL_MS + BS_SYNC_RETRY_WALK_MS);
     } else {
-      // Slow backoff: if tight mode exhausted and we're still unsynced, keep trying every
-      // BS_SYNC_BACKOFF_MS indefinitely.
-      timeForSync = (now - bsLastSyncSendMs) >= BS_SYNC_BACKOFF_MS;
+      // Backoff: period = BACKOFF + WALK. WALK is still applied so backoff retries keep
+      // walking phases rather than landing at the same offset every 120 s.
+      timeForSync = (now - bsLastSyncSendMs) >=
+                    (BS_SYNC_BACKOFF_MS + BS_SYNC_RETRY_WALK_MS);
     }
 
     if (timeForSync) {

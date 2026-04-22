@@ -419,11 +419,34 @@ static void radioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     radioState = RADIO_STANDBY;
+    {
+      uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
+      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+      uint8_t  seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+      Serial.print("TxDone: posInSlot="); Serial.print(posInSlot);
+      Serial.print("us slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" win="); Serial.println((int)SLOT_SEQUENCE[seqIdx]);
+    }
     ledOff();
   }
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     radioState = RADIO_STANDBY;
+    // Log RxDone timing relative to current slot — diagnostic for sync drift. Pre-sync
+    // the anchor is 0 so posInSlot is (micros() % SLOT_DURATION); that's still useful
+    // because CMD_SET_SYNC RxDone is the event that SETS the anchor.
+    {
+      uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
+      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+      uint8_t  seqIdx    = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+      Serial.print("RxDone: posInSlot="); Serial.print(posInSlot);
+      Serial.print("us slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" win="); Serial.println((int)SLOT_SEQUENCE[seqIdx]);
+    }
     handleRxDone();
     ledOff();
   }
