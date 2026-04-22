@@ -512,9 +512,10 @@ void bsHandleSyncSend() {
   // Boot-time sync: 2s after boot, always (no telem yet so silence check not used).
   bool timeForSync = (bsLastSyncSendMs == 0) && ((now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS);
 
-  // Pre-sync retry: if we have never heard the rocket this session, keep retrying every 10s.
-  // Stops as soon as we hear any telemetry — at that point we trust the sync is still good.
-  if (!timeForSync && bsLastTelemRxMs == 0 && bsLastSyncSendMs != 0 &&
+  // Pre-sync retry: keep retrying every 10s until we are synced AND have heard telemetry.
+  // bsLastTelemRxMs alone is not enough — an out-of-slot catch during a long pre-sync RX window
+  // sets it without giving us a valid timing anchor. Require bsSynced too.
+  if (!timeForSync && !bsSynced && bsLastSyncSendMs != 0 &&
       (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_MS) {
     timeForSync = true;
   }
