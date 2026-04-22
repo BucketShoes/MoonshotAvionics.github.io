@@ -5,12 +5,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// ===================== PIN DEFINITIONS =====================
+// Board-specific pin assignments (switchable per -DBOARD_* build flag)
+#include "board_config.h"
 
-#define GPS_RX_PIN    33
-#define GPS_TX_PIN    34
-#define GPS_RST_PIN   35
-#define VEXT_CTRL_PIN 3
+// ===================== PIN DEFINITIONS (shared across all boards) =====================
 
 #define LORA_NSS_PIN  8
 #define LORA_SCK_PIN  9
@@ -21,29 +19,13 @@
 #define LORA_DIO1_PIN 14
 
 #define USER_BTN_PIN  0
-#define LED_PIN       18
 
-// Battery voltage divider
-#define VBAT_ADC_PIN      1
-#define VBAT_ADC_CTRL_PIN 2
+// Battery voltage divider multiplier (applies to all boards)
 #define VBAT_MULTIPLIER   4.9f
-
-// Pyro channel MOSFET gates (low-side; high side controlled by remove-before-flight switch)
-#define PYRO_CH1_PIN       45   // drogue ejection charge
-#define PYRO_CH2_PIN       46   // main ejection charge
-#define PYRO_CH3_PIN       42    // chute nichrome cut (future: servo on separate RMT channel)
-
-// Pyro sense (continuity detect, internal pulldown; high = wire connected)
-// Pins shared with TFT but CS stays deselected — usable as GPIO
-#define PYRO_SENSE_CH1_PIN 39
-#define PYRO_SENSE_CH2_PIN 40
-#define PYRO_SENSE_CH3_PIN 41
-// High-side voltage sense (10k:100k divider; >3V on high side → remove-before-flight armed)
-#define PYRO_HV_SENSE_PIN  6
 
 // ===================== GENERAL CONFIG =====================
 
-#define GPS_BAUD      115200
+// GPS_BAUD is defined in board_config.h (board-specific: 115200 for Tracker, 9600 for V4)
 #define SERIAL_BAUD   115200
 #define DEVICE_ID     0x92
 

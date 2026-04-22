@@ -18,15 +18,12 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "board_config.h"
 #include "telemetry.h"
 
-// ===================== I2C PIN CONFIG =====================
-// Choose two free GPIOs from the Heltec Wireless Tracker headers.
-// GPIO4 (SDA) and GPIO5 (SCL) are on J3 pins 8 and 7 — both are
-// ADC1/TOUCH pins with no conflicting connected peripherals.
-// Change these if your wiring differs.
-#define SENSOR_SDA_PIN  4
-#define SENSOR_SCL_PIN  5
+// I2C pin config defined in board_config.h (SENSOR_SDA_PIN, SENSOR_SCL_PIN)
+// Tracker: GPIO4 (SDA), GPIO5 (SCL)
+// V4: GPIO17 (SDA), GPIO18 (SCL) — shared with OLED I2C bus
 
 // ===================== I2C ADDRESSES =====================
 #define ADXL345_ADDR    0x53  // SDO grounded on SEN0140

@@ -100,6 +100,11 @@ void nonblockingInit() {
     case INIT_VEXT_ON:
       pinMode(VEXT_CTRL_PIN, OUTPUT);
       digitalWrite(VEXT_CTRL_PIN, HIGH);
+      // V4 only: separate GNSS power rail (Tracker shares VEXT for GPS power).
+#ifdef VGNSS_CTRL_PIN
+      pinMode(VGNSS_CTRL_PIN, OUTPUT);
+      digitalWrite(VGNSS_CTRL_PIN, HIGH);
+#endif
       pinMode(VBAT_ADC_CTRL_PIN, OUTPUT);
       digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
       pinMode(VBAT_ADC_PIN, INPUT);

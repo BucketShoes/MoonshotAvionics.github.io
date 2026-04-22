@@ -97,6 +97,15 @@ bool radioInit() {
   digitalWrite(LORA_NSS_PIN, HIGH);
   pinMode(LORA_BUSY_PIN, INPUT);
 
+  // V4 FEM (front-end module) init: enable amplifier and antenna control, PA off initially.
+  // Tracker has no external FEM (DIO2 RF switch handled internally by SX1262).
+#ifdef LORA_FEM_EN_PIN
+  pinMode(LORA_FEM_EN_PIN,  OUTPUT); digitalWrite(LORA_FEM_EN_PIN,  HIGH);
+  pinMode(LORA_FEM_CTL_PIN, OUTPUT); digitalWrite(LORA_FEM_CTL_PIN, HIGH);
+  pinMode(LORA_FEM_PA_PIN,  OUTPUT); digitalWrite(LORA_FEM_PA_PIN,  LOW);
+  Serial.println("LoRa: FEM init (EN=HIGH, CTL=HIGH, PA=LOW)");
+#endif
+
   Serial.println("LoRa: resetting...");
   sx126x_hal_reset(&radioCtx);
   if (!DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx, 100)) {
@@ -110,12 +119,12 @@ bool radioInit() {
   Serial.print("LoRa: set_standby -> "); Serial.println(st);
   if (st != SX126X_STATUS_OK) return false;
 
-  // Heltec Wireless Tracker V1.1: TCXO is powered via DIO3 at 1.8V.
+  // TCXO power via DIO3 (voltage set in board_config.h: LORA_TCXO_VOLTAGE).
   // Without this call the oscillator never starts and the radio accepts SPI commands
   // but never completes any RF operation (TxDone/RxDone/Timeout never fire).
   // Timeout = 5ms (320 × 15.625µs steps = 5000µs) for TCXO startup.
   // Must be called BEFORE set_pkt_type and any modulation config.
-  st = sx126x_set_dio3_as_tcxo_ctrl(&radioCtx, SX126X_TCXO_CTRL_1_8V, 320);
+  st = sx126x_set_dio3_as_tcxo_ctrl(&radioCtx, LORA_TCXO_VOLTAGE, 320);
   Serial.print("LoRa: set_dio3_tcxo 1.8V 5ms -> "); Serial.println(st);
   // After TCXO command, chip re-calibrates — wait for BUSY to clear.
   if (!DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&radioCtx, 100)) {
@@ -342,6 +351,11 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
     return false;
   }
 
+  // V4 FEM PA: enable amplifier for TX (Tracker has no external FEM).
+#ifdef LORA_FEM_PA_PIN
+  digitalWrite(LORA_FEM_PA_PIN, HIGH);
+#endif
+
   st = sx126x_set_tx(&radioCtx, 0);  // timeout=0 = no TX timeout (fires TxDone when done)
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_TX_ACTIVE;
@@ -366,6 +380,10 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
 }
 
 void radioStandby() {
+  // V4 FEM PA: disable amplifier (Tracker has no external FEM).
+#ifdef LORA_FEM_PA_PIN
+  digitalWrite(LORA_FEM_PA_PIN, LOW);
+#endif
   sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
   radioState = RADIO_STANDBY;
   ledOff();
@@ -443,6 +461,10 @@ static void radioHandleIrq() {
   }
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
+    // V4 FEM PA: disable amplifier at end of TX (Tracker has no external FEM).
+#ifdef LORA_FEM_PA_PIN
+    digitalWrite(LORA_FEM_PA_PIN, LOW);
+#endif
     radioState = RADIO_STANDBY;
     if (LOG_TX_DONE)
     {
