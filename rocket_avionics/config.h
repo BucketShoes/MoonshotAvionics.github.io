@@ -124,6 +124,10 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 
 #define LOG_RX_DONE true
 #define LOG_RX_TIMEOUT false
+#define LOG_RX_START false
+#define LOG_TX_START false
+#define LOG_TX_DONE false
+
 
 
 // ===================== SLOT CONFIG =====================

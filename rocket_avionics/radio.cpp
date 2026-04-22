@@ -269,7 +269,7 @@ void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_RX_ACTIVE;
     ledOnRX();
-    {
+    if (LOG_RX_START) {
       uint64_t nowUs     = (uint64_t)micros();
       uint64_t elapsed   = nowUs - (uint64_t)syncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
@@ -346,7 +346,7 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_TX_ACTIVE;
     ledOnTX();
-    {
+    if (LOG_TX_START) {
       uint64_t nowUs     = (uint64_t)micros();
       uint64_t elapsed   = nowUs - (uint64_t)syncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);

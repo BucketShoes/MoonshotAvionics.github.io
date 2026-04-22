@@ -295,8 +295,7 @@ void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (st == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_RX_ACTIVE;
     bsLedOn();
-    if (LOG_RX_START)
-    {
+    if (LOG_RX_START) {
       uint64_t nowUs     = (uint64_t)micros();
       uint64_t elapsed   = nowUs - (uint64_t)bsSyncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
@@ -364,7 +363,7 @@ bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
   if (st == SX126X_STATUS_OK) {
     bsRadioState = BS_RADIO_TX_ACTIVE;
     bsLedOn();
-    {
+    if (LOG_TX_START) {
       uint64_t nowUs     = (uint64_t)micros();
       uint64_t elapsed   = nowUs - (uint64_t)bsSyncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
