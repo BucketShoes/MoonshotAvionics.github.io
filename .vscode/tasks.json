@@ -2,50 +2,40 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build rocket",
+            "label": "Flash & Monitor Rocket",
             "type": "shell",
             "command": "powershell",
             "args": [
                 "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}/build_rocket.ps1"
+                "-ExecutionPolicy", "Bypass",
+                "-File", "${workspaceFolder}/flash_and_monitor_rocket.ps1"
             ],
             "presentation": {
                 "reveal": "always",
                 "panel": "dedicated",
-                "close": true
-            }
+                "close": false
+            },
+            "problemMatcher": []
         },
         {
-            "label": "Build base_station",
+            "label": "Flash & Monitor Base Station",
             "type": "shell",
             "command": "powershell",
             "args": [
                 "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "${workspaceFolder}/build_base_station.ps1"
+                "-ExecutionPolicy", "Bypass",
+                "-File", "${workspaceFolder}/flash_and_monitor_base_station.ps1"
             ],
             "presentation": {
                 "reveal": "always",
                 "panel": "dedicated",
-                "close": true
-            }
+                "close": false
+            },
+            "problemMatcher": []
         },
         {
-            "label": "Build & Monitor Both (Split View)",
-            "type": "shell",
-            "command": "echo",
-            "args": [
-                "Building..."
-            ],
-            "dependsOn": [
-                "Build rocket",
-                "Build base_station"
-            ],
+            "label": "Flash & Monitor Both",
+            "dependsOn": ["Flash & Monitor Rocket", "Flash & Monitor Base Station"],
             "dependsOrder": "parallel",
             "group": {
                 "kind": "build",
@@ -53,7 +43,7 @@
             },
             "presentation": {
                 "reveal": "silent",
-                "panel": "new"
+                "panel": "shared"
             },
             "problemMatcher": []
         }
