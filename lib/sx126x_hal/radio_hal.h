@@ -52,13 +52,13 @@ struct sx126x_hal_context_t {
 // Written by GPIO ISR (IRAM-safe); read from main loop.
 
 extern volatile bool     dio1Fired;       // set by ISR on each DIO1 rising edge
-extern volatile uint32_t dio1CaptureVal;  // micros() at that edge (~1 µs resolution)
+extern volatile uint64_t dio1CaptureVal;  // micros() at that edge (~1 µs resolution)
 extern volatile uint32_t dio1IsrCount;    // total ISR fires since boot (diagnostic)
 
 // Microsecond timestamp of the most recent DIO1 rising edge.
 // Valid only while dio1Fired is true (or immediately after clearing it).
 inline uint64_t dio1TimestampUs() {
-    return (uint64_t)dio1CaptureVal;
+    return dio1CaptureVal;
 }
 
 // ===================== PUBLIC API =====================

@@ -73,11 +73,11 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 //   actual_backoff_period = BS_SYNC_BACKOFF_MS + BS_SYNC_RETRY_WALK_MS
 // The command channel is not hopped and is not bandwidth-sensitive, so a modest retry
 // cadence is fine — we just need to not hammer NVS with nonce writes.
-#define BS_SYNC_RETRY_INTERVAL_MS  10'000UL     // nominal period between tight-mode retries
+#define BS_SYNC_RETRY_INTERVAL_MS  10'000UL     // nominal period between tight-mode retries - to leave time to see if we hear any telem
 #define BS_SYNC_RETRY_WALK_MS      340UL       // phase offset added to each retry
                                                // (<SLOT_DURATION so retries walk through slot phases)
-#define BS_SYNC_TIGHT_RETRIES      6UL         // how many retries to make at the tight interval
-#define BS_SYNC_BACKOFF_MS         120'000UL   // after tight-mode retries exhaust, retry once per this
+#define BS_SYNC_TIGHT_RETRIES      20UL         // how many retries to make at the tight interval
+#define BS_SYNC_BACKOFF_MS         240'000UL   // after tight-mode retries exhaust, retry once per this
                                                // (still with WALK added so backoff retries also sweep phases)
 #define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long
 

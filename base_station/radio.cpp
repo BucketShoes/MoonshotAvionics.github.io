@@ -612,7 +612,7 @@ void bsHandleRadio() {
   if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
       (bsRadioState == BS_RADIO_TX_ACTIVE || bsRadioState == BS_RADIO_RX_ACTIVE)) {
     Serial.println("TEST DIO1 pin HIGH (poll fallback)");
-    dio1CaptureVal = (uint32_t)micros();
+    dio1CaptureVal = micros();
     dio1Fired = true;
   }
 
@@ -629,7 +629,7 @@ void bsHandleRadio() {
       Serial.print("TEST IRQ poll: flags=0x"); Serial.print(irqFlags, HEX);
       Serial.println(" (DIO1 never pulsed but register has flags — wiring issue)");
       // Synthesise a DIO1 event so the IRQ handler runs
-      dio1CaptureVal = (uint32_t)micros();
+      dio1CaptureVal = micros();
       dio1Fired = true;
     } else {
       Serial.print("TEST IRQ poll: flags=0 state="); Serial.print(bsRadioState);

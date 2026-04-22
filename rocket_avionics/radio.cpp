@@ -504,7 +504,7 @@ void nonblockingRadio() {
   if (!dio1Fired && digitalRead(LORA_DIO1_PIN) &&
       (radioState == RADIO_TX_ACTIVE || radioState == RADIO_RX_ACTIVE)) {
     Serial.println("TEST DIO1 pin HIGH (poll fallback)");
-    dio1CaptureVal = (uint32_t)micros();
+    dio1CaptureVal = micros();
     dio1Fired = true;
   }
   static unsigned long tLastIrqPollMs = 0;
@@ -517,7 +517,7 @@ void nonblockingRadio() {
       sx126x_get_irq_status(&radioCtx, &irqFlags);
       if (irqFlags != 0) {
         Serial.print("TEST IRQ poll hit: flags=0x"); Serial.println(irqFlags, HEX);
-        dio1CaptureVal = (uint32_t)micros();
+        dio1CaptureVal = micros();
         dio1Fired = true;
       } else {
         Serial.print("TEST IRQ poll: 0 busy="); Serial.println(digitalRead(LORA_BUSY_PIN));
