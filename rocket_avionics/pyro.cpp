@@ -2,12 +2,14 @@
 //
 // Three RMT TX channels, one pre-bound per output GPIO, created at pyroInit().
 // Clock: RMT_CLK_SRC_RC_FAST (~17.5 MHz, survives light sleep, immune to APB gating).
-// Resolution: 100 Hz → 10 ms per tick. Duration accuracy ±10 ms — acceptable for igniters.
-// Maximum pulse: 32767 ticks = ~327 s.
+// Prescaler: 256 (8-bit max) → tick ≈ 14.6 µs. Each symbol duration0/1 field is 15 bits
+// → max 32767 ticks ≈ 479 ms per phase. 48-symbol buffer → max pulse ≈ 23 s.
 //
-// pyroFire() queues a single-shot pulse via rmt_transmit() and returns immediately.
-// The RMT peripheral drives the pin HIGH then LOW in hardware. The CPU is not involved
-// after the call — freezes, logging erases, sleep, and watchdog resets cannot extend the pulse.
+// pyroFire() builds a single contiguous HIGH pulse across as many symbols as needed,
+// terminated by a 1-tick LOW in the final symbol, padded to 48 with null words.
+// rmt_transmit() is called once with loop_count=0 (single shot) and returns immediately.
+// The RMT peripheral drives the pulse entirely in hardware — the CPU is not involved
+// after the call. Freezes, logging erases, sleep, and watchdog resets cannot extend it.
 // On any reset, all GPIOs go high-impedance; external pulldowns on MOSFET gates hold them low.
 //
 // ADC: uses Arduino analogReadMilliVolts() (legacy IDF ADC driver on ADC1).
@@ -41,21 +43,18 @@ static PyroChannel pyroChannels[3] = {
   { nullptr, nullptr, PYRO_CH3_PIN },
 };
 
-static rmt_symbol_word_t pyroSyms[3] = {};
+// 48 symbols per channel — ESP32-S3 RMT hardware minimum for mem_block_symbols.
+// pyroFire() fills them with the pulse shape; unused slots are zeroed (null = end marker).
+#define PYRO_SYM_COUNT  48
+static rmt_symbol_word_t pyroSyms[3][PYRO_SYM_COUNT] = {};
 
-// RMT_CLK_SRC_RC_FAST is ~17.5 MHz. ESP32-S3 RMT prescaler is 8-bit (div 1–256),
-// so resolution_hz must be >= 17,500,000/256 ≈ 68,360 Hz.
-// 1 MHz gives div≈17 (within range). 1 µs per tick.
-//
-// duration0 is 15 bits → max 32767 ticks = 32 ms per symbol. Too short for igniter
-// pulses (default 3000 ms). ESP32-S3 loop_count is also 10 bits → max 1023 repeats.
-//
-// Solution: symbol duration = ceil(durationMs / 1023) ms; loop_count = ceil(durationMs /
-// symbolMs). This keeps both fields in range for any duration up to ~33 s, accurate to
-// ±1 ms per loop boundary. Hardware drives pin LOW at EOT — cutoff guaranteed.
-#define PYRO_RMT_RESOLUTION_HZ  1000000  // 1 µs per tick; div≈17 (within 8-bit limit)
-#define PYRO_TICKS_PER_MS       1000     // 1000 ticks = 1 ms at 1 MHz
-#define PYRO_MAX_LOOP_COUNT     1023     // ESP32-S3 RMT hardware loop count register limit
+// RC_FAST ~17.5 MHz, prescaler 256 (8-bit max) → tick ≈ 14.629 µs.
+// resolution_hz = 17,500,000 / 256 = 68,359 Hz (minimum allowed; keeps div in range).
+// Max per-symbol HIGH = 32767 ticks × 14.629 µs ≈ 479 ms.
+// 48 symbols × 479 ms = ~23 s max pulse — sufficient for any igniter duration.
+#define PYRO_RMT_RESOLUTION_HZ  68359   // div = 256 (8-bit max); tick ≈ 14.629 µs
+#define PYRO_TICKS_PER_MS       68      // 1 ms ÷ 14.629 µs ≈ 68 ticks (rounds down; ≈1% short)
+#define PYRO_MAX_TICKS_PER_SYM  32767   // 15-bit duration field max
 
 // ===================== INIT =====================
 
@@ -150,28 +149,43 @@ void pyroFire(uint8_t channel, uint16_t durationMs) {
   PyroChannel& ch = pyroChannels[channel - 1];
   if (ch.rmt == nullptr) return;  // init failed for this channel
 
-  // Symbol duration scaled so loop_count fits in 10-bit hardware register (max 1023).
-  // symbolMs = ceil(durationMs / 1023); loop_count = ceil(durationMs / symbolMs).
-  // Accuracy: ±symbolMs per pulse (≤1 ms for durations ≤1023 ms, ≤3 ms for ≤3069 ms).
-  uint16_t symbolMs   = (durationMs + PYRO_MAX_LOOP_COUNT - 1) / PYRO_MAX_LOOP_COUNT;
-  if (symbolMs == 0) symbolMs = 1;
-  uint16_t loopCount  = (durationMs + symbolMs - 1) / symbolMs;
+  // Build a single contiguous HIGH pulse across multiple symbols, terminated by a
+  // 1-tick LOW in the final symbol. Remaining slots zeroed (null word = end marker).
+  // No looping — loop_count=0 means single-shot.
+  uint32_t totalTicks = (uint32_t)durationMs * PYRO_TICKS_PER_MS;
+  rmt_symbol_word_t* syms = pyroSyms[channel - 1];
+  memset(syms, 0, sizeof(pyroSyms[0]));
 
-  rmt_symbol_word_t& sym = pyroSyms[channel - 1];
-  sym.level0    = 1;
-  sym.duration0 = (uint16_t)(symbolMs * PYRO_TICKS_PER_MS);  // HIGH for symbolMs
-  sym.level1    = 0;
-  sym.duration1 = 1;  // 1-tick gap between loop iterations (1 µs; negligible)
+  // Fill symbols with HIGH chunks. All but the last use duration1=0 (zero-duration phase
+  // is skipped by RMT hardware — pin stays HIGH, no glitch). The last symbol gets
+  // duration1=1 LOW to terminate the pulse.
+  int s = 0;
+  while (totalTicks > 0 && s < PYRO_SYM_COUNT) {
+    uint16_t chunk = (totalTicks > PYRO_MAX_TICKS_PER_SYM) ? PYRO_MAX_TICKS_PER_SYM
+                                                            : (uint16_t)totalTicks;
+    totalTicks -= chunk;
+    syms[s].level0    = 1;
+    syms[s].duration0 = chunk;
+    if (totalTicks == 0) {
+      syms[s].level1    = 0;  // LOW to terminate
+      syms[s].duration1 = 1;
+    } else {
+      syms[s].level1    = 1;  // stay HIGH (zero-duration phase is a no-op)
+      syms[s].duration1 = 0;
+    }
+    s++;
+  }
+  // Remaining slots are zero (memset above) — null word acts as end-of-data sentinel.
 
   if (channel == 1) pyroState.ch1Fired = true;
   else if (channel == 2) pyroState.ch2Fired = true;
   else if (channel == 3) pyroState.ch3Fired = true;
 
   rmt_transmit_config_t tx_cfg = {};
-  tx_cfg.loop_count      = (int)loopCount;
-  tx_cfg.flags.eot_level = 0;  // hardware drives pin LOW at end-of-transmission
+  tx_cfg.loop_count      = 0;    // single shot — no looping
+  tx_cfg.flags.eot_level = 0;    // pin stays LOW after transmission
 
-  rmt_transmit(ch.rmt, ch.encoder, &sym, sizeof(rmt_symbol_word_t), &tx_cfg);
+  rmt_transmit(ch.rmt, ch.encoder, syms, sizeof(pyroSyms[0]), &tx_cfg);
 
   pyroState.activeChannel  = channel;
   pyroState.fireStartUs    = micros();
