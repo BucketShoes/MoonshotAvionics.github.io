@@ -514,6 +514,7 @@ static void bsRadioHandleIrq() {
     bsRadioState = BS_RADIO_STANDBY;
     // Log RxDone timing relative to the current slot. Helps diagnose whether packets
     // arrive centred in the expected slot or leaking across boundaries (= drift/jitter).
+    if (LOG_RX_DONE)
     {
       uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
@@ -815,15 +816,10 @@ void bsHandleRadio() {
     // bsRxStartedThisSlot=false means we won't try to start a new RX until radio is STANDBY.
 
     bsCurrentSlotIsLR = (win == WIN_LR);
-    // Target config is selected below — the early-listen path may have already set it to the
-    // upcoming slot's config before the boundary, so only overwrite if it doesn't match the
-    // slot we're now in. (In practice the early-listen path sets it to *this* slot's config,
-    // so they agree.)
-    RadioSlotConfig newTarget = bsCfgForSlot(win);
-    if (newTarget != bsTargetCfg) bsTargetCfg = newTarget;
+    // NOTE: bsTargetCfg is NOT set here. Config is managed by a single code path — the
+    // RX-start branch (early-listen / on-boundary) sets the config it needs, and the TX
+    // path sets it for commands. Having two places set target was a source of races.
   }
-
-  bsApplyCfgIfNeeded();
 
   // Early-listen for the upcoming receive-type slot. Starts RX BS_RX_EARLY_US before the slot
   // boundary, using the upcoming slot's modulation. This absorbs small clock offsets and
