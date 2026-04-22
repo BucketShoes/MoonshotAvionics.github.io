@@ -61,8 +61,9 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 
 // Command/sync timing.
 #define BS_SYNC_BOOT_DELAY_MS      2'000UL     // send first sync 2s after boot
+#define BS_SYNC_RETRY_MS           10'000UL    // retry sync every 10s if rocket never heard this session
 #define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long
-#define BS_SYNC_SILENCE_MS         1'200'000UL // send sync only if no telem heard for 20 min
+#define BS_SYNC_SILENCE_MS         2'400'000UL // send sync only if no telem heard for 40 min
 
 
 // ===================== RADIO STATE =====================

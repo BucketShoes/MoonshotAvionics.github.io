@@ -512,7 +512,14 @@ void bsHandleSyncSend() {
   // Boot-time sync: 2s after boot, always (no telem yet so silence check not used).
   bool timeForSync = (bsLastSyncSendMs == 0) && ((now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS);
 
-  // Silence-based sync: haven't heard the rocket in 20 minutes.
+  // Pre-sync retry: if we have never heard the rocket this session, keep retrying every 10s.
+  // Stops as soon as we hear any telemetry — at that point we trust the sync is still good.
+  if (!timeForSync && bsLastTelemRxMs == 0 && bsLastSyncSendMs != 0 &&
+      (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_MS) {
+    timeForSync = true;
+  }
+
+  // Silence-based sync: haven't heard the rocket in 40 minutes.
   if (!timeForSync && bsLastTelemRxMs != 0 &&
       (now - bsLastTelemRxMs) >= BS_SYNC_SILENCE_MS) {
     // Only re-trigger if we haven't sent a sync recently (avoid hammering).
