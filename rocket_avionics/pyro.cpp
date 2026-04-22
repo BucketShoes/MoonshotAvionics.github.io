@@ -1,15 +1,16 @@
 // pyro.cpp — Pyro channel implementation.
 //
 // Three RMT TX channels, one pre-bound per output GPIO, created at pyroInit().
-// Clock: RMT_CLK_SRC_RC_FAST (~17.5 MHz, survives light sleep, immune to APB gating).
-// Prescaler: 256 (8-bit max) → tick ≈ 14.6 µs. Each symbol duration0/1 field is 15 bits
-// → max 32767 ticks ≈ 479 ms per phase. 48-symbol buffer → max pulse ≈ 23 s.
+// Clock: RMT_CLK_SRC_APB (80 MHz). The IDF driver splits the required divider across
+// a group-level and per-channel prescaler, so large divisions (e.g. 80,000 for 1 kHz)
+// are handled internally without hitting the 8-bit per-channel limit.
+// Resolution: 1000 Hz → 1 ms per tick. duration0 is 15 bits → max 32767 ms ≈ 32 s.
 //
-// pyroFire() builds a single contiguous HIGH pulse across as many symbols as needed,
-// terminated by a 1-tick LOW in the final symbol, padded to 48 with null words.
-// rmt_transmit() is called once with loop_count=0 (single shot) and returns immediately.
+// pyroFire() queues a single symbol: HIGH for durationMs ticks, LOW for 1 tick.
+// The 47 remaining slots in the 48-symbol buffer are zeroed (null = end-of-data sentinel).
+// rmt_transmit() is single-shot (loop_count=0) and returns immediately.
 // The RMT peripheral drives the pulse entirely in hardware — the CPU is not involved
-// after the call. Freezes, logging erases, sleep, and watchdog resets cannot extend it.
+// after the call. Freezes, logging erases, and watchdog resets cannot extend the pulse.
 // On any reset, all GPIOs go high-impedance; external pulldowns on MOSFET gates hold them low.
 //
 // ADC: uses Arduino analogReadMilliVolts() (legacy IDF ADC driver on ADC1).
@@ -44,17 +45,12 @@ static PyroChannel pyroChannels[3] = {
 };
 
 // 48 symbols per channel — ESP32-S3 RMT hardware minimum for mem_block_symbols.
-// pyroFire() fills them with the pulse shape; unused slots are zeroed (null = end marker).
+// Only slot [0] is used for the pulse; slots [1..47] stay zero (end-of-data sentinel).
 #define PYRO_SYM_COUNT  48
 static rmt_symbol_word_t pyroSyms[3][PYRO_SYM_COUNT] = {};
 
-// RC_FAST ~17.5 MHz, prescaler 256 (8-bit max) → tick ≈ 14.629 µs.
-// resolution_hz = 17,500,000 / 256 = 68,359 Hz (minimum allowed; keeps div in range).
-// Max per-symbol HIGH = 32767 ticks × 14.629 µs ≈ 479 ms.
-// 48 symbols × 479 ms = ~23 s max pulse — sufficient for any igniter duration.
-#define PYRO_RMT_RESOLUTION_HZ  68359   // div = 256 (8-bit max); tick ≈ 14.629 µs
-#define PYRO_TICKS_PER_MS       68      // 1 ms ÷ 14.629 µs ≈ 68 ticks (rounds down; ≈1% short)
-#define PYRO_MAX_TICKS_PER_SYM  32767   // 15-bit duration field max
+// APB 80 MHz, resolution 1000 Hz → 1 ms per tick. Max pulse: 32767 ms ≈ 32 s.
+#define PYRO_RMT_RESOLUTION_HZ  1000
 
 // ===================== INIT =====================
 
@@ -85,9 +81,9 @@ void pyroInit() {
   for (int i = 0; i < 3; i++) {
     rmt_tx_channel_config_t ch_cfg = {};
     ch_cfg.gpio_num          = (gpio_num_t)pyroChannels[i].pin;
-    ch_cfg.clk_src           = RMT_CLK_SRC_RC_FAST;  // survives light sleep; immune to APB gating
+    ch_cfg.clk_src           = RMT_CLK_SRC_APB;
     ch_cfg.resolution_hz     = PYRO_RMT_RESOLUTION_HZ;
-    ch_cfg.mem_block_symbols = 48;  // ESP32-S3 RMT hardware minimum (SOC requirement)
+    ch_cfg.mem_block_symbols = PYRO_SYM_COUNT;
     ch_cfg.trans_queue_depth = 1;
     ch_cfg.flags.invert_out  = 0;
     ch_cfg.flags.with_dma    = 0;
@@ -149,41 +145,21 @@ void pyroFire(uint8_t channel, uint16_t durationMs) {
   PyroChannel& ch = pyroChannels[channel - 1];
   if (ch.rmt == nullptr) return;  // init failed for this channel
 
-  // Build a single contiguous HIGH pulse across multiple symbols, terminated by a
-  // 1-tick LOW in the final symbol. Remaining slots zeroed (null word = end marker).
-  // No looping — loop_count=0 means single-shot.
-  uint32_t totalTicks = (uint32_t)durationMs * PYRO_TICKS_PER_MS;
+  // Single symbol: HIGH for durationMs ticks (1 tick = 1 ms), then LOW for 1 tick.
+  // Slots [1..47] remain zero — null word terminates the sequence.
   rmt_symbol_word_t* syms = pyroSyms[channel - 1];
-  memset(syms, 0, sizeof(pyroSyms[0]));
-
-  // Fill symbols with HIGH chunks. All but the last use duration1=0 (zero-duration phase
-  // is skipped by RMT hardware — pin stays HIGH, no glitch). The last symbol gets
-  // duration1=1 LOW to terminate the pulse.
-  int s = 0;
-  while (totalTicks > 0 && s < PYRO_SYM_COUNT) {
-    uint16_t chunk = (totalTicks > PYRO_MAX_TICKS_PER_SYM) ? PYRO_MAX_TICKS_PER_SYM
-                                                            : (uint16_t)totalTicks;
-    totalTicks -= chunk;
-    syms[s].level0    = 1;
-    syms[s].duration0 = chunk;
-    if (totalTicks == 0) {
-      syms[s].level1    = 0;  // LOW to terminate
-      syms[s].duration1 = 1;
-    } else {
-      syms[s].level1    = 1;  // stay HIGH (zero-duration phase is a no-op)
-      syms[s].duration1 = 0;
-    }
-    s++;
-  }
-  // Remaining slots are zero (memset above) — null word acts as end-of-data sentinel.
+  syms[0].level0    = 1;
+  syms[0].duration0 = durationMs;
+  syms[0].level1    = 0;
+  syms[0].duration1 = 1;
 
   if (channel == 1) pyroState.ch1Fired = true;
   else if (channel == 2) pyroState.ch2Fired = true;
   else if (channel == 3) pyroState.ch3Fired = true;
 
   rmt_transmit_config_t tx_cfg = {};
-  tx_cfg.loop_count      = 0;    // single shot — no looping
-  tx_cfg.flags.eot_level = 0;    // pin stays LOW after transmission
+  tx_cfg.loop_count      = 0;  // single shot
+  tx_cfg.flags.eot_level = 0;  // pin stays LOW after transmission
 
   rmt_transmit(ch.rmt, ch.encoder, syms, sizeof(pyroSyms[0]), &tx_cfg);
 
