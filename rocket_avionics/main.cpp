@@ -379,7 +379,7 @@ void setup() {
   pinMode(USER_BTN_PIN, INPUT_PULLUP);
   ledcAttach(LED_PIN, 1000, 10);
   ledcWrite(LED_PIN, 128);//post-setup, before set by anything else
-  setCpuFrequencyMhz(80);
+  setCpuFrequencyMhz(240);
   esp_wifi_stop();   // WiFi shares the RF block with BLE; stop it explicitly even though unused
   esp_wifi_deinit();
   Serial.println("Rocket Telemetry - Heltec Wireless Tracker");

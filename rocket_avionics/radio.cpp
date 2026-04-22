@@ -82,7 +82,9 @@ static sx126x_lora_sf_t sfToEnum(uint8_t sf) {
   return (sx126x_lora_sf_t)sf;
 }
 
-static void ledOn()  { ledcWrite(LED_PIN, 64); } //radio on. show the brighter flash for timing sync (later, might make this separate tx vs rx).
+//radio on. show the brighter flash for timing sync (later, might make this separate tx vs rx).
+static void ledOnTX()  { ledcWrite(LED_PIN, 64); } 
+static void ledOnRX()  { ledcWrite(LED_PIN, 5); } 
 static void ledOff() { ledcWrite(LED_PIN, txSendingEnabled?1:0);   } //radio off - indicate tx mode
 
 // ===================== INIT =====================
@@ -256,13 +258,24 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
 
 // ===================== RX / TX =====================
 
-void radioStartRx() {
+void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (digitalRead(LORA_BUSY_PIN)) {
     Serial.println("RX: BUSY — skip");
     return;
   }
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
+  sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRtcSteps);
+  if (st == SX126X_STATUS_OK) {
+    radioState = RADIO_RX_ACTIVE;
+    ledOnRX();
+  } else {
+    Serial.print("RX: start fail st="); Serial.println(st);
+    radioState = RADIO_STANDBY;
+  }
+}
+
+void radioStartRx() {
   // Always use a timeout — continuous RX means the radio never returns to standby
   // between slots, blocking any TX that needs to preempt it.
   // Pre-sync or synced but silent >2min: use long RX window (nearly full slot).
@@ -271,32 +284,7 @@ void radioStartRx() {
                        (lastValidCmdUs != 0 &&
                         (micros() - lastValidCmdUs) >= ROCKET_CMD_SILENCE_THRESHOLD_US);
   uint32_t timeoutUs = useLongWindow ? ROCKET_LONG_RX_TIMEOUT_US : ROCKET_RX_TIMEOUT_US;
-  uint32_t timeoutRaw = (uint32_t)(timeoutUs / 15.625f);
-  sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRaw);
-  if (st == SX126X_STATUS_OK) {
-    radioState = RADIO_RX_ACTIVE;
-    ledOn();
-  } else {
-    Serial.print("RX: start fail st="); Serial.println(st);
-    radioState = RADIO_STANDBY;
-  }
-}
-
-void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
-  if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.println("RX(timeout): BUSY — skip");
-    return;
-  }
-  sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
-  dio1Fired = false;
-  sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRtcSteps);
-  if (st == SX126X_STATUS_OK) {
-    radioState = RADIO_RX_ACTIVE;
-    ledOn();
-  } else {
-    Serial.print("RX(timeout): start fail st="); Serial.println(st);
-    radioState = RADIO_STANDBY;
-  }
+  radioStartRxTimeout((uint32_t)(timeoutUs / 15.625f));
 }
 
 bool radioStartTx(const uint8_t* pkt, size_t len) {
@@ -340,7 +328,7 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   st = sx126x_set_tx(&radioCtx, 0);  // timeout=0 = no TX timeout (fires TxDone when done)
   if (st == SX126X_STATUS_OK) {
     radioState = RADIO_TX_ACTIVE;
-    ledOn();
+    ledOnTX();
     return true;
   }
   Serial.print("TX: set_tx fail st="); Serial.println(st);
