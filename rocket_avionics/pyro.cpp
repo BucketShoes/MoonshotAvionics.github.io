@@ -24,6 +24,7 @@
 #include <driver/rmt_tx.h>
 #include <driver/rmt_encoder.h>
 #include <driver/rmt_common.h>
+#include <driver/gpio.h>
 
 // ===================== MODULE STATE =====================
 
@@ -59,7 +60,12 @@ void pyroInit() {
   pinMode(PYRO_CH2_PIN, OUTPUT); digitalWrite(PYRO_CH2_PIN, LOW);
   pinMode(PYRO_CH3_PIN, OUTPUT); digitalWrite(PYRO_CH3_PIN, LOW);
 
-  // Continuity sense: input with internal pulldown; high = wire connected
+  // Continuity sense: input with internal pulldown; high = wire connected.
+  // GPIO 39/40/41 are USB/JTAG-muxed on ESP32-S3; gpio_reset_pin() releases them
+  // from the JTAG matrix so digitalRead() works.
+  gpio_reset_pin((gpio_num_t)PYRO_SENSE_CH1_PIN);
+  gpio_reset_pin((gpio_num_t)PYRO_SENSE_CH2_PIN);
+  gpio_reset_pin((gpio_num_t)PYRO_SENSE_CH3_PIN);
   pinMode(PYRO_SENSE_CH1_PIN, INPUT_PULLDOWN);
   pinMode(PYRO_SENSE_CH2_PIN, INPUT_PULLDOWN);
   pinMode(PYRO_SENSE_CH3_PIN, INPUT_PULLDOWN);
@@ -75,7 +81,7 @@ void pyroInit() {
     ch_cfg.gpio_num          = (gpio_num_t)pyroChannels[i].pin;
     ch_cfg.clk_src           = RMT_CLK_SRC_RC_FAST;  // survives light sleep; immune to APB gating
     ch_cfg.resolution_hz     = PYRO_RMT_RESOLUTION_HZ;
-    ch_cfg.mem_block_symbols = 2;   // minimum; we only ever queue 1 symbol
+    ch_cfg.mem_block_symbols = 48;  // ESP32-S3 RMT hardware minimum (SOC requirement)
     ch_cfg.trans_queue_depth = 1;
     ch_cfg.flags.invert_out  = 0;
     ch_cfg.flags.with_dma    = 0;
