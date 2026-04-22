@@ -198,6 +198,9 @@ enum RadioSlotConfig : uint8_t {
   RADIO_CFG_LR     = 1,
 };
 
+extern RadioSlotConfig bsTargetCfg;
+void bsApplyCfgIfNeeded();
+
 // Initialise radio hardware. Call once in setup() after SPI is started.
 bool bsRadioInit();
 

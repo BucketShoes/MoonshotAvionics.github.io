@@ -466,10 +466,8 @@ static void dispatchCmdTx() {
   // Commands are always sent on NORMAL config (not LR). Ensure target is set before TX.
   extern RadioSlotConfig bsTargetCfg;
   extern void bsApplyCfgIfNeeded();
-  if (bsTargetCfg != RADIO_CFG_NORMAL) {
-    bsTargetCfg = RADIO_CFG_NORMAL;
-    bsApplyCfgIfNeeded();
-  }
+  bsTargetCfg = RADIO_CFG_NORMAL;
+  bsApplyCfgIfNeeded();
 
   if (!bsRadioStartTx(cmdTx.pkt, cmdTx.pktLen)) {
     bsSyncTxInFlight = false;

@@ -43,7 +43,7 @@ bool         bsLoraReady  = false;
 // ===================== PER-SLOT CONFIG STATE (forward-declared for bsHandleRxDone) =====================
 
 static RadioSlotConfig bsAppliedCfg    = RADIO_CFG_NORMAL;
-static RadioSlotConfig bsTargetCfg     = RADIO_CFG_NORMAL;
+RadioSlotConfig bsTargetCfg     = RADIO_CFG_NORMAL;
 static bool            bsCurrentSlotIsLR = false;
 
 // ===================== SLOT CLOCK STATE =====================
@@ -248,7 +248,7 @@ static void bsCheckBusyWatchdog() {
   }
 }
 
-static void bsApplyCfgIfNeeded() {
+void bsApplyCfgIfNeeded() {
   if (bsAppliedCfg == bsTargetCfg) return;
 
   // Only apply config when the radio is STANDBY. Issuing SPI mod/pkt-param commands while an
