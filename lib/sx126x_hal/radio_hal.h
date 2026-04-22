@@ -55,6 +55,11 @@ extern volatile bool     dio1Fired;       // set by ISR on each DIO1 rising edge
 extern volatile uint64_t dio1CaptureVal;  // micros() at that edge (~1 µs resolution)
 extern volatile uint32_t dio1IsrCount;    // total ISR fires since boot (diagnostic)
 
+// SPI call drops: the HAL drops a call immediately when BUSY is asserted rather than blocking.
+// Main loop can dump these periodically to see whether the radio is stuck BUSY.
+extern uint32_t totalBusyReadDrops;
+extern uint32_t totalBusyWriteDrops;
+
 // Microsecond timestamp of the most recent DIO1 rising edge.
 // Valid only while dio1Fired is true (or immediately after clearing it).
 inline uint64_t dio1TimestampUs() {

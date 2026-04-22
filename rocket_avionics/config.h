@@ -107,7 +107,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
 // Indicates a missed DIO1 IRQ or stuck DIO1 line. Mirrors base station's RX_STUCK_MAX_SLOTS.
-#define RX_STUCK_MAX_SLOTS             2UL
+#define RX_STUCK_MAX_SLOTS             20UL
 
 // When to widen RX window: no valid command heard from base for this long.
 // "Silence" is the wrong framing — signal can be fine but we may have lost sync

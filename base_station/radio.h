@@ -80,10 +80,22 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define BS_SYNC_BACKOFF_MS         240'000UL   // after tight-mode retries exhaust, retry once per this
                                                // (still with WALK added so backoff retries also sweep phases)
 #define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long (so the rocket knows it can reduce listen time safely)
+#define BS_PING_SILENCE_MAX_MS     90'000UL    // stop pinging if no telem heard in this long. The point of
+                                               // ping is to keep the rocket in narrow mode while sync is good.
+                                               // If we've lost telem we WANT the rocket to fall back to wide
+                                               // listen (after ROCKET_NO_BASE_HEARD_THRESHOLD_US) so the next
+                                               // resync attempt has a chance to land.
+
+// Diagnostic: occasionally open a wide RX window (NORMAL cfg, channel match, ignores slot timing)
+// to confirm the radio can still receive *anything*. If we see telem here but nothing on the
+// normal slot windows, the bug is in the slot machine; if we see nothing even here, the radio is
+// stuck. Runs briefly so the normal state machine still exercises its paces between runs.
+#define BS_DIAG_RX_INTERVAL_MS     30'000UL
+#define BS_DIAG_RX_DURATION_MS      2'000UL
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
 // Applies to both base and rocket. Indicates a missed DIO1 IRQ (or stuck DIO1 line).
-#define RX_STUCK_MAX_SLOTS         2UL
+#define RX_STUCK_MAX_SLOTS         20UL
 
 #define LOG_RX_START false
 #define LOG_RX_TIMEOUT false

@@ -610,7 +610,12 @@ void bsHandleSyncSend() {
   }
 
   // Periodic ping: if no command sent in BS_PING_INTERVAL_MS.
-  if (bsLastCmdSentMs != 0 && (now - bsLastCmdSentMs) >= BS_PING_INTERVAL_MS) {
+  // Skip if we haven't heard telemetry recently — the whole point of the ping is to tell the
+  // rocket "sync is good, keep short windows". If we've gone silent we WANT the rocket to fall
+  // back to wide listen (after ROCKET_NO_BASE_HEARD_THRESHOLD_US) so a resync can land.
+  bool telemRecent = (bsLastTelemRxMs != 0) && ((now - bsLastTelemRxMs) < BS_PING_SILENCE_MAX_MS);
+  if (bsSynced && telemRecent &&
+      bsLastCmdSentMs != 0 && (now - bsLastCmdSentMs) >= BS_PING_INTERVAL_MS) {
     bsLastCmdSentMs  = now;
     bsPingNeedsQueue = true;
     Serial.println("BS SYNC: queuing ping");
@@ -728,6 +733,37 @@ void bsHandleRadio() {
   if (dio1Fired) {
     bsRadioHandleIrq();
     bsBgRssiReady = false;  // reset after any IRQ — next RX start is a fresh window
+  }
+
+  // Diagnostic wide-RX window: overrides the slot machine for BS_DIAG_RX_DURATION_MS every
+  // BS_DIAG_RX_INTERVAL_MS. Only runs while synced (pre-sync is already wide RX). Purpose:
+  // prove the radio can still hear the rocket at all. If this catches packets but the slot
+  // windows don't, the slot machine is the bug. If this catches nothing either, the radio is
+  // stuck. Kept brief so the rest of the machine still exercises.
+  {
+    static unsigned long bsDiagNextMs  = 0;
+    static unsigned long bsDiagStartMs = 0;
+    static bool          bsDiagActive  = false;
+    unsigned long nowMs = millis();
+    if (bsSynced && !bsDiagActive && nowMs >= bsDiagNextMs && bsRadioState == BS_RADIO_STANDBY) {
+      bsDiagActive  = true;
+      bsDiagStartMs = nowMs;
+      bsDiagNextMs  = nowMs + BS_DIAG_RX_INTERVAL_MS;
+      // Force NORMAL config + long RX window. timeoutUs must fit uint32_t / 15.625.
+      bsTargetCfg = RADIO_CFG_NORMAL;
+      bsApplyCfgIfNeeded();
+      uint32_t diagUs = BS_DIAG_RX_DURATION_MS * 1000UL;
+      bsRadioStartRxTimeout((uint32_t)(diagUs / 15.625f));
+      Serial.print("BS DIAG: wide-RX "); Serial.print(BS_DIAG_RX_DURATION_MS); Serial.println("ms");
+    }
+    if (bsDiagActive && (nowMs - bsDiagStartMs) >= BS_DIAG_RX_DURATION_MS) {
+      bsDiagActive = false;
+      // If still RX_ACTIVE, let the HW timeout end it naturally — don't force standby (could
+      // cut a preamble). The slot machine will resume on the next STANDBY transition.
+      // bsLastHandledSlot is left alone; slot progression resumes with whatever slot we land in.
+      Serial.println("BS DIAG: window done");
+    }
+    if (bsDiagActive) return;  // don't run the slot machine during diagnostic window
   }
 
   // Background RSSI sampling: every loop while RX is active, after the first loop.
@@ -850,6 +886,27 @@ void bsHandleRadio() {
   if (win == WIN_CMD && !bsCmdSentThisSlot && posInSlot >= BS_CMD_TX_OFFSET_US) {
     bsCmdSentThisSlot = true;
     bsWinCmdReady     = true;
+  }
+
+  // Compact state dump every 5s. Not spammy, and only the diagnostic counters that change.
+  // telemAgeMs = -1 means never received. Counters are absolute totals since boot.
+  {
+    static unsigned long bsLastDumpMs = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - bsLastDumpMs >= 5000) {
+      bsLastDumpMs = nowMs;
+      long telemAge = (bsLastTelemRxMs == 0) ? -1 : (long)(nowMs - bsLastTelemRxMs);
+      Serial.print("BS STATE: sync="); Serial.print(bsSynced ? 'Y' : 'N');
+      Serial.print(" rstate="); Serial.print((int)bsRadioState);
+      Serial.print(" busy="); Serial.print(digitalRead(LORA_BUSY_PIN));
+      Serial.print(" cfg="); Serial.print(bsAppliedCfg == RADIO_CFG_LR ? "LR" : "NRM");
+      Serial.print(" slot="); Serial.print(slotNum);
+      Serial.print(" seqIdx="); Serial.print(seqIdx);
+      Serial.print(" telemAgeMs="); Serial.print(telemAge);
+      Serial.print(" dio1ISR="); Serial.print(dio1IsrCount);
+      Serial.print(" brDrops="); Serial.print(totalBusyReadDrops);
+      Serial.print(" bwDrops="); Serial.println(totalBusyWriteDrops);
+    }
   }
 }
 

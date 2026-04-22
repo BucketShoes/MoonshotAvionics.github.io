@@ -58,8 +58,9 @@ extern "C" sx126x_hal_status_t sx126x_hal_write(
                 }
             }
         } else {
-            // Runtime: slot window missed — drop immediately, never spin
-            Serial.println("HAL: BUSY on write — dropped");
+            // Runtime: slot window missed — drop immediately, never spin.
+            // Counter is dumped periodically from the main loop (see totalBusyWriteDrops).
+            totalBusyWriteDrops++;
             return SX126X_HAL_STATUS_ERROR;
         }
     }
@@ -88,6 +89,8 @@ extern "C" sx126x_hal_status_t sx126x_hal_write(
 
 uint32_t lastBusyDrop;
 uint32_t busyDrops;
+uint32_t totalBusyReadDrops = 0;
+uint32_t totalBusyWriteDrops = 0;
 extern "C" sx126x_hal_status_t sx126x_hal_read(
     const void*    context,
     const uint8_t* command,
@@ -112,16 +115,9 @@ extern "C" sx126x_hal_status_t sx126x_hal_read(
             // The flag is single-use — clear it so the next read is gated normally.
             const_cast<sx126x_hal_context_t*>(c)->allowBusyRead = false;
         } else {
-            // Runtime: slot window missed — drop immediately, never spin
-            uint32_t now=millis();
-            if (lastBusyDrop-now>100){
-                Serial.print("HAL: BUSY on read — dropped x");
-                Serial.println(busyDrops);
-                lastBusyDrop=now;
-                busyDrops=0;
-            } else {
-                busyDrops++;
-            }
+            // Runtime: slot window missed — drop immediately, never spin.
+            // Counter is dumped periodically from the main loop (see totalBusyReadDrops).
+            totalBusyReadDrops++;
             return SX126X_HAL_STATUS_ERROR;
         }
     }
