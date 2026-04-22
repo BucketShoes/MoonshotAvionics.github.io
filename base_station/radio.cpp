@@ -78,8 +78,28 @@ static sx126x_lora_bw_t bwKHzToEnum(float bwKHz) {
   return SX126X_LORA_BW_125;
 }
 
-static void bsLedOn()  { ledcWrite(LED_PIN, 64); } //indicate radio is on.
-static void bsLedOff() { ledcWrite(LED_PIN, 0);   } //radio off. base has no other status to indicate
+// LED control: logic-driven or BUSY-pin-driven per LED_MODE config.
+// In LOGIC mode, the state machine calls bsLedOn/bsLedOff to indicate radio activity.
+// In BUSY mode, the LED directly mirrors the BUSY pin (updated each loop), allowing direct observation
+// of SX1262 state independent of the slot machine logic.
+static void bsLedOn()  {
+#if LED_MODE == LED_MODE_LOGIC
+  ledcWrite(LED_PIN, 64);
+#endif
+}
+
+static void bsLedOff() {
+#if LED_MODE == LED_MODE_LOGIC
+  ledcWrite(LED_PIN, 0);
+#endif
+}
+
+static void bsLedUpdateFromBusy() {
+#if LED_MODE == LED_MODE_BUSY
+  // Mirror BUSY pin directly: HIGH → LED on (radio active), LOW → LED off.
+  ledcWrite(LED_PIN, digitalRead(LORA_BUSY_PIN) ? 64 : 0);
+#endif
+}
 
 // ===================== INIT =====================
 
@@ -737,6 +757,9 @@ void bsHandleRadio() {
     bsBgRssiReady = false;  // reset after any IRQ — next RX start is a fresh window
   }
 
+  // Update LED directly from BUSY pin if in BUSY_DRIVEN mode.
+  bsLedUpdateFromBusy();
+
   // Diagnostic wide-RX window: overrides the slot machine for BS_DIAG_RX_DURATION_MS every
   // BS_DIAG_RX_INTERVAL_MS. Only runs while synced (pre-sync is already wide RX). Purpose:
   // prove the radio can still hear the rocket at all. If this catches packets but the slot
@@ -864,11 +887,23 @@ void bsHandleRadio() {
   // very first slot of the session).
   if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY) {
     if (win == WIN_TELEM) {
+      // Ensure config is set to the current slot's modulation before starting RX.
+      RadioSlotConfig slotCfg = bsCfgForSlot(win);
+      if (slotCfg != bsTargetCfg) {
+        bsTargetCfg = slotCfg;
+        bsApplyCfgIfNeeded();
+      }
       bsMissedTelemSlots++;
       bsRadioStartRx();
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;
     } else if (win == WIN_LR) {
+      // Ensure config is set for WIN_LR before starting RX.
+      RadioSlotConfig slotCfg = bsCfgForSlot(win);
+      if (slotCfg != bsTargetCfg) {
+        bsTargetCfg = slotCfg;
+        bsApplyCfgIfNeeded();
+      }
       // WIN_LR RX timeout covers most of the slot, minus a small safety margin. The SX1262
       // timeout is "time to detect preamble"; once detected the reception completes regardless.
       bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50'000UL) / 15.625f));

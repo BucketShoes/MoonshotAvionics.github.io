@@ -21,6 +21,12 @@
 
 #define LED_PIN       18
 
+// LED_MODE: 0 = logic-driven (default, follows radio state machine decisions).
+// 1 = BUSY-pin-driven (directly mirrors SX1262 BUSY pin state for direct radio observation).
+#define LED_MODE_LOGIC 0
+#define LED_MODE_BUSY  1
+#define LED_MODE       LED_MODE_LOGIC
+
 #define LORA_CR       5      // 4/5 coding rate
 #define LORA_PREAMBLE 6      // preamble symbols
 // Sync word 0x12 (private) written as register pair 0x14, 0x24

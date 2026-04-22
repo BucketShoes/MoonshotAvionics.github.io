@@ -12,6 +12,7 @@
 #include "log_store.h"
 #include "esp_wifi.h"
 #include "radio.h"
+#include "tagged_serial.h"  // Serial wrapper that prefixes boot-relative micros
 
 #define VEXT_CTRL_PIN 3
 #define VBAT_ADC_PIN      1
@@ -23,6 +24,10 @@
 #define WIFI_CHANNEL  1
 
 #define DEVICE_ID     157
+
+// ===================== TAGGED SERIAL =====================
+unsigned long bootMicros = 0;
+TaggedSerial taggedSerial(&Serial0);
 
 // ===================== OTA COMMAND IDs (matching rocket_avionics/config.h) =====================
 #define CMD_OTA_BEGIN     0x50
@@ -458,6 +463,14 @@ static void dispatchCmdTx() {
   bool isSyncPkt = (cmdTx.pktLen == 17 && cmdTx.pkt[2] == 0x41);
   if (isSyncPkt) bsSyncTxInFlight = true;
 
+  // Commands are always sent on NORMAL config (not LR). Ensure target is set before TX.
+  extern RadioSlotConfig bsTargetCfg;
+  extern void bsApplyCfgIfNeeded();
+  if (bsTargetCfg != RADIO_CFG_NORMAL) {
+    bsTargetCfg = RADIO_CFG_NORMAL;
+    bsApplyCfgIfNeeded();
+  }
+
   if (!bsRadioStartTx(cmdTx.pkt, cmdTx.pktLen)) {
     bsSyncTxInFlight = false;
     Serial.println("CMD TX start fail — will retry next WIN_CMD slot");
@@ -804,7 +817,8 @@ void deinitBLE() {
 // ===================== SETUP =====================
 
 void setup() {
-  Serial.begin(SERIAL_BAUD);
+  bootMicros = micros();  // Capture boot time for tagged serial timestamps
+  taggedSerial.begin(SERIAL_BAUD);
   delay(500);
   Serial.println("\n=== Rocket Base Station ===");
 
