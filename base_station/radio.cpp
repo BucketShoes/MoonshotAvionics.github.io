@@ -675,12 +675,11 @@ void bsHandleRadio() {
     bsCmdSentThisSlot  = false;
     bsRxStartedThisSlot = false;
 
-    // Stop any RX from the previous slot before deciding what this slot does.
-    if (bsRadioState == BS_RADIO_RX_ACTIVE) {
-      bsRadioStandby();
-    }
+    // Never force standby at a slot boundary — if RX is still active, a preamble may have
+    // been detected and a packet is arriving. Let the hardware timeout or packet-end fire
+    // the IRQ naturally. Forcing standby mid-packet loses telemetry frames.
+    // bsRxStartedThisSlot=false means we won't try to start a new RX until radio is STANDBY.
 
-    // Update target config. Only restart the sequence if target changed.
     RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
     if (newTarget != bsTargetCfg) {
       bsTargetCfg = newTarget;
@@ -690,16 +689,16 @@ void bsHandleRadio() {
 
   bsApplyCfgIfNeeded();
 
-  // Config applied — execute slot action if RX not yet started.
-  if (!bsRxStartedThisSlot) {
+  // Start RX for this slot if not yet started and radio is free.
+  // If a previous slot's RX is still running (overrun), wait — bsRadioStartRx* checks BUSY
+  // and would skip anyway, but also don't mark bsRxStartedThisSlot=true so we retry next loop.
+  if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY) {
     if (win == WIN_TELEM) {
       bsMissedTelemSlots++;
-      // WIN_TELEM: rocket TXes, we RX. Start immediately (posInSlot ~0 on first loop).
       bsRadioStartRx();
       bsRxStartedThisSlot = true;
-      bsBgRssiReady = false;  // fresh window — skip first RSSI sample
+      bsBgRssiReady = false;
     } else if (win == WIN_LR) {
-      // WIN_LR: rocket TXes with implicit header SF12/BW125. Listen with longer timeout, since the symol rate is lower, we need more time to catch a few symbols if there is one happening.
       //TODO: this should be slightly longer, due to the slower symbol rate; but just because the packet is long doesnt mean we need to listen longer - timeout is how long to wait for the START of a detection, not how long to finish
       bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50000UL) / 15.625f));
       bsRxStartedThisSlot = true;
