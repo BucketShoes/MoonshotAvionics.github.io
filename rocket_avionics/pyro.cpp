@@ -104,6 +104,7 @@ void pyroInit() {
   }
 
   pyroState = {};
+  pyroState.ready = true;
 }
 
 // ===================== NON-BLOCKING UPDATE =====================
@@ -117,6 +118,8 @@ void nonblockingPyro() {
       pyroState.activeChannel = 0;
     }
   }
+
+  if (!pyroState.ready) return;
 
   // Continuity: digitalRead on all three sense pins. Each call is one register read (~1 µs).
   pyroState.ch1Continuity = (digitalRead(PYRO_SENSE_CH1_PIN) != 0);
