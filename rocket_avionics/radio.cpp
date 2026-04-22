@@ -444,6 +444,7 @@ static void radioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     radioState = RADIO_STANDBY;
+    if (LOG_TX_DONE)
     {
       uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
