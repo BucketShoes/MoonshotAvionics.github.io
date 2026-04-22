@@ -886,24 +886,18 @@ void bsHandleRadio() {
   // busy with TX/RX of the previous slot when the early-listen window opened, or this is the
   // very first slot of the session).
   if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY) {
-    if (win == WIN_TELEM) {
       // Ensure config is set to the current slot's modulation before starting RX.
       RadioSlotConfig slotCfg = bsCfgForSlot(win);
       if (slotCfg != bsTargetCfg) {
         bsTargetCfg = slotCfg;
         bsApplyCfgIfNeeded();
       }
+    if (win == WIN_TELEM) {
       bsMissedTelemSlots++;
       bsRadioStartRx();
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;
     } else if (win == WIN_LR) {
-      // Ensure config is set for WIN_LR before starting RX.
-      RadioSlotConfig slotCfg = bsCfgForSlot(win);
-      if (slotCfg != bsTargetCfg) {
-        bsTargetCfg = slotCfg;
-        bsApplyCfgIfNeeded();
-      }
       // WIN_LR RX timeout covers most of the slot, minus a small safety margin. The SX1262
       // timeout is "time to detect preamble"; once detected the reception completes regardless.
       bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50'000UL) / 15.625f));
