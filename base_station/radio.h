@@ -47,7 +47,7 @@ enum WindowMode : uint8_t {
   WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
 };
 
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
 #define SLOT_SEQUENCE_LEN   (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 
@@ -84,6 +84,9 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
 // Applies to both base and rocket. Indicates a missed DIO1 IRQ (or stuck DIO1 line).
 #define RX_STUCK_MAX_SLOTS         2UL
+
+#define LOG_RX_START false
+#define LOG_RX_TIMEOUT false
 
 
 // ===================== RADIO STATE =====================

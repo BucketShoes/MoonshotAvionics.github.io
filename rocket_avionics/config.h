@@ -102,7 +102,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
-#define ROCKET_RX_TIMEOUT_US           100'000UL                        // short: synced + heard base recently, save battery
+#define ROCKET_RX_TIMEOUT_US           23'000UL                        // short: synced + heard base recently, save battery
 #define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 20'000UL)    // long: pre-sync, or base-silent lost-rocket fallback
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
@@ -122,6 +122,8 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define ROCKET_NO_BASE_HEARD_THRESHOLD_US  124'000'000UL  // 124 seconds (>2 ping intervals)
 
 
+#define LOG_RX_DONE true
+#define LOG_RX_TIMEOUT false
 
 
 // ===================== SLOT CONFIG =====================

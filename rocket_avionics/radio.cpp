@@ -462,7 +462,7 @@ static void radioHandleIrq() {
     // Log RxDone timing relative to current slot — diagnostic for sync drift. Pre-sync
     // the anchor is 0 so posInSlot is (micros() % SLOT_DURATION); that's still useful
     // because CMD_SET_SYNC RxDone is the event that SETS the anchor.
-    {
+    if (LOG_RX_DONE) {
       uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
       uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
@@ -479,7 +479,7 @@ static void radioHandleIrq() {
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     radioState = RADIO_STANDBY;
     ledOff();
-    {
+    if (LOG_RX_TIMEOUT) {
       uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
       uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
