@@ -451,6 +451,10 @@ static void dispatchCmdTx() {
   Serial.print("/"); Serial.print(cmdTx.sends);
   Serial.print(" len="); Serial.println(cmdTx.pktLen);
 
+  // Detect CMD_SET_SYNC by byte inspection, not by source (internal vs browser-forwarded).
+  // Both paths load cmdTx with the same 17-byte packet where pkt[2] = CMD_SET_SYNC (0x41).
+  // This ensures the base re-anchors on TxDone for ANY sync TX — internally queued
+  // (bsHandleSyncSend) or forwarded from the UI via queueCommandTx(). DO NOT narrow this check.
   bool isSyncPkt = (cmdTx.pktLen == 17 && cmdTx.pkt[2] == 0x41);
   if (isSyncPkt) bsSyncTxInFlight = true;
 
@@ -912,10 +916,16 @@ void loop() {
   if (bsLoraReady) {
     bsHandleRadio();
 
-    // Auto-sync: set bsSyncNeedsQueue at 2s after boot, then every 60s
+    // Auto-sync: bsHandleSyncSend sets bsSyncNeedsQueue while never-synced (tight walk-retries
+    // then slow backoff). After TxDone, bsSynced=true and no further automatic sync is queued.
+    // Ping is queued separately on a 60s cadence.
     bsHandleSyncSend();
 
     // Build and load sync packet when flagged. Only load if no TX already queued.
+    // Internally generated sync always fires immediately (waitMs=0) because by definition
+    // the rocket's slot timing isn't knowable yet — we want the send to land as soon as the
+    // radio is standby, and subsequent walk-retries will land at different phases of the
+    // rocket's slot cycle. User-initiated sync via queueCommandTx() uses caller-supplied waitMs.
     if (bsSyncNeedsQueue && !cmdTx.active) {
       bsSyncNeedsQueue = false;
       uint8_t syncPkt[17];
@@ -924,16 +934,15 @@ void loop() {
       cmdTx.pktLen   = (uint8_t)syncLen;
       cmdTx.sends    = 1;
       cmdTx.sent     = 0;
-      // Pre-sync: waitMs=0 so send fires as soon as radio is standby (no slot wait).
-      // Post-sync: wait up to 4s for the next WIN_CMD slot; if missed, send out-of-slot.
-      cmdTx.waitMs   = bsSynced ? 4000 : 0;
+      cmdTx.waitMs   = 0;
       cmdTx.queuedMs = millis();
       cmdTx.active   = true;
-      Serial.print("SYNC loaded nonce="); Serial.print(highestNonce);
-      Serial.print(" waitMs="); Serial.println(cmdTx.waitMs);
+      Serial.print("SYNC loaded nonce="); Serial.println(highestNonce);
     }
 
     // Build and load ping packet when flagged. Only load if no TX already queued.
+    // Ping waits up to 4s for the next WIN_CMD slot so it lands on the rocket's listen window.
+    // If the wait expires (shouldn't normally happen — WIN_CMD comes every ~840ms), send out-of-slot.
     if (bsPingNeedsQueue && !cmdTx.active) {
       bsPingNeedsQueue = false;
       uint8_t pingPkt[17];
@@ -942,11 +951,10 @@ void loop() {
       cmdTx.pktLen   = (uint8_t)pingLen;
       cmdTx.sends    = 1;
       cmdTx.sent     = 0;
-      cmdTx.waitMs   = bsSynced ? 4000 : 0;
+      cmdTx.waitMs   = 4000;
       cmdTx.queuedMs = millis();
       cmdTx.active   = true;
-      Serial.print("PING loaded nonce="); Serial.print(highestNonce);
-      Serial.print(" waitMs="); Serial.println(cmdTx.waitMs);
+      Serial.print("PING loaded nonce="); Serial.println(highestNonce);
     }
 
     // Dispatch: slot machine signals WIN_CMD (synced path)

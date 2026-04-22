@@ -82,14 +82,16 @@ bool radioInit();
 // ONLY call from radioInit_BLOCKING() or CMD_SET_RADIO while disarmed.
 void radioApplyConfig_BLOCKING();
 
-// Per-slot radio config enum. Updated at each slot boundary; state machine applies
-// changes non-blockingly one SPI command per loop iteration.
+// Per-slot radio config enum. Updated at each slot boundary; applyCfgIfNeeded()
+// issues two SPI commands with up to 100µs BUSY spin between them (typical <20µs).
+// Deferred if radio is not in STANDBY (retries next loop).
 enum RadioSlotConfig : uint8_t {
   RADIO_CFG_NORMAL = 0,
   RADIO_CFG_LR     = 1,
 };
 
-// Start continuous RX (bootstrap mode, no timeout).
+// Start RX with the slot-appropriate timeout (short if synced + recently heard base;
+// long if pre-sync or lost-rocket fallback). See radioStartRx() in radio.cpp.
 void radioStartRx();
 
 // Start windowed RX with a timeout in raw RTC steps (15.625 µs per tick).

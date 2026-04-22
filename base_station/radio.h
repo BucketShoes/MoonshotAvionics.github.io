@@ -56,14 +56,23 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 #define BS_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 50'000UL)  // pre-sync: nearly full slot
 
 // Base station TX timing.
-#define BS_RX_EARLY_US             10'000UL    // start RX this many µs before WIN_TELEM
+#define BS_RX_EARLY_US             10'000UL    // start RX this many µs before a receive-type slot boundary
 #define BS_CMD_TX_OFFSET_US        5'000UL     // fire command this many µs into WIN_CMD
 
-// Command/sync timing.
-#define BS_SYNC_BOOT_DELAY_MS      2'000UL     // send first sync 2s after boot
-#define BS_SYNC_RETRY_MS           10'000UL    // retry sync every 10s if rocket never heard this session
+// Sync timing. See "Hopping radio slot structure.md" for the full model.
+// Sync is only ever sent automatically while still never-synced this session (plus the user
+// can force one via the UI). There is NO silence-based resync — long telem silence is treated
+// as signal quality, not lost sync. A prior auto-resync-on-silence was harmful and has been removed.
+#define BS_SYNC_BOOT_DELAY_MS      2'000UL     // first attempt fires this long after boot
+#define BS_SYNC_RETRY_WALK_MS      340UL       // wait this long between tight-mode retries
+                                               // (<SLOT_DURATION so retries walk through slot phases)
+#define BS_SYNC_TIGHT_RETRIES      6UL         // how many retries to make at the walk interval
+#define BS_SYNC_BACKOFF_MS         120'000UL   // after tight-mode retries exhaust, retry once per this
 #define BS_PING_INTERVAL_MS        60'000UL    // send ping if no command sent in this long
-#define BS_SYNC_SILENCE_MS         2'400'000UL // send sync only if no telem heard for 40 min
+
+// Safety cutoff: force standby if RX has been active for more than this many slot durations.
+// Applies to both base and rocket. Indicates a missed DIO1 IRQ (or stuck DIO1 line).
+#define RX_STUCK_MAX_SLOTS         2UL
 
 
 // ===================== RADIO STATE =====================

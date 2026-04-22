@@ -278,11 +278,15 @@ void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
 void radioStartRx() {
   // Always use a timeout — continuous RX means the radio never returns to standby
   // between slots, blocking any TX that needs to preempt it.
-  // Pre-sync or synced but silent >2min: use long RX window (nearly full slot).
-  // Otherwise: short window if synced and heard command recently.
+  // Long RX window (nearly full slot) applies when:
+  //   - never synced this session (pre-sync bootstrap), OR
+  //   - synced but haven't heard a valid command in >ROCKET_NO_BASE_HEARD_THRESHOLD_US.
+  // The second case is lost-rocket recovery: widening the window lets a fresh
+  // CMD_SET_SYNC from the base land even after short-window timing has drifted.
+  // Does NOT clear radioSynced and does NOT trigger any TX.
   bool useLongWindow = !radioSynced ||
                        (lastValidCmdUs != 0 &&
-                        (micros() - lastValidCmdUs) >= ROCKET_CMD_SILENCE_THRESHOLD_US);
+                        (micros() - lastValidCmdUs) >= ROCKET_NO_BASE_HEARD_THRESHOLD_US);
   uint32_t timeoutUs = useLongWindow ? ROCKET_LONG_RX_TIMEOUT_US : ROCKET_RX_TIMEOUT_US;
   radioStartRxTimeout((uint32_t)(timeoutUs / 15.625f));
 }
@@ -455,8 +459,11 @@ static void radioHandleIrq() {
 //
 // Single slot-based path — anchor=0 pre-sync, anchor=RxDone time when synced.
 // WIN_TELEM: TX telem at slot boundary (or RX if txSendingEnabled=false).
-// WIN_CMD:   RX for the slot. Pre-sync uses longer timeout (980ms), synced uses short (100ms)
-//            or long (800ms if no command heard in 2min). radioStartRx() picks based on state.
+// WIN_CMD:   RX for the slot. radioStartRx() picks short vs long timeout:
+//            - short (ROCKET_RX_TIMEOUT_US) when synced and heard a valid cmd recently
+//            - long (ROCKET_LONG_RX_TIMEOUT_US) when never-synced this session OR when
+//              synced but no valid cmd in ROCKET_NO_BASE_HEARD_THRESHOLD_US (lost-rocket
+//              recovery — lets a fresh CMD_SET_SYNC land after drift).
 // LED: on whenever radio is active (RX or TX), off when standby.
 
 static unsigned long lastTelemTxUs = 0;
@@ -557,8 +564,9 @@ void nonblockingRadio() {
   if (radioState == RADIO_TX_ACTIVE) return;  // TX in progress — wait for TxDone IRQ
 
   // Single slot-based path for both pre-sync and synced operation.
-  // Pre-sync: anchor=0, slots run from boot, RX window nearly full slot.
-  // Synced: anchor from CMD_SET_SYNC RxDone, RX window 100ms (short) or long (if silent).
+  // Pre-sync: anchor=0, slots cycle from boot. WIN_CMD RX uses the long window.
+  // Synced: anchor from CMD_SET_SYNC RxDone. WIN_CMD RX short by default, long if we
+  //   haven't heard from base in ROCKET_NO_BASE_HEARD_THRESHOLD_US (see radioStartRx).
   unsigned long now      = micros();
   unsigned long elapsed  = now - syncAnchorUs;
   uint32_t      slotNum  = (uint32_t)(elapsed / SLOT_DURATION_US);
@@ -572,13 +580,15 @@ void nonblockingRadio() {
   // receiving a packet. The hardware timeout (no preamble) or packet-end IRQ will return it
   // to STANDBY on its own. Forcing standby mid-packet loses the frame.
   // applyCfgIfNeeded() is a no-op while RX_ACTIVE and will retry next slot boundary.
-  // Safety cutoff: if RX has been active for more than 2 full slots, something is stuck
-  // (e.g. DIO1 missed or IRQ handler failed) — force standby to recover.
+  // Safety cutoff: if RX has been active for more than RX_STUCK_MAX_SLOTS full slots,
+  // something is stuck (missed DIO1 or IRQ failure) — force standby to recover.
   static unsigned long rxActiveStartUs = 0;
   if (radioState == RADIO_RX_ACTIVE && rxActiveStartUs == 0) rxActiveStartUs = now;
   if (radioState != RADIO_RX_ACTIVE) rxActiveStartUs = 0;
-  if (radioState == RADIO_RX_ACTIVE && (now - rxActiveStartUs) > 2 * SLOT_DURATION_US) {
-    Serial.println("RADIO: RX stuck >2 slots — forcing standby");
+  if (radioState == RADIO_RX_ACTIVE &&
+      (now - rxActiveStartUs) > RX_STUCK_MAX_SLOTS * SLOT_DURATION_US) {
+    Serial.print("RADIO: RX stuck >"); Serial.print(RX_STUCK_MAX_SLOTS);
+    Serial.println(" slots — forcing standby");
     radioStandby();
     rxActiveStartUs = 0;
   }

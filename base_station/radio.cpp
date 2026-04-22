@@ -231,6 +231,11 @@ static void bsCheckBusyWatchdog() {
 static void bsApplyCfgIfNeeded() {
   if (bsAppliedCfg == bsTargetCfg) return;
 
+  // Only apply config when the radio is STANDBY. Issuing SPI mod/pkt-param commands while an
+  // RX or TX is in progress would corrupt it. Retry next loop — the caller is called from
+  // bsHandleRadio every iteration, so config will apply as soon as the radio returns to standby.
+  if (bsRadioState != BS_RADIO_STANDBY) return;
+
   if (digitalRead(LORA_BUSY_PIN)) {
     bsCheckBusyWatchdog();
     return;  // retry next slot boundary
@@ -276,9 +281,6 @@ static void bsApplyCfgIfNeeded() {
 }
 
 // ===================== RX / TX =====================
-
-// Synced RX window: listen early (BS_RX_EARLY_US before slot) for duration BS_RX_TIMEOUT_US.
-// Both defined in radio.h.
 
 void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (digitalRead(LORA_BUSY_PIN)) {
@@ -506,35 +508,45 @@ bool bsPingNeedsQueue  = false;
 bool bsSyncTxInFlight  = false;
 bool bsWinCmdReady     = false;
 
+// Auto-sync attempt counter. Only advances while !bsSynced. Used to switch from tight-mode
+// walk retries (340ms spacing, BS_SYNC_TIGHT_RETRIES attempts) to slow-backoff retries
+// (BS_SYNC_BACKOFF_MS spacing, indefinite) once the walk has swept through a few slot phases.
+// Reset to 0 would only matter if we re-enter the unsynced state, which currently cannot happen
+// without a reboot (bsSynced is never cleared except by initialisation).
+static uint32_t bsSyncAttemptCount = 0;
+
 void bsHandleSyncSend() {
   unsigned long now = millis();
 
-  // Boot-time sync: 2s after boot, always (no telem yet so silence check not used).
-  bool timeForSync = (bsLastSyncSendMs == 0) && ((now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS);
+  // Automatic sync is only sent while never-synced this session. A user-initiated sync from
+  // the UI bypasses this entirely and goes through queueCommandTx() with user-supplied waitMs.
+  // There is NO silence-based auto-resync — see radio.h BS_SYNC_* comments.
+  if (!bsSynced) {
+    bool timeForSync = false;
 
-  // Pre-sync retry: keep retrying every 10s until we are synced AND have heard telemetry.
-  // bsLastTelemRxMs alone is not enough — an out-of-slot catch during a long pre-sync RX window
-  // sets it without giving us a valid timing anchor. Require bsSynced too.
-  if (!timeForSync && !bsSynced && bsLastSyncSendMs != 0 &&
-      (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_MS) {
-    timeForSync = true;
-  }
-
-  // Silence-based sync: haven't heard the rocket in 40 minutes.
-  if (!timeForSync && bsLastTelemRxMs != 0 &&
-      (now - bsLastTelemRxMs) >= BS_SYNC_SILENCE_MS) {
-    // Only re-trigger if we haven't sent a sync recently (avoid hammering).
-    if (bsLastSyncSendMs == 0 || (now - bsLastSyncSendMs) >= BS_SYNC_SILENCE_MS) {
-      timeForSync = true;
+    if (bsLastSyncSendMs == 0) {
+      // First attempt: fires BS_SYNC_BOOT_DELAY_MS after boot.
+      timeForSync = (now - bsSyncBootMs) >= BS_SYNC_BOOT_DELAY_MS;
+    } else if (bsSyncAttemptCount < BS_SYNC_TIGHT_RETRIES) {
+      // Tight-mode walk: each retry BS_SYNC_RETRY_WALK_MS after the previous. Because the
+      // walk interval is less than SLOT_DURATION, successive attempts land at different phases
+      // of the rocket's slot cycle — deliberately unaligned so we catch the rocket's listen window.
+      timeForSync = (now - bsLastSyncSendMs) >= BS_SYNC_RETRY_WALK_MS;
+    } else {
+      // Slow backoff: if tight mode exhausted and we're still unsynced, keep trying every
+      // BS_SYNC_BACKOFF_MS indefinitely.
+      timeForSync = (now - bsLastSyncSendMs) >= BS_SYNC_BACKOFF_MS;
     }
-  }
 
-  if (timeForSync) {
-    bsLastSyncSendMs = now;
-    bsLastCmdSentMs  = now;
-    bsSyncNeedsQueue = true;
-    Serial.println("BS SYNC: queuing sync (silence or boot)");
-    return;
+    if (timeForSync) {
+      bsLastSyncSendMs = now;
+      bsLastCmdSentMs  = now;
+      bsSyncAttemptCount++;
+      bsSyncNeedsQueue = true;
+      Serial.print("BS SYNC: queuing sync (attempt="); Serial.print(bsSyncAttemptCount);
+      Serial.println(bsSyncAttemptCount <= BS_SYNC_TIGHT_RETRIES ? " tight)" : " backoff)");
+      return;
+    }
   }
 
   // Periodic ping: if no command sent in BS_PING_INTERVAL_MS.
@@ -640,6 +652,18 @@ static bool  bsBgRssiInit = false;
 static bool  bsBgRssiReady = false;  // false on first loop after radioStartRx(), true after
 #define BG_RSSI_ALPHA  0.05f
 
+// Helper: maps a slot type to the modulation config it needs. Used by the slot machine and
+// the early-listen path so both request the same config for a given slot type.
+static RadioSlotConfig bsCfgForSlot(WindowMode w) {
+  return (w == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
+}
+
+// Helper: does this slot type have the base in receive mode? Early-listen only fires for
+// receive-type slots; TX slots (WIN_CMD) must not start RX.
+static bool bsSlotIsReceive(WindowMode w) {
+  return (w == WIN_TELEM) || (w == WIN_LR);
+}
+
 void bsHandleRadio() {
   if (dio1Fired) {
     bsRadioHandleIrq();
@@ -670,6 +694,19 @@ void bsHandleRadio() {
   uint8_t       seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
   WindowMode    win       = SLOT_SEQUENCE[seqIdx];
 
+  // Safety cutoff: if RX has been active for more than RX_STUCK_MAX_SLOTS slot durations,
+  // force standby. Assumes a missed DIO1 IRQ / stuck DIO1 line. Mirrors the rocket's behaviour.
+  static unsigned long bsRxActiveStartUs = 0;
+  if (bsRadioState == BS_RADIO_RX_ACTIVE && bsRxActiveStartUs == 0) bsRxActiveStartUs = now;
+  if (bsRadioState != BS_RADIO_RX_ACTIVE) bsRxActiveStartUs = 0;
+  if (bsRadioState == BS_RADIO_RX_ACTIVE &&
+      (now - bsRxActiveStartUs) > RX_STUCK_MAX_SLOTS * SLOT_DURATION_US) {
+    Serial.print("BS RADIO: RX stuck >"); Serial.print(RX_STUCK_MAX_SLOTS);
+    Serial.println(" slots — forcing standby");
+    bsRadioStandby();
+    bsRxActiveStartUs = 0;
+  }
+
   if (slotNum != bsLastHandledSlot) {
     bsLastHandledSlot = slotNum;
     bsCmdSentThisSlot  = false;
@@ -680,18 +717,58 @@ void bsHandleRadio() {
     // the IRQ naturally. Forcing standby mid-packet loses telemetry frames.
     // bsRxStartedThisSlot=false means we won't try to start a new RX until radio is STANDBY.
 
-    RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
-    if (newTarget != bsTargetCfg) {
-      bsTargetCfg = newTarget;
-    }
     bsCurrentSlotIsLR = (win == WIN_LR);
+    // Target config is selected below — the early-listen path may have already set it to the
+    // upcoming slot's config before the boundary, so only overwrite if it doesn't match the
+    // slot we're now in. (In practice the early-listen path sets it to *this* slot's config,
+    // so they agree.)
+    RadioSlotConfig newTarget = bsCfgForSlot(win);
+    if (newTarget != bsTargetCfg) bsTargetCfg = newTarget;
   }
 
   bsApplyCfgIfNeeded();
 
-  // Start RX for this slot if not yet started and radio is free.
-  // If a previous slot's RX is still running (overrun), wait — bsRadioStartRx* checks BUSY
-  // and would skip anyway, but also don't mark bsRxStartedThisSlot=true so we retry next loop.
+  // Early-listen for the upcoming receive-type slot. Starts RX BS_RX_EARLY_US before the slot
+  // boundary, using the upcoming slot's modulation. This absorbs small clock offsets and
+  // base-loop jitter so the base doesn't miss the start of the rocket's preamble.
+  //
+  // Fires when: radio is STANDBY, RX not yet started for the CURRENT slot (we reuse
+  // bsRxStartedThisSlot to mean "RX for this *or the upcoming* slot has begun"), and we're
+  // within BS_RX_EARLY_US of the slot boundary with an upcoming receive-type slot.
+  if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY &&
+      posInSlot >= (SLOT_DURATION_US - BS_RX_EARLY_US)) {
+    uint8_t    nextSeqIdx = (uint8_t)((bsSyncSlotIndex + slotNum + 1) % SLOT_SEQUENCE_LEN);
+    WindowMode nextWin    = SLOT_SEQUENCE[nextSeqIdx];
+    if (bsSlotIsReceive(nextWin)) {
+      // Pre-apply the upcoming slot's config (doc §8). applyCfgIfNeeded defers if radio isn't
+      // STANDBY; we checked above, so it will apply here.
+      RadioSlotConfig upcomingCfg = bsCfgForSlot(nextWin);
+      if (upcomingCfg != bsTargetCfg) {
+        bsTargetCfg = upcomingCfg;
+        bsApplyCfgIfNeeded();
+      }
+      // Start RX with a timeout that covers the early-listen window plus the upcoming slot's
+      // normal RX window. On the upcoming boundary bsRxStartedThisSlot flips back to false
+      // naturally via the new-slot branch, but we also mark it here so we don't double-start
+      // between now and the boundary.
+      uint32_t timeoutUs;
+      if (nextWin == WIN_TELEM) {
+        timeoutUs = (bsSynced ? BS_RX_TIMEOUT_US : BS_LONG_RX_TIMEOUT_US) + BS_RX_EARLY_US;
+      } else {
+        // WIN_LR: see on-boundary WIN_LR branch below for rationale.
+        timeoutUs = (uint32_t)(SLOT_DURATION_US - 50'000UL) + BS_RX_EARLY_US;
+      }
+      if (nextWin == WIN_TELEM) bsMissedTelemSlots++;
+      bsRadioStartRxTimeout((uint32_t)(timeoutUs / 15.625f));
+      bsRxStartedThisSlot = true;
+      bsBgRssiReady = false;
+      bsCurrentSlotIsLR = (nextWin == WIN_LR);  // WIN_LR RxDone dispatch needs this early
+    }
+  }
+
+  // On-boundary RX start (fallback for cases where early-listen didn't fire — e.g. radio was
+  // busy with TX/RX of the previous slot when the early-listen window opened, or this is the
+  // very first slot of the session).
   if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY) {
     if (win == WIN_TELEM) {
       bsMissedTelemSlots++;
@@ -699,18 +776,17 @@ void bsHandleRadio() {
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;
     } else if (win == WIN_LR) {
-      //TODO: this should be slightly longer, due to the slower symbol rate; but just because the packet is long doesnt mean we need to listen longer - timeout is how long to wait for the START of a detection, not how long to finish
-      bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50000UL) / 15.625f));
+      // WIN_LR RX timeout covers most of the slot, minus a small safety margin. The SX1262
+      // timeout is "time to detect preamble"; once detected the reception completes regardless.
+      bsRadioStartRxTimeout((uint32_t)((SLOT_DURATION_US - 50'000UL) / 15.625f));
       bsRxStartedThisSlot = true;
       bsBgRssiReady = false;
     }
     // WIN_CMD: TX is dispatched by main.cpp via bsWinCmdReady below.
   }
 
-  // WIN_TELEM: RX was started at slot boundary. After it times out (RxDone or Timeout IRQ
-  // set state to STANDBY), stay standby for the rest of the slot. Do not restart.
-
-  // WIN_CMD: signal TX dispatch point.
+  // WIN_CMD: signal TX dispatch point BS_CMD_TX_OFFSET_US after the slot start, so small
+  // clock offsets don't cause us to transmit before the rocket's listen window opens.
   if (win == WIN_CMD && !bsCmdSentThisSlot && posInSlot >= BS_CMD_TX_OFFSET_US) {
     bsCmdSentThisSlot = true;
     bsWinCmdReady     = true;

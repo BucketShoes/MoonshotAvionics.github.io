@@ -102,11 +102,23 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD,};//, WIN_TELEM, 
 
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
-#define ROCKET_RX_TIMEOUT_US           100'000UL              // short: synced, heard command recently
-#define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 20'000UL)   // long: nearly full slot (pre-sync or silent)
+#define ROCKET_RX_TIMEOUT_US           100'000UL                        // short: synced + heard base recently
+#define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 20'000UL)    // long: pre-sync, or base-silent lost-rocket fallback
 
-// When to switch from short to long listen (no verified command heard).
-#define ROCKET_CMD_SILENCE_THRESHOLD_US  120'000'000UL  // 2 minutes
+// Safety cutoff: force standby if RX has been active for more than this many slot durations.
+// Indicates a missed DIO1 IRQ or stuck DIO1 line. Mirrors base station's RX_STUCK_MAX_SLOTS.
+#define RX_STUCK_MAX_SLOTS             2UL
+
+// When to widen RX window: no valid command heard from base for this long.
+// "Silence" is the wrong framing — signal can be fine but we may have lost sync
+// (base reboot, drift past tolerance, etc). Opening a long RX window lets the
+// base's next CMD_SET_SYNC land even when short-window timing has drifted.
+// CRITICAL for lost-rocket recovery: if the rocket is out in a field, this is
+// the only way it can re-sync without manual power-cycle.
+// 124s = slightly more than 2 ping intervals (60s each), so rounding/jitter
+// cannot make this fire after missing only one ping.
+// Widening the window does NOT clear radioSynced and does NOT trigger any TX.
+#define ROCKET_NO_BASE_HEARD_THRESHOLD_US  124'000'000UL  // 124 seconds (>2 ping intervals)
 
 
 
