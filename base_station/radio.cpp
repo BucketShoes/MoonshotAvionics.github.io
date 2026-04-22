@@ -493,6 +493,7 @@ static void bsRadioHandleIrq() {
     // Log TxDone timing relative to the current slot. For CMD_SET_SYNC this is the
     // moment the anchor is set; for regular commands this should be near BS_CMD_TX_OFFSET_US
     // into a WIN_CMD slot.
+    if (LOG_TX_DONE)
     {
       uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
       uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
