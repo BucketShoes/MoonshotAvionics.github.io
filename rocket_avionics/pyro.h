@@ -1,6 +1,6 @@
 // pyro.h — Pyro channel control: RMT-timed single-shot pulses, continuity sense, HV sense.
-// Three RMT TX channels, one pre-bound per GPIO. Clock: APB (80 MHz), 1 ms per tick.
-// RMT hardware guarantees pulse cutoff even if CPU is busy, sleeping, or watchdog-reset.
+// Three RMT TX channels, one pre-bound per GPIO. Clock: APB/80 = 1 MHz (1 µs/tick).
+// 1ms symbols repeated N times in hardware (loop_count). Pulse cutoff is hardware-guaranteed.
 
 #ifndef PYRO_H
 #define PYRO_H
@@ -44,7 +44,7 @@ void nonblockingPyro();
 // Non-blocking: queues a single-shot RMT symbol and returns immediately.
 // Each channel has its own RMT hardware; firing one has no effect on others.
 // channel: 1 = PYRO_CH1_PIN, 2 = PYRO_CH2_PIN, 3 = PYRO_CH3_PIN
-// durationMs: 1 ms resolution (1 RMT tick = 1 ms). 0 is ignored. Max 32767 ms.
+// durationMs: 1 ms resolution. 0 is ignored. Max INT_MAX ms (loop_count).
 void pyroFire(uint8_t channel, uint16_t durationMs);
 
 // Clear ch1/ch2/ch3 fired latches. Call on arm.

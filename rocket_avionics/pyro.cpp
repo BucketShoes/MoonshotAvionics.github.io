@@ -1,12 +1,11 @@
 // pyro.cpp — Pyro channel implementation.
 //
 // Three RMT TX channels, one pre-bound per output GPIO, created at pyroInit().
-// Clock: RMT_CLK_SRC_APB (80 MHz). The IDF driver splits the required divider across
-// a group-level and per-channel prescaler, so large divisions (e.g. 80,000 for 1 kHz)
-// are handled internally without hitting the 8-bit per-channel limit.
-// Resolution: 1000 Hz → 1 ms per tick. duration0 is 15 bits → max 32767 ms ≈ 32 s.
+// Clock: RMT_CLK_SRC_APB (80 MHz), resolution 1 MHz (divider=80, within ESP32-S3 HW limit of 256).
+// Each tick = 1 µs. duration0 is 15 bits → max 32767 µs per symbol.
 //
-// pyroFire() queues a single symbol: HIGH for durationMs ticks, LOW for 1 tick.
+// pyroFire() queues one symbol: HIGH for 1000 ticks (1 ms), LOW for 1 tick.
+// loop_count = durationMs repeats it N times → exact ms-resolution pulse of arbitrary length.
 // The 47 remaining slots in the 48-symbol buffer are zeroed (null = end-of-data sentinel).
 // rmt_transmit() is single-shot (loop_count=0) and returns immediately.
 // The RMT peripheral drives the pulse entirely in hardware — the CPU is not involved
@@ -49,8 +48,8 @@ static PyroChannel pyroChannels[3] = {
 #define PYRO_SYM_COUNT  48
 static rmt_symbol_word_t pyroSyms[3][PYRO_SYM_COUNT] = {};
 
-// APB 80 MHz, resolution 1000 Hz → 1 ms per tick. Max pulse: 32767 ms ≈ 32 s.
-#define PYRO_RMT_RESOLUTION_HZ  1000
+// APB 80 MHz / 80 = 1 MHz → 1 µs per tick. Per-channel divider limit on ESP32-S3 is 256.
+#define PYRO_RMT_RESOLUTION_HZ  1000000
 
 // ===================== INIT =====================
 
@@ -148,11 +147,12 @@ void pyroFire(uint8_t channel, uint16_t durationMs) {
   PyroChannel& ch = pyroChannels[channel - 1];
   if (ch.rmt == nullptr) return;  // init failed for this channel
 
-  // Single symbol: HIGH for durationMs ticks (1 tick = 1 ms), then LOW for 1 tick.
-  // Slots [1..47] remain zero — null word terminates the sequence.
+  // One symbol: HIGH for 1000 µs (1 ms), LOW for 1 µs. Repeated durationMs times in HW.
+  // SOC_RMT_SUPPORT_TX_LOOP_COUNT=1 on ESP32-S3 — finite loop_count is hardware-supported.
+  // Slots [1..47] remain zero — null word terminates the sequence after the loop.
   rmt_symbol_word_t* syms = pyroSyms[channel - 1];
   syms[0].level0    = 1;
-  syms[0].duration0 = durationMs;
+  syms[0].duration0 = 1000;  // 1000 µs = 1 ms
   syms[0].level1    = 0;
   syms[0].duration1 = 1;
 
@@ -161,7 +161,7 @@ void pyroFire(uint8_t channel, uint16_t durationMs) {
   else if (channel == 3) pyroState.ch3Fired = true;
 
   rmt_transmit_config_t tx_cfg = {};
-  tx_cfg.loop_count      = 0;  // single shot
+  tx_cfg.loop_count      = (int)durationMs;  // repeat 1ms symbol N times
   tx_cfg.flags.eot_level = 0;  // pin stays LOW after transmission
 
   rmt_transmit(ch.rmt, ch.encoder, syms, sizeof(pyroSyms[0]), &tx_cfg);
