@@ -401,7 +401,7 @@ void bsSetSyncedFromTx(uint64_t anchorUs) {
   bsAnchorDriftUs = 0;
   bsDriftEmaUs = 0.0f;
   bsDriftThisMinuteUs = 0;
-  bsDriftMinuteStartMs = 0;
+  bsDriftMinuteStartMs = millis();  // start time for dynamic rate limiting
   // The sync packet is sent during WIN_CMD (slot index 1 in the WIN_TELEM/WIN_CMD sequence).
   // Both sides anchor at this event: base at TxDone, rocket at RxDone.
   // slotIndex=1 means: at the anchor time, slot 1 (WIN_CMD) is current.
@@ -464,27 +464,58 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
     int32_t expectedUs = (int32_t)timeOnAirMs * 1000;
     int32_t driftUs    = signedPosInSlot - expectedUs;
 
-    // IIR filter — alpha=0.15, gentle tracking
+    // IIR filter — alpha=0.1, gentle tracking
     bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
-Serial.println("BS Drift EMA:");
-Serial.println(bsDriftEmaUs);
-    // Only correct if consistently drifted (deadband ±500µs)
-    if (fabsf(bsDriftEmaUs) > 500.0f) {
-      // Rate limit: 1ms per minute
+
+    // Safety check: if accumulated drift exceeds max safe value, stop correcting and alert.
+    if (abs(bsAnchorDriftUs) >= (int32_t)BS_DRIFT_MAX_ACCUMULATED_US) {
+      static unsigned long lastAlertMs = 0;
+      unsigned long nowMs = millis();
+      if (nowMs - lastAlertMs >= 10000) {  // alert at most every 10 seconds
+        lastAlertMs = nowMs;
+        Serial.print("BS DRIFT: accumulated drift "); Serial.print(bsAnchorDriftUs);
+        Serial.print("us exceeds limit "); Serial.print((int32_t)BS_DRIFT_MAX_ACCUMULATED_US);
+        Serial.println("us — stopping corrections (airtime calc may be wrong)");
+      }
+    } else if (fabsf(bsDriftEmaUs) > (float)BS_DRIFT_DEADBAND_US) {
+      // Only correct if consistently drifted (deadband)
+
+      // Dynamic rate limit: faster immediately after sync, slower later
       uint32_t nowMs = millis();
+      uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
+      uint32_t dynamicLimitUs;
+      if (timeSinceSyncMs < BS_DRIFT_FAST_WINDOW_MS) {
+        // In fast window: use aggressive limit, allow quick convergence
+        dynamicLimitUs = BS_DRIFT_MAX_PER_MINUTE_FAST_US;
+      } else {
+        // After fast window: ramp from fast to conservative over next 30 minutes
+        // Linear ramp: at 30min, reach conservative; before 30min, interpolate
+        uint32_t rampMs = 30 * 60 * 1000;  // 30 minutes
+        uint32_t timeSinceRampStartMs = timeSinceSyncMs - BS_DRIFT_FAST_WINDOW_MS;
+        if (timeSinceRampStartMs >= rampMs) {
+          dynamicLimitUs = BS_DRIFT_MAX_PER_MINUTE_US;
+        } else {
+          // Linear interpolation
+          uint32_t rangeFast = BS_DRIFT_MAX_PER_MINUTE_FAST_US - BS_DRIFT_MAX_PER_MINUTE_US;
+          dynamicLimitUs = BS_DRIFT_MAX_PER_MINUTE_FAST_US - (rangeFast * timeSinceRampStartMs) / rampMs;
+        }
+      }
+
+      // Per-minute rate limiting
       if ((int32_t)(nowMs - bsDriftMinuteStartMs) > 60000) {
         bsDriftMinuteStartMs  = nowMs;
         bsDriftThisMinuteUs   = 0;
       }
-      int32_t remainingBudgetUs = 1000 - abs(bsDriftThisMinuteUs);
+      int32_t remainingBudgetUs = (int32_t)dynamicLimitUs - abs(bsDriftThisMinuteUs);
       if (remainingBudgetUs > 0) {
-        // Per-packet cap: ±100µs; also respect minute budget
-        int32_t rawCorrection = (int32_t)(bsDriftEmaUs * 0.1f);  // 10% of EMA
-        rawCorrection = constrain(rawCorrection, -100, 100);
+        // Per-packet cap: ±BS_DRIFT_MAX_PER_PACKET_US; also respect minute budget
+        int32_t rawCorrection = (int32_t)(bsDriftEmaUs * BS_DRIFT_CORRECTION_FACTOR);
+        rawCorrection = constrain(rawCorrection, -(int32_t)BS_DRIFT_MAX_PER_PACKET_US, (int32_t)BS_DRIFT_MAX_PER_PACKET_US);
         rawCorrection = constrain(rawCorrection, -remainingBudgetUs, remainingBudgetUs);
 
         // Apply: anchor += rawCorrection makes signedPosInSlot smaller by rawCorrection
         // rawCorrection < 0 means packet early, we want to decrease anchor (increase posInSlot)
+        // Math is done in int64_t; anchor is unsigned but arithmetic is safe via signed intermediate.
         bsSyncAnchorUs   = (unsigned long)((int64_t)bsSyncAnchorUs + rawCorrection);
         bsAnchorDriftUs += rawCorrection;
         bsDriftThisMinuteUs += abs(rawCorrection);
