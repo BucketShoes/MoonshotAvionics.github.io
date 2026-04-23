@@ -565,6 +565,7 @@ static void bsRadioHandleIrq() {
     uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
     uint8_t  seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
     uint8_t  win       = (uint8_t)SLOT_SEQUENCE[seqIdx];
+    //TODO: add drift offset based on posInSlot vs sx126x_get_lora_time_on_air_in_ms (and fix the massive duplication of packet builder)
     bsHandleRxDone(posInSlot, slotNum, seqIdx, win);
     bsLedOff();
   }
