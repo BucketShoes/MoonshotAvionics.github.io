@@ -456,6 +456,45 @@ static void bsHandleRxDone(uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx,
   float snrF  = (float)pktStatus.snr_pkt_in_db;
   float rssiF = (float)pktStatus.rssi_pkt_in_dbm;
 
+  // Calculate time-on-air based on the radio config that was actually applied for this RX.
+  // Reconstruct the modulation and packet params from bsAppliedCfg (what was set, not what slot says).
+  sx126x_mod_params_lora_t appliedModParams = {};
+  sx126x_pkt_params_lora_t appliedPktParams = {};
+
+  if (bsAppliedCfg == RADIO_CFG_LR) {
+    appliedModParams.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
+    appliedModParams.bw   = bwKHzToEnum(activeBwKHz);
+    appliedModParams.cr   = (sx126x_lora_cr_t)LORA_LR_CR;
+    appliedModParams.ldro = 1;
+
+    appliedPktParams.preamble_len_in_symb = 5;
+    appliedPktParams.header_type          = SX126X_LORA_PKT_IMPLICIT;
+    appliedPktParams.pld_len_in_bytes     = 3;
+    appliedPktParams.crc_is_on            = false;
+  } else {
+    appliedModParams.sf   = (sx126x_lora_sf_t)activeSF;
+    appliedModParams.bw   = bwKHzToEnum(activeBwKHz);
+    appliedModParams.cr   = SX126X_LORA_CR_4_5;
+    appliedModParams.ldro = 0;
+
+    appliedPktParams.preamble_len_in_symb = LORA_PREAMBLE;
+    appliedPktParams.header_type          = SX126X_LORA_PKT_EXPLICIT;
+    appliedPktParams.pld_len_in_bytes     = 255;
+    appliedPktParams.crc_is_on            = true;
+  }
+  appliedPktParams.invert_iq_is_on = false;
+
+  uint32_t timeOnAirMs = sx126x_get_lora_time_on_air_in_ms(&appliedPktParams, &appliedModParams);
+
+  if (LOG_RX_DONE) {
+    Serial.print("BS RxDone: posInSlot="); Serial.print(posInSlot);
+    Serial.print("us slot="); Serial.print(slotNum);
+    Serial.print(" seqIdx="); Serial.print(seqIdx);
+    Serial.print(" win="); Serial.print((int)win);
+    Serial.print(" timeOnAir="); Serial.print(timeOnAirMs);
+    Serial.println("ms");
+  }
+
   // WIN_LR uses implicit header — no type byte on air. Identify by slot + length.
   if (bsCurrentSlotIsLR && rxLen == 3) {
     // Synthesise the 5-byte natural packet format (type + deviceID + 3-byte core)
