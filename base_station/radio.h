@@ -59,10 +59,10 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 
 // Base station RX window parameters (converted to RTC steps via /15.625 at use site).
 #define BS_RX_TIMEOUT_US           50'000UL                   // synced telemetry RX window
-#define BS_LONG_RX_TIMEOUT_US      50'000UL//(SLOT_DURATION_US - 50'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
+#define BS_LONG_RX_TIMEOUT_US      70'000UL//(SLOT_DURATION_US - 50'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
 
 // Base station TX timing.
-#define BS_RX_EARLY_US             20'000UL    // start RX this many µs before a receive-type slot boundary
+#define BS_RX_EARLY_US             30'000UL    // start RX this many µs before a receive-type slot boundary
 #define BS_CMD_TX_OFFSET_US        5'000UL     // fire command this many µs into WIN_CMD
 
 // Sync timing. See "Hopping radio slot structure.md" for the full model.
@@ -96,7 +96,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 // to confirm the radio can still receive *anything*. If we see telem here but nothing on the
 // normal slot windows, the bug is in the slot machine; if we see nothing even here, the radio is
 // stuck. Runs briefly so the normal state machine still exercises its paces between runs.
-#define BS_DIAG_RX_INTERVAL_MS     30'000UL
+#define BS_DIAG_RX_INTERVAL_MS     300'000UL
 #define BS_DIAG_RX_DURATION_MS      2'000UL
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.

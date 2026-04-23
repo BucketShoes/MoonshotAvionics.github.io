@@ -369,12 +369,13 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
   pushToAllTransports(wsBuf, 12 + len);
 
   // Consolidated RX logging: signal + record num + slot timing + packet size + hex dump
-  Serial.printf("BS OnPacRx: Sig:%.1f/%.0f #%d slot:%luus/%lu/%u/%u %dB: [",
-                snrF, rssiF, recNum, posInSlot, slotNum, seqIdx, win, len);
-  size_t hexLen = (len < 12) ? len : 12;
+  Serial.printf("BS OnPackRx: Sig:%.1f/%.0f #%d slot:%.3fms/%lu/%u/%u %dB: [",
+                snrF, rssiF, recNum, posInSlot/1000.0f, slotNum, seqIdx, win, len);
+  size_t hexLen = (len < 14) ? len : 14;
   for (size_t i = 0; i < hexLen; i++) {
     Serial.printf("%02X", buf[i]);
   }
+  if (hexLen<len) Serial.print("...");
   Serial.println("]");
 }
 
