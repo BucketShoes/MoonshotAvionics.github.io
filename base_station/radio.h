@@ -58,8 +58,8 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 
 // Base station RX window parameters (converted to RTC steps via /15.625 at use site).
-#define BS_RX_TIMEOUT_US           380'000UL                   // synced telemetry RX window
-#define BS_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 50'000UL)  // pre-sync: nearly full slot
+#define BS_RX_TIMEOUT_US           50'000UL                   // synced telemetry RX window
+#define BS_LONG_RX_TIMEOUT_US      50'000UL//(SLOT_DURATION_US - 50'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
 
 // Base station TX timing.
 #define BS_RX_EARLY_US             20'000UL    // start RX this many µs before a receive-type slot boundary

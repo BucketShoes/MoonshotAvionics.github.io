@@ -56,7 +56,7 @@ uint32_t      lastHandledSlotNum = 0xFFFFFFFF;
 // ===================== RSSI EMA =====================
 // Updated at WIN_CMD timeout — channel noise sampled when no command arrives.
 
-double rssiEma = 0.0;
+double rssiEma = 0.0;//average rssi sampled when there is NO packet for us - i.e. background only - do not include samples if an actual packet is recieved
 static bool rssiEmaInit = false;
 #define RSSI_EMA_ALPHA 0.1
 
@@ -427,10 +427,10 @@ static void handleRxDone() {
     invalidRxCount++;
     return;
   }
-
+//TODO: WTF: no the bg rssi ema is for the non-packet times, when there iisnt any signal.. it should EXCLUDE packet rssis. the packet rssi goes into the cmd ack, but not into the bgrssi
   // Update noise floor EMA from actual received packet RSSI.
-  if (!rssiEmaInit) { rssiEma = pktRssi; rssiEmaInit = true; }
-  else rssiEma += RSSI_EMA_ALPHA * (pktRssi - rssiEma);
+  //if (!rssiEmaInit) { rssiEma = pktRssi; rssiEmaInit = true; }
+  //else rssiEma += RSSI_EMA_ALPHA * (pktRssi - rssiEma);
 
   // Log one summary line per received packet, no faster than 1/sec.
   static unsigned long lastRxLogMs = 0;
@@ -448,6 +448,7 @@ static void handleRxDone() {
 }
 
 static void radioHandleIrq() {
+  //TODO: wtf: is this actually the irq handler? if so, this is way too big for an isr - but it looks like its just called if polling sees the flag true - so this needs to be renamed something more appropriate
   uint64_t eventUs = dio1TimestampUs();
   dio1Fired = false;
 

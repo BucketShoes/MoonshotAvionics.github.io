@@ -211,7 +211,11 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       // Anchor the slot clock to this moment (RxDone = now).
       // slotIndex=1: the sync packet itself occupies slot 0 (WIN_TELEM from base's view),
       // so WIN_CMD starts immediately after.
-      radioSetSynced(micros(), 1);
+      Serial.print("=======SYNC-====== dio1CaptureVal=");
+      Serial.print(dio1CaptureVal);
+      Serial.print("; micros()=");
+      Serial.print(micros());
+      radioSetSynced(dio1CaptureVal, 1); //TODO: wtf this shouldnt be micros() here - it should be captured eexactly at the point it comes in. check       dio1CaptureVal. although it should only be a matter of fraction of a millisecond
       result = CMD_OK;
       break;
 

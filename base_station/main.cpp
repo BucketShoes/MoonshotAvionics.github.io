@@ -12,7 +12,7 @@
 #include "log_store.h"
 #include "esp_wifi.h"
 #include "radio.h"
-#include "tagged_serial.h"  // Serial wrapper that prefixes boot-relative micros
+//#include "tagged_serial.h"  // Serial wrapper that prefixes boot-relative micros
 
 #define VEXT_CTRL_PIN 3
 #define VBAT_ADC_PIN      1
@@ -27,7 +27,7 @@
 
 // ===================== TAGGED SERIAL =====================
 unsigned long bootMicros = 0;
-TaggedSerial taggedSerial(&Serial0);
+//TaggedSerial taggedSerial(&Serial0);
 
 // ===================== OTA COMMAND IDs (matching rocket_avionics/config.h) =====================
 #define CMD_OTA_BEGIN     0x50
@@ -816,7 +816,8 @@ void deinitBLE() {
 
 void setup() {
   bootMicros = micros();  // Capture boot time for tagged serial timestamps
-  taggedSerial.begin(SERIAL_BAUD);
+  //taggedSerial.begin(SERIAL_BAUD);
+  Serial.begin(SERIAL_BAUD);
   delay(500);
   Serial.println("\n=== Rocket Base Station ===");
 

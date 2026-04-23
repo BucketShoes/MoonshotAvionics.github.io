@@ -41,14 +41,14 @@
 #include "telemetry.h"
 #include "pyro.h"
 #include "ble.h"
-#include "../base_station/tagged_serial.h"  // Serial wrapper that prefixes boot-relative micros
+//#include "../base_station/tagged_serial.h"  // Serial wrapper that prefixes boot-relative micros
 
 // ===================== GLOBAL DEFINITIONS =====================
 // These match the extern declarations in globals.h.
 
 // Tagged serial — prefixes boot-relative microseconds to each line.
 unsigned long bootMicros = 0;
-TaggedSerial taggedSerial(&Serial0);
+//TaggedSerial taggedSerial(&Serial0);
 
 InitState  initState    = INIT_VEXT_ON;
 bool       gpsUartStarted = false;
@@ -385,8 +385,9 @@ void nonblockingLoopStats() {
 // ===================== SETUP =====================
 
 void setup() {
-  bootMicros = micros();  // Capture boot time for tagged serial timestamps
-  taggedSerial.begin(SERIAL_BAUD);
+  bootMicros = micros();  // Capture boot time for tagged serial timestamps... TODO: wtf... boot is zero by definition, this is unnecesary
+  Serial.begin(SERIAL_BAUD);
+//  taggedSerial.begin(SERIAL_BAUD);
   pinMode(USER_BTN_PIN, INPUT_PULLUP);
   ledcAttach(LED_PIN, 1000, 11);
   ledcWrite(LED_PIN, 128);//post-setup, before set by anything else
