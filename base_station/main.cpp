@@ -336,7 +336,8 @@ void pushToAllTransports(const uint8_t* wsBuf, size_t wsLen) {
 // ===================== PACKET RECEIVED CALLBACK =====================
 // Invoked from radio.cpp bsHandleRxDone() for every valid received packet.
 
-void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF) {
+void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
+                        uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win) {
   int8_t snr4 = (int8_t)(snrF * 4);
   uint32_t nowMs = millis();
 
@@ -367,12 +368,14 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF)
   memcpy(wsBuf + 12, buf, len);
   pushToAllTransports(wsBuf, 12 + len);
 
-  if (len == 5 && buf[0] == PKT_LONGRANGE) {
-    Serial.printf("RX 5B snr:%.1f rssi:%.0f raw=[%02X %02X %02X] #%d\n",
-                  snrF, rssiF, buf[2], buf[3], buf[4], recNum);
-  } else {
-    Serial.printf("RX %dB snr:%.1f rssi:%.0f #%d\n", len, snrF, rssiF, recNum);
+  // Consolidated RX logging: signal + record num + slot timing + packet size + hex dump
+  Serial.printf("BS OnPacRx: Sig:%.1f/%.0f #%d slot:%luus/%lu/%u/%u %dB: [",
+                snrF, rssiF, recNum, posInSlot, slotNum, seqIdx, win, len);
+  size_t hexLen = (len < 12) ? len : 12;
+  for (size_t i = 0; i < hexLen; i++) {
+    Serial.printf("%02X", buf[i]);
   }
+  Serial.println("]");
 }
 
 // ===================== SYNC PACKET BUILDER =====================

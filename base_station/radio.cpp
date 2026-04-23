@@ -426,7 +426,11 @@ void bsSetSyncedFromTx(uint64_t anchorUs) {
 
 // ===================== RX PACKET HANDLER =====================
 
-static void bsHandleRxDone() {
+// Forward declare packet received callback (defined in main.cpp)
+extern void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
+                               uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win);
+
+static void bsHandleRxDone(uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win) {
   sx126x_rx_buffer_status_t bufStatus = {};
   sx126x_status_t st = sx126x_get_rx_buffer_status(&bsRadioCtx, &bufStatus);
   if (st != SX126X_STATUS_OK) {
@@ -460,7 +464,7 @@ static void bsHandleRxDone() {
     synth[0] = PKT_LONGRANGE;
     synth[1] = FAVORITE_ROCKET_DEVICE_ID;
     synth[2] = buf[0]; synth[3] = buf[1]; synth[4] = buf[2];
-    bsOnPacketReceived(synth, 5, snrF, rssiF);
+    bsOnPacketReceived(synth, 5, snrF, rssiF, posInSlot, slotNum, seqIdx, win);
     return;
   }
 
@@ -470,18 +474,7 @@ static void bsHandleRxDone() {
     bsLastTelemRxMs = millis();
   }
 
-  Serial.print("BS RX: "); Serial.print(rxLen); Serial.print("B snr=");
-  Serial.print(snrF, 1); Serial.print(" rssi="); Serial.print(rssiF, 0);
-  Serial.print(" telem="); Serial.print(isTelemetry ? "YES" : "NO");
-  Serial.print(" [");
-  for (uint8_t i = 0; i < rxLen && i < 8; i++) {
-    if (buf[i] < 0x10) Serial.print("0");
-    Serial.print(buf[i], HEX); Serial.print(" ");
-  }
-  if (rxLen > 8) Serial.print("...");
-  Serial.println("]");
-
-  bsOnPacketReceived(buf, rxLen, snrF, rssiF);
+  bsOnPacketReceived(buf, rxLen, snrF, rssiF, posInSlot, slotNum, seqIdx, win);
 }
 
 // ===================== IRQ HANDLER =====================
@@ -528,20 +521,12 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
-    // Log RxDone timing relative to the current slot. Helps diagnose whether packets
-    // arrive centred in the expected slot or leaking across boundaries (= drift/jitter).
-    if (LOG_RX_DONE)
-    {
-      uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
-      uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
-      uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
-      uint8_t  seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
-      Serial.print("BS RxDone: posInSlot="); Serial.print(posInSlot);
-      Serial.print("us slot="); Serial.print(slotNum);
-      Serial.print(" seqIdx="); Serial.print(seqIdx);
-      Serial.print(" win="); Serial.println((int)SLOT_SEQUENCE[seqIdx]);
-    }
-    bsHandleRxDone();
+    uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
+    uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
+    uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+    uint8_t  seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+    uint8_t  win       = (uint8_t)SLOT_SEQUENCE[seqIdx];
+    bsHandleRxDone(posInSlot, slotNum, seqIdx, win);
     bsLedOff();
   }
 
