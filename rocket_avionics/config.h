@@ -43,7 +43,7 @@
 // WIN_LR coding rate. 0x05 = 4/5 long-interleave (LI). Not in sx126x_driver enum; cast at use site.
 // TODO: @@@ confirm whether LI is causing the stuck-BUSY seen in testing, or find real cause.
 // If LI is the problem, replace with SX126X_LORA_CR_4_5 (standard 4/5 = 0x01).
-#define LORA_LR_CR    SX126X_LORA_CR_4_5 //SX126X_LORA_CR_4_5 for normal 4/5 or li4/5 is 0x05
+#define LORA_LR_CR    0x05//SX126X_LORA_CR_4_5 //SX126X_LORA_CR_4_5 for normal 4/5 or li4/5 is 0x05
 
 // HV sense threshold: ADC mV above which high-side power is considered present
 // Assumes 10k:100k divider (11× attenuation). 3V on high side → ~273mV at ADC.

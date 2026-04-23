@@ -479,7 +479,7 @@ static void bsHandleRxDone(uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx,
 
     appliedPktParams.preamble_len_in_symb = LORA_PREAMBLE;
     appliedPktParams.header_type          = SX126X_LORA_PKT_EXPLICIT;
-    appliedPktParams.pld_len_in_bytes     = 255;
+    appliedPktParams.pld_len_in_bytes     = rxLen;
     appliedPktParams.crc_is_on            = true;
   }
   appliedPktParams.invert_iq_is_on = false;
