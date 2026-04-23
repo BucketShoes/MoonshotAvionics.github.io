@@ -157,6 +157,8 @@
   var fetchAutoNav = true; // auto-navigate to latest session after each batch
   var dlSpeedRecs = 0, dlSpeedBytes = 0, dlSpeedStartMs = 0;
   var PHASES = ['idle','pad_ready','boost','coast','apogee','drogue','main_deploy','descent','landed','ground_test','sleep','startup','12','13','14','error'];
+  var LR_HISTORY_COUNT = 10;
+  var lrHistory = [];
 
   function pad2(n){return n<10?'0'+n:''+n}
   function pad3(n){return n<10?'00'+n:n<100?'0'+n:''+n}
@@ -316,6 +318,7 @@ function initCharts() {
       if(id===1) extra='<div class="gps-row" id="gps-lnk" style="display:none"><a id="gps-map" href="#" target="_blank">Map</a><button class="cpb" id="gps-cp">Copy</button></div>';
       h+='<div class="card" id="card-'+id+'"><div class="cl">0x'+id.toString(16).padStart(2,'0')+' '+PD[id].n+'</div><div class="cv" id="v-'+id+'">&mdash;</div>'+extra+'<div class="cd" id="det-'+id+'"></div><div class="ad" id="d-'+id+'"></div></div>';
     }
+    h+='<div class="card" id="card-lr"><div class="cl">0xBB Long Range</div><div class="cv" id="v-lr">&mdash;</div><div class="cd" id="det-lr"></div><div class="ad" id="d-lr"></div></div>';
     g.innerHTML=h;
     document.getElementById('gps-cp').addEventListener('click',function(){
       if(fullGpsLat!==null){var txt=fullGpsLat.toFixed(7)+','+fullGpsLon.toFixed(7);if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(txt)}else{var ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();try{document.execCommand('copy')}catch(e){}document.body.removeChild(ta)}this.textContent='OK';var s=this;setTimeout(function(){s.textContent='Copy'},1500)}
@@ -367,6 +370,7 @@ function initCharts() {
   function setSNR(s){var e=document.getElementById('val-snr-top');if(s===127){e.textContent='--';e.style.color='#555';return}e.textContent=s.toFixed(1)+'dB';e.style.color=s>5?'#0f0':s>0?'#ff0':s>-5?'#f80':'#f44'}
 
   function decodeTelem(buf){var dv=new DataView(buf);if(dv.byteLength<10||dv.getUint8(0)!==0xAF)return null;var r={dev:dv.getUint8(1),latF:dv.getUint16(2,1),lonF:dv.getUint16(4,1),altM:dv.getInt16(6,1),flags:dv.getUint16(8,1),pg:null};if(dv.byteLength>10){var pt=dv.getUint8(10);var df=PD[pt];if(df&&dv.byteLength>=11+df.s){var pgTotalLen=dv.byteLength-11;r.pg={t:pt,d:df.d(dv,11,pgTotalLen)}}}return r}
+  function decodeLR(buf){var dv=new DataView(buf);if(dv.byteLength<5||dv.getUint8(0)!==0xBB)return null;var word=dv.getUint8(2)|(dv.getUint8(3)<<8)|(dv.getUint8(4)<<16);var latFrac=word&0x7FF;var lonFrac=(word>>11)&0x7FF;var lowBatt=(word>>22)&1;var reserved=(word>>23)&1;if(latFrac>=2000||lonFrac>=2000)return null;return{latFrac:latFrac,lonFrac:lonFrac,lowBatt:!!lowBatt,reserved:!!reserved}}
   function fmtGpsFrac(v){if(v===65535)return'NOT_POWERED';if(v===65534)return'INIT';if(v===65533)return'NO_FIX';if(v>=50000)return'Err:'+v;return'#.'+(v*2+'').padStart(5,'0')}
   function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='st-phase p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8&&toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null]);if(t===14)loadThrustCurve(d)}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
 
@@ -382,7 +386,9 @@ function initCharts() {
     if(hist)el.appendChild(e);else el.insertBefore(e,el.firstChild);
     while(el.children.length>1000)el.removeChild(hist?el.firstChild:el.lastChild);
   }
-  function onLivePkt(buf,snr,rssi,recNum){livePktCount++;lastPktMs=Date.now();document.getElementById('val-cnt').textContent=livePktCount;if(recNum>=0)document.getElementById('val-logrec').textContent=recNum;setSNR(snr);var bootMs=serverUptimeMs+(Date.now()-serverSyncClockMs);var rec={recNum:recNum,snr:snr,rssi:rssi,ts:bootMs,payload:buf,type:'pkt'};baseLiveRecs.push(rec);if(baseLiveRecs.length>MAX_PTS)baseLiveRecs.shift();showPkt(buf,snr,rssi,bootMs,viewIdx===-1&&liveSource==='base',true);if(viewIdx===-1&&liveSource==='base'){addLogRec(rec,false)}mapAddPt(buf,snr,rssi,recNum);}
+  function onLivePkt(buf,snr,rssi,recNum){livePktCount++;lastPktMs=Date.now();document.getElementById('val-cnt').textContent=livePktCount;if(recNum>=0)document.getElementById('val-logrec').textContent=recNum;setSNR(snr);var bootMs=serverUptimeMs+(Date.now()-serverSyncClockMs);var rec={recNum:recNum,snr:snr,rssi:rssi,ts:bootMs,payload:buf,type:'pkt'};baseLiveRecs.push(rec);if(baseLiveRecs.length>MAX_PTS)baseLiveRecs.shift();showPkt(buf,snr,rssi,bootMs,viewIdx===-1&&liveSource==='base',true);if(viewIdx===-1&&liveSource==='base'){addLogRec(rec,false)}mapAddPt(buf,snr,rssi,recNum);if(new Uint8Array(buf)[0]===0xBB)onLRPkt(buf,snr,rssi,recNum);}
+  function onLRPkt(buf,snr,rssi,recNum){var p=decodeLR(buf);if(!p)return;p.wallTime=Date.now();p.snr=snr;p.rssi=rssi;lrHistory.push(p);if(lrHistory.length>LR_HISTORY_COUNT)lrHistory.shift();updateLRCard(true);mapScheduleDraw()}
+  function updateLRCard(isLive){if(!lrHistory.length)return;var sumLat=0,sumLon=0,cntL=0,cntS=0;for(var i=0;i<lrHistory.length;i++){sumLat+=lrHistory[i].latFrac;sumLon+=lrHistory[i].lonFrac;if(lrHistory[i].lowBatt)cntL++;if(lrHistory[i].reserved)cntS++}var n=lrHistory.length;var avgLat=sumLat/n,avgLon=sumLon/n;var pctL=String(Math.round(cntL/n*100)).padStart(2,'0');var pctS=String(Math.round(cntS/n*100)).padStart(2,'0');function fmtFrac(v){return'x.'+(v/2000).toFixed(4).slice(2)}var mainTxt=fmtFrac(avgLat)+','+fmtFrac(avgLon)+' L'+pctL+' S'+pctS;setV('lr',mainTxt,isLive);var lines='';for(var j=lrHistory.length-1;j>=0;j--){var e=lrHistory[j];var lFlag=e.lowBatt?'L':'-';var sFlag=e.reserved?'S':'-';lines+='<span class="df"><span class="dv">'+fmtFrac(e.latFrac)+','+fmtFrac(e.lonFrac)+' '+lFlag+sFlag+'</span></span>'}var det=document.getElementById('det-lr');if(det)det.innerHTML=lines}
 
   // =============================================================
   // 0xCA LOG CHUNK DECODER (LoRa download from rocket)
@@ -2205,6 +2211,30 @@ function initCharts() {
         ctx.fillRect(s.x-4,s.y-4,8,8); ctx.strokeRect(s.x-4,s.y-4,8,8);
         mapHits.push({x:s.x, y:s.y, pt:p});
       });
+    }
+
+    // Draw 0xBB long-range circles
+    if (lrHistory.length && mapRefLat !== undefined) {
+      var cellLat = Math.floor(mapRefLat);
+      var cellLon = Math.floor(mapRefLon);
+      var counts = {};
+      for (var i = 0; i < lrHistory.length; i++) {
+        var key = lrHistory[i].latFrac + ',' + lrHistory[i].lonFrac;
+        counts[key] = (counts[key] || 0) + 1;
+      }
+      for (var key in counts) {
+        var parts = key.split(',');
+        var latFrac = parseInt(parts[0]), lonFrac = parseInt(parts[1]);
+        var approxLat = cellLat + latFrac / 2000;
+        var approxLon = cellLon + lonFrac / 2000;
+        var cp = mapW2C(approxLat, approxLon, cw, ch);
+        var radiusPx = Math.max(4, (75 / 111000) * mapVScale);
+        var opacity = Math.min(0.8, 0.15 * counts[key]);
+        ctx.beginPath();
+        ctx.arc(cp.x, cp.y, radiusPx, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(255,160,0,' + opacity + ')';
+        ctx.fill();
+      }
     }
 
     mapDrawScale(ctx, cw, ch);
