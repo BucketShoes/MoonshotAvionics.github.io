@@ -107,10 +107,10 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define BS_DRIFT_DEADBAND_US            500UL       // only correct if |EMA drift| > this (µs)
 #define BS_DRIFT_CORRECTION_FACTOR      0.1f        // apply this fraction of EMA per packet
 #define BS_DRIFT_MAX_PER_PACKET_US      100UL       // max correction per single packet (µs) — low to filter jitter
-#define BS_DRIFT_MAX_PER_MINUTE_US      1000UL      // conservative limit after ramp (µs)
-#define BS_DRIFT_MAX_PER_MINUTE_FAST_US 5000UL      // aggressive limit in fast window (µs)
-#define BS_DRIFT_FAST_WINDOW_MS         30000UL     // duration of fast correction after sync (ms)
-#define BS_DRIFT_MAX_ACCUMULATED_US     5000UL      // safety cap: stop correcting if |total drift| exceeds this (µs)
+#define BS_DRIFT_MAX_PER_MINUTE_US      2'000UL      // conservative limit after ramp (µs)
+#define BS_DRIFT_MAX_PER_MINUTE_FAST_US 10'000UL      // aggressive limit in fast window (µs)
+#define BS_DRIFT_FAST_WINDOW_MS         30'000UL     // duration of fast correction after sync (ms)
+#define BS_DRIFT_MAX_ACCUMULATED_US     50'000UL      // safety cap: stop correcting if |total drift| exceeds this (µs)
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
 // Applies to both base and rocket. Indicates a missed DIO1 IRQ (or stuck DIO1 line).
