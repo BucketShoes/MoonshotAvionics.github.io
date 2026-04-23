@@ -460,10 +460,6 @@ static void bsHandleRxDone() {
     synth[0] = PKT_LONGRANGE;
     synth[1] = FAVORITE_ROCKET_DEVICE_ID;
     synth[2] = buf[0]; synth[3] = buf[1]; synth[4] = buf[2];
-    Serial.print("BS WIN_LR RX: snr="); Serial.print(snrF, 1);
-    Serial.print(" rssi="); Serial.print(rssiF, 0);
-    Serial.print(" raw=["); Serial.print(buf[0], HEX); Serial.print(" ");
-    Serial.print(buf[1], HEX); Serial.print(" "); Serial.print(buf[2], HEX); Serial.println("]");
     bsOnPacketReceived(synth, 5, snrF, rssiF);
     return;
   }

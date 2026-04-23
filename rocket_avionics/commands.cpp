@@ -214,7 +214,7 @@ void executeCommand(uint8_t cmdId, uint32_t nonce, const uint8_t* params, size_t
       Serial.print("=======SYNC-====== dio1CaptureVal=");
       Serial.print(dio1CaptureVal);
       Serial.print("; micros()=");
-      Serial.print(micros());
+      Serial.println(micros());
       radioSetSynced(dio1CaptureVal, 1); //TODO: wtf this shouldnt be micros() here - it should be captured eexactly at the point it comes in. check       dio1CaptureVal. although it should only be a matter of fraction of a millisecond
       result = CMD_OK;
       break;

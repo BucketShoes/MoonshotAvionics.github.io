@@ -367,10 +367,12 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF)
   memcpy(wsBuf + 12, buf, len);
   pushToAllTransports(wsBuf, 12 + len);
 
-  Serial.print("RX "); Serial.print(len);
-  Serial.print("B snr:"); Serial.print(snrF, 1);
-  Serial.print(" rssi:"); Serial.print(rssiF, 0);
-  Serial.print(" #"); Serial.println(recNum);
+  if (len == 5 && buf[0] == PKT_LONGRANGE) {
+    Serial.printf("RX 5B snr:%.1f rssi:%.0f raw=[%02X %02X %02X] #%d\n",
+                  snrF, rssiF, buf[2], buf[3], buf[4], recNum);
+  } else {
+    Serial.printf("RX %dB snr:%.1f rssi:%.0f #%d\n", len, snrF, rssiF, recNum);
+  }
 }
 
 // ===================== SYNC PACKET BUILDER =====================
