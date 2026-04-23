@@ -144,6 +144,8 @@ extern int8_t  bhPower;
 
 extern bool          bsSynced;
 extern unsigned long bsSyncAnchorUs;
+extern unsigned long bsSyncAnchorOriginalUs;  // original anchor at sync time
+extern int32_t       bsAnchorDriftUs;         // cumulative drift correction
 extern uint32_t      bsSyncSlotIndex;
 extern uint32_t      bsLastHandledSlot;
 extern unsigned long bsMissedTelemSlots;
@@ -234,6 +236,8 @@ void bsHandleSyncSend();
 
 // Callback invoked from bsHandleRadio() when a good LoRa packet is received.
 // Implemented in main.cpp (handles transport push, log write, telem store).
-void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF);
+void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
+                        int32_t signedPosInSlot, uint32_t slotNum, uint8_t seqIdx,
+                        uint8_t win, uint32_t timeOnAirMs);
 
 #endif // BS_RADIO_H

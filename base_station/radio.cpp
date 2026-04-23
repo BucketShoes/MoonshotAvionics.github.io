@@ -50,11 +50,18 @@ static bool            bsCurrentSlotIsLR = false;
 
 bool          bsSynced           = false;
 unsigned long bsSyncAnchorUs     = 0;
+unsigned long bsSyncAnchorOriginalUs = 0;  // set at sync, never changed — for diagnostics
+int32_t       bsAnchorDriftUs    = 0;  // cumulative correction applied to bsSyncAnchorUs
 uint32_t      bsSyncSlotIndex    = 0;
 uint32_t      bsLastHandledSlot  = 0xFFFFFFFF;
 unsigned long bsMissedTelemSlots = 0;
 
 uint64_t      bsPendingHeaderValidUs = 0;
+
+// Drift calibration state (only touched in RX path)
+static float  bsDriftEmaUs           = 0.0f;  // IIR of (signedPosInSlot - timeOnAirMs*1000)
+static int32_t bsDriftThisMinuteUs   = 0;     // rate limiter: total correction in current minute
+static uint32_t bsDriftMinuteStartMs = 0;     // start of current 1-minute rate-limit window
 
 
 // ===================== SYNC BOOKKEEPING =====================
@@ -76,6 +83,18 @@ static sx126x_lora_bw_t bwKHzToEnum(float bwKHz) {
   if (bwKHz >= 490.0f) return SX126X_LORA_BW_500;
   if (bwKHz >= 240.0f) return SX126X_LORA_BW_250;
   return SX126X_LORA_BW_125;
+}
+
+static sx126x_mod_params_lora_t buildModParams(RadioSlotConfig cfg) {
+  if (cfg == RADIO_CFG_LR)
+    return { (sx126x_lora_sf_t)LORA_LR_SF, bwKHzToEnum(activeBwKHz), (sx126x_lora_cr_t)LORA_LR_CR, 1 };
+  return { (sx126x_lora_sf_t)activeSF, bwKHzToEnum(activeBwKHz), SX126X_LORA_CR_4_5, 0 };
+}
+
+static sx126x_pkt_params_lora_t buildPktParams(RadioSlotConfig cfg, uint8_t pldLen) {
+  if (cfg == RADIO_CFG_LR)
+    return { 5, SX126X_LORA_PKT_IMPLICIT, (uint8_t)(pldLen ? pldLen : 3), false, false };
+  return { LORA_PREAMBLE, SX126X_LORA_PKT_EXPLICIT, pldLen, true, false };
 }
 
 // LED control: logic-driven or BUSY-pin-driven per LED_MODE config.
@@ -185,23 +204,14 @@ bool bsRadioInit() {
 void bsRadioApplyConfig_BLOCKING() {
   // BLOCKING — init path only. Contains DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING
   // calls (up to 100ms each). Only call from bsRadioInit_BLOCKING().
-  sx126x_mod_params_lora_t modParams = {};
-  modParams.sf   = (sx126x_lora_sf_t)activeSF;
-  modParams.bw   = bwKHzToEnum(activeBwKHz);
-  modParams.cr   = SX126X_LORA_CR_4_5;
-  modParams.ldro = 0;
+  sx126x_mod_params_lora_t modParams = buildModParams(RADIO_CFG_NORMAL);
   sx126x_status_t st = sx126x_set_lora_mod_params(&bsRadioCtx, &modParams);
   Serial.print("BS applyConfig: mod_params SF="); Serial.print(activeSF);
   Serial.print(" BW="); Serial.print((int)activeBwKHz);
   Serial.print(" CR=4/5 -> "); Serial.println(st);
   DO_NOT_CALL_WHILE_ARMED_radioWaitBusy_WARNING_LONG_BLOCKING(&bsRadioCtx);
 
-  sx126x_pkt_params_lora_t pktParams = {};
-  pktParams.preamble_len_in_symb = LORA_PREAMBLE;
-  pktParams.header_type          = SX126X_LORA_PKT_EXPLICIT;
-  pktParams.pld_len_in_bytes     = 255;
-  pktParams.crc_is_on            = true;
-  pktParams.invert_iq_is_on      = false;
+  sx126x_pkt_params_lora_t pktParams = buildPktParams(RADIO_CFG_NORMAL, 255);
   st = sx126x_set_lora_pkt_params(&bsRadioCtx, &pktParams);
   Serial.print("BS applyConfig: pkt_params preamble="); Serial.print(LORA_PREAMBLE);
   Serial.print(" explicit_hdr crc_on iq_normal -> "); Serial.println(st);
@@ -262,19 +272,11 @@ void bsApplyCfgIfNeeded() {
   }
   bsBusyStuckSinceMs = 0;
 
-  sx126x_mod_params_lora_t mp = {};
+  sx126x_mod_params_lora_t mp = buildModParams(bsTargetCfg);
   if (bsTargetCfg == RADIO_CFG_LR) {
-    mp.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
-    mp.bw   = bwKHzToEnum(activeBwKHz);
-    mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR;
-    mp.ldro = 1;
     Serial.print("BS applyCfg: LR SF"); Serial.print(LORA_LR_SF);
     Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
   } else {
-    mp.sf   = (sx126x_lora_sf_t)activeSF;
-    mp.bw   = bwKHzToEnum(activeBwKHz);
-    mp.cr   = SX126X_LORA_CR_4_5;
-    mp.ldro = 0;
     Serial.println("BS applyCfg: NORMAL");
   }
   sx126x_set_lora_mod_params(&bsRadioCtx, &mp);
@@ -282,19 +284,7 @@ void bsApplyCfgIfNeeded() {
   unsigned long t0 = micros();
   while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 100) {}
 
-  sx126x_pkt_params_lora_t pp = {};
-  if (bsTargetCfg == RADIO_CFG_LR) {
-    pp.preamble_len_in_symb = 5;
-    pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
-    pp.pld_len_in_bytes     = 3;
-    pp.crc_is_on            = false;
-  } else {
-    pp.preamble_len_in_symb = LORA_PREAMBLE;
-    pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
-    pp.pld_len_in_bytes     = 255;
-    pp.crc_is_on            = true;
-  }
-  pp.invert_iq_is_on = false;
+  sx126x_pkt_params_lora_t pp = buildPktParams(bsTargetCfg, 255);
   sx126x_set_lora_pkt_params(&bsRadioCtx, &pp);
 
   bsAppliedCfg = bsTargetCfg;
@@ -351,12 +341,7 @@ bool bsRadioStartTx(const uint8_t* pkt, size_t len) {
 
   // In explicit header mode, pld_len_in_bytes controls how many bytes are transmitted.
   // Must be set to the actual payload length before each TX.
-  sx126x_pkt_params_lora_t pp = {};
-  pp.preamble_len_in_symb = LORA_PREAMBLE;
-  pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
-  pp.pld_len_in_bytes     = (uint8_t)len;
-  pp.crc_is_on            = true;
-  pp.invert_iq_is_on      = false;
+  sx126x_pkt_params_lora_t pp = buildPktParams(RADIO_CFG_NORMAL, (uint8_t)len);
   sx126x_set_lora_pkt_params(&bsRadioCtx, &pp);
 
   sx126x_status_t st = sx126x_write_buffer(&bsRadioCtx, 0, pkt, (uint8_t)len);
@@ -412,6 +397,11 @@ void bsRadioStandby() {
 
 void bsSetSyncedFromTx(uint64_t anchorUs) {
   bsSyncAnchorUs     = (unsigned long)anchorUs;
+  bsSyncAnchorOriginalUs = (unsigned long)anchorUs;
+  bsAnchorDriftUs = 0;
+  bsDriftEmaUs = 0.0f;
+  bsDriftThisMinuteUs = 0;
+  bsDriftMinuteStartMs = 0;
   // The sync packet is sent during WIN_CMD (slot index 1 in the WIN_TELEM/WIN_CMD sequence).
   // Both sides anchor at this event: base at TxDone, rocket at RxDone.
   // slotIndex=1 means: at the anchor time, slot 1 (WIN_CMD) is current.
@@ -428,9 +418,10 @@ void bsSetSyncedFromTx(uint64_t anchorUs) {
 
 // Forward declare packet received callback (defined in main.cpp)
 extern void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
-                               uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win);
+                               int32_t signedPosInSlot, uint32_t slotNum, uint8_t seqIdx,
+                               uint8_t win, uint32_t timeOnAirMs);
 
-static void bsHandleRxDone(uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win) {
+static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win) {
   sx126x_rx_buffer_status_t bufStatus = {};
   sx126x_status_t st = sx126x_get_rx_buffer_status(&bsRadioCtx, &bufStatus);
   if (st != SX126X_STATUS_OK) {
@@ -458,41 +449,46 @@ static void bsHandleRxDone(uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx,
 
   // Calculate time-on-air based on the radio config that was actually applied for this RX.
   // Reconstruct the modulation and packet params from bsAppliedCfg (what was set, not what slot says).
-  sx126x_mod_params_lora_t appliedModParams = {};
-  sx126x_pkt_params_lora_t appliedPktParams = {};
-
-  if (bsAppliedCfg == RADIO_CFG_LR) {
-    appliedModParams.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
-    appliedModParams.bw   = bwKHzToEnum(activeBwKHz);
-    appliedModParams.cr   = (sx126x_lora_cr_t)LORA_LR_CR;
-    appliedModParams.ldro = 1;
-
-    appliedPktParams.preamble_len_in_symb = 5;
-    appliedPktParams.header_type          = SX126X_LORA_PKT_IMPLICIT;
-    appliedPktParams.pld_len_in_bytes     = 3;
-    appliedPktParams.crc_is_on            = false;
-  } else {
-    appliedModParams.sf   = (sx126x_lora_sf_t)activeSF;
-    appliedModParams.bw   = bwKHzToEnum(activeBwKHz);
-    appliedModParams.cr   = SX126X_LORA_CR_4_5;
-    appliedModParams.ldro = 0;
-
-    appliedPktParams.preamble_len_in_symb = LORA_PREAMBLE;
-    appliedPktParams.header_type          = SX126X_LORA_PKT_EXPLICIT;
-    appliedPktParams.pld_len_in_bytes     = rxLen;
-    appliedPktParams.crc_is_on            = true;
-  }
-  appliedPktParams.invert_iq_is_on = false;
+  sx126x_mod_params_lora_t appliedModParams = buildModParams(bsAppliedCfg);
+  sx126x_pkt_params_lora_t appliedPktParams = buildPktParams(bsAppliedCfg, rxLen);
 
   uint32_t timeOnAirMs = sx126x_get_lora_time_on_air_in_ms(&appliedPktParams, &appliedModParams);
 
-  if (LOG_RX_DONE) {
-    Serial.print("BS RxDone: posInSlot="); Serial.print(posInSlot);
-    Serial.print("us slot="); Serial.print(slotNum);
-    Serial.print(" seqIdx="); Serial.print(seqIdx);
-    Serial.print(" win="); Serial.print((int)win);
-    Serial.print(" timeOnAir="); Serial.print(timeOnAirMs);
-    Serial.println("ms");
+  // Clamp airtime to reasonable range (5-400ms). Empirically determined bounds.
+  timeOnAirMs = constrain(timeOnAirMs, 5U, 400U);
+
+  // Drift calibration: if synced and receiving telemetry/LR, track drift and apply gentle correction.
+  // Drift = arrival position relative to expected (start + airtime).
+  // Target: signedPosInSlot ≈ timeOnAirMs * 1000 µs (offset from slot start to RX_DONE).
+  if (bsSynced && (win == WIN_TELEM || win == WIN_LR)) {
+    int32_t expectedUs = (int32_t)timeOnAirMs * 1000;
+    int32_t driftUs    = signedPosInSlot - expectedUs;
+
+    // IIR filter — alpha=0.15, gentle tracking
+    bsDriftEmaUs = bsDriftEmaUs * 0.85f + driftUs * 0.15f;
+
+    // Only correct if consistently drifted (deadband ±500µs)
+    if (fabsf(bsDriftEmaUs) > 500.0f) {
+      // Rate limit: 1ms per minute
+      uint32_t nowMs = millis();
+      if ((int32_t)(nowMs - bsDriftMinuteStartMs) > 60000) {
+        bsDriftMinuteStartMs  = nowMs;
+        bsDriftThisMinuteUs   = 0;
+      }
+      int32_t remainingBudgetUs = 1000 - abs(bsDriftThisMinuteUs);
+      if (remainingBudgetUs > 0) {
+        // Per-packet cap: ±100µs; also respect minute budget
+        int32_t rawCorrection = (int32_t)(bsDriftEmaUs * 0.1f);  // 10% of EMA
+        rawCorrection = constrain(rawCorrection, -100, 100);
+        rawCorrection = constrain(rawCorrection, -remainingBudgetUs, remainingBudgetUs);
+
+        // Apply: anchor += rawCorrection makes signedPosInSlot smaller by rawCorrection
+        // rawCorrection < 0 means packet early, we want to decrease anchor (increase posInSlot)
+        bsSyncAnchorUs   = (unsigned long)((int64_t)bsSyncAnchorUs + rawCorrection);
+        bsAnchorDriftUs += rawCorrection;
+        bsDriftThisMinuteUs += abs(rawCorrection);
+      }
+    }
   }
 
   // WIN_LR uses implicit header — no type byte on air. Identify by slot + length.
@@ -503,7 +499,7 @@ static void bsHandleRxDone(uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx,
     synth[0] = PKT_LONGRANGE;
     synth[1] = FAVORITE_ROCKET_DEVICE_ID;
     synth[2] = buf[0]; synth[3] = buf[1]; synth[4] = buf[2];
-    bsOnPacketReceived(synth, 5, snrF, rssiF, posInSlot, slotNum, seqIdx, win);
+    bsOnPacketReceived(synth, 5, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs);
     return;
   }
 
@@ -513,7 +509,7 @@ static void bsHandleRxDone(uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx,
     bsLastTelemRxMs = millis();
   }
 
-  bsOnPacketReceived(buf, rxLen, snrF, rssiF, posInSlot, slotNum, seqIdx, win);
+  bsOnPacketReceived(buf, rxLen, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs);
 }
 
 // ===================== IRQ HANDLER =====================
@@ -563,10 +559,12 @@ static void bsRadioHandleIrq() {
     uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
     uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
     uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+    int32_t signedPosInSlot = (posInSlot > SLOT_DURATION_US / 2)
+        ? (int32_t)posInSlot - (int32_t)SLOT_DURATION_US
+        : (int32_t)posInSlot;
     uint8_t  seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
     uint8_t  win       = (uint8_t)SLOT_SEQUENCE[seqIdx];
-    //TODO: add drift offset based on posInSlot vs sx126x_get_lora_time_on_air_in_ms (and fix the massive duplication of packet builder)
-    bsHandleRxDone(posInSlot, slotNum, seqIdx, win);
+    bsHandleRxDone(signedPosInSlot, slotNum, seqIdx, win);
     bsLedOff();
   }
 

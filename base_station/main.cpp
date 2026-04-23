@@ -337,7 +337,8 @@ void pushToAllTransports(const uint8_t* wsBuf, size_t wsLen) {
 // Invoked from radio.cpp bsHandleRxDone() for every valid received packet.
 
 void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
-                        uint32_t posInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win) {
+                        int32_t signedPosInSlot, uint32_t slotNum, uint8_t seqIdx,
+                        uint8_t win, uint32_t timeOnAirMs) {
   int8_t snr4 = (int8_t)(snrF * 4);
   uint32_t nowMs = millis();
 
@@ -368,9 +369,9 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
   memcpy(wsBuf + 12, buf, len);
   pushToAllTransports(wsBuf, 12 + len);
 
-  // Consolidated RX logging: signal + record num + slot timing + packet size + hex dump
-  Serial.printf("BS OnPackRx: Sig:%.1f/%.0f #%d slot:%.3fms/%lu/%u/%u %dB: [",
-                snrF, rssiF, recNum, posInSlot/1000.0f, slotNum, seqIdx, win, len);
+  // Consolidated RX logging: signal + record num + slot timing + airtime + drift + packet size + hex dump
+  Serial.printf("BS OnPackRx: Sig:%.1f/%.0f #%d slot:%.3fms/%lu/%u/%u toa:%lums drift:%ldus %dB: [",
+                snrF, rssiF, recNum, signedPosInSlot/1000.0f, slotNum, seqIdx, win, timeOnAirMs, bsAnchorDriftUs, len);
   size_t hexLen = (len < 14) ? len : 14;
   for (size_t i = 0; i < hexLen; i++) {
     Serial.printf("%02X", buf[i]);
