@@ -39,7 +39,7 @@
 // WIN_LR coding rate. 0x05 = 4/5 long-interleave (LI). Not in sx126x_driver enum; cast at use site.
 // TODO: @@@ confirm whether LI is causing stuck-BUSY seen in testing, or find real cause.
 // If LI is the problem, replace with SX126X_LORA_CR_4_5 (standard 4/5 = 0x01).
-#define LORA_LR_CR    0x05//SX126X_LORA_CR_4_5 // SX126X_LORA_CR_4_5 for normal 4/5 or for li4/5 use 0x05
+#define LORA_LR_CR    SX126X_LORA_CR_4_5 // SX126X_LORA_CR_4_5 for normal 4/5 or for li4/5 use 0x05
 
 #define FAVORITE_ROCKET_DEVICE_ID  0x92   // target device ID for commands to rocket (for bootstrap setup, we only have one rocket for debug. will need to make this a config later)
 

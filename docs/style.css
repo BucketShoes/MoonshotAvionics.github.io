@@ -19,7 +19,7 @@
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:3px;margin-bottom:8px}
   .card{background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:3px;position:relative;overflow:hidden;min-height:48px;max-height:200px}
   .card .cl{font-size:9px;color:#888;margin-bottom:1px} .card .cv{font-size:11px;color:#0f0;font-weight:bold;word-break:break-all}
-  .card .ad{position:absolute;top:3px;right:3px;width:32px;height:16px;border-radius:8px}
+  .card .ad{position:absolute;top:1px;right:1px;width:32px;height:12px;border-radius:8px}
   .card a{color:#4af;font-size:10px} .card button.cpb{background:#333;color:#aaa;border:1px solid #555;border-radius:3px;padding:1px 5px;font-size:9px;cursor:pointer;margin-left:4px}
   .gps-row{display:flex;align-items:center;gap:4px;margin-top:2px}
   .cd{display:none;margin-top:3px;font-size:8px;line-height:1.5;color:#aaa}
