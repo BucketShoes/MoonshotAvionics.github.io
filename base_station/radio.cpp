@@ -465,8 +465,9 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
     int32_t driftUs    = signedPosInSlot - expectedUs;
 
     // IIR filter — alpha=0.15, gentle tracking
-    bsDriftEmaUs = bsDriftEmaUs * 0.85f + driftUs * 0.15f;
-
+    bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
+Serial.println("BS Drift EMA:");
+Serial.println(bsDriftEmaUs);
     // Only correct if consistently drifted (deadband ±500µs)
     if (fabsf(bsDriftEmaUs) > 500.0f) {
       // Rate limit: 1ms per minute
