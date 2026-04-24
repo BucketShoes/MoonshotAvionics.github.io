@@ -238,8 +238,8 @@ static void buildPage0C(uint8_t* buf, size_t* pos) {
   writeU8(buf, pos, (uint8_t)noiseFloor);
 
   // Sync status and current slot index
-  uint8_t syncFlags = radioSynced ? 0x01 : 0x00;
-  if (radioSynced) {
+  uint8_t syncFlags = radioInSync() ? 0x01 : 0x00;
+  if (radioInSync()) {
     uint64_t elapsed = (uint64_t)micros() - (uint64_t)syncAnchorUs;
     uint32_t slotNum = (uint32_t)(elapsed / SLOT_DURATION_US);
     uint8_t seqIdx = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);

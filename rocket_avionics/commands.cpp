@@ -303,7 +303,7 @@ void processReceivedPacket(const uint8_t* pkt, size_t pktLen, int8_t rssi, int8_
   // Capture position in slot when command RX completed (in 2ms units, clamped to 255)
   uint64_t rxTimeUs = dio1TimestampUs();
   uint32_t posInSlotUs;
-  if (radioSynced) {
+  if (radioInSync()) {
     uint64_t elapsed = rxTimeUs - (uint64_t)syncAnchorUs;
     posInSlotUs = (uint32_t)(elapsed % SLOT_DURATION_US);
   } else {

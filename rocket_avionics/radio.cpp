@@ -265,8 +265,7 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
   syncAnchorUs           = anchorUs;
   syncSlotIndex          = slotIdx;
   lastHandledSlotNum     = 0xFFFFFFFF;
-  // Note: receiving a sync packet does NOT guarantee we're in sync — we're only truly synced
-  // when we've heard a valid command recently (tracked by lastValidCmdUs).
+  lastValidCmdUs         = (unsigned long)micros();  // Sync packet is a command — updates our sync state
   Serial.print("SYNC: anchor="); Serial.print(anchorUs);
   Serial.print("us slotIdx="); Serial.println(slotIdx);
 }

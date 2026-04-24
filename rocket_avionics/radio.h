@@ -67,6 +67,11 @@ static inline float channelToFreqMHz(uint8_t ch) {
 
 // ===================== PUBLIC API =====================
 
+// Check if we're currently in sync (heard a command recently).
+inline bool radioInSync() {
+  return (lastValidCmdUs != 0 && (micros() - lastValidCmdUs) < ROCKET_NO_BASE_HEARD_THRESHOLD_US);
+}
+
 // Derive activeFreqMHz and activeBwKHz from activeChannel.
 void updateActiveFreqBw();
 
