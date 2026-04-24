@@ -83,9 +83,14 @@ static sx126x_lora_sf_t sfToEnum(uint8_t sf) {
 }
 
 //radio on. show the brighter flash for timing sync (later, might make this separate tx vs rx).
-static void ledOnTX()  { ledcWrite(LED_PIN, 64); } 
-static void ledOnRX()  { ledcWrite(LED_PIN, 5); } 
-static void ledOff() { ledcWrite(LED_PIN, radioSynced?0:1);   } //radio off - indicate status
+static void ledOnTX()  { ledcWrite(LED_PIN, 64); }
+static void ledOnRX()  { ledcWrite(LED_PIN, 5); }
+static void ledOff() {
+  // Idle LED: show whether we're in good sync (heard command within 30 seconds).
+  // Brightness indicates quality: bright = good sync, dim = lost sync.
+  bool inGoodSync = (lastValidCmdUs != 0 && (micros() - lastValidCmdUs) < 30'000'000UL);
+  ledcWrite(LED_PIN, inGoodSync ? 0 : 1);
+}
 
 // ===================== INIT =====================
 
@@ -260,7 +265,8 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
   syncAnchorUs           = anchorUs;
   syncSlotIndex          = slotIdx;
   lastHandledSlotNum     = 0xFFFFFFFF;
-  radioSynced            = true;
+  // Note: receiving a sync packet does NOT guarantee we're in sync — we're only truly synced
+  // when we've heard a valid command recently (tracked by lastValidCmdUs).
   Serial.print("SYNC: anchor="); Serial.print(anchorUs);
   Serial.print("us slotIdx="); Serial.println(slotIdx);
 }

@@ -41,10 +41,10 @@ extern float   activeBwKHz;
 
 // ===================== SLOT CLOCK STATE =====================
 
-extern bool          radioSynced;
 extern unsigned long syncAnchorUs;
 extern uint32_t      syncSlotIndex;
 extern uint32_t      lastHandledSlotNum;
+extern unsigned long lastValidCmdUs;  // Timestamp of last received valid command (for sync state)
 
 // ===================== RSSI EMA (stub) =====================
 
