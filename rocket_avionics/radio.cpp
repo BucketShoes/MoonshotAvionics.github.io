@@ -588,6 +588,59 @@ void nonblockingRadio() {
 }
 #else
 
+// ===================== PER-SLOT CONFIG SWITCH =====================
+// Applies slot radio params when targetCfg differs from appliedCfg.
+// Two SPI commands back-to-back; BUSY between them spins up to 100µs (typical: <20µs).
+// Called once per slot boundary — not every loop — so 100µs is well within budget.
+
+static void applyCfgIfNeeded() {
+  if (radioState != RADIO_STANDBY) {
+    static uint32_t deferredCfgCount = 0;
+    deferredCfgCount++;
+    if (deferredCfgCount % 100 == 0) {
+      Serial.print("applyCfg deferred (not STANDBY): "); Serial.println(deferredCfgCount);
+    }
+    return;  // defer until RX/TX completes naturally
+  }
+
+  sx126x_mod_params_lora_t mp = {};
+  if (targetCfg == RADIO_CFG_LR) {
+    mp.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
+    mp.bw   = bwKHzToEnum(activeBwKHz);
+    mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR;
+    mp.ldro = 1;
+    Serial.print("applyCfg: LR SF"); Serial.print(LORA_LR_SF);
+    Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
+  } else {
+    mp.sf   = sfToEnum(activeSF);
+    mp.bw   = bwKHzToEnum(activeBwKHz);
+    mp.cr   = SX126X_LORA_CR_4_5;
+    mp.ldro = 0;
+    Serial.println("applyCfg: NORMAL");
+  }
+  sx126x_set_lora_mod_params(&radioCtx, &mp);
+
+  // Wait for BUSY to clear between the two SPI commands. Typical: <20µs. Hard cap: 100µs.
+  unsigned long t0 = micros();
+  while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 100) {}
+
+  sx126x_pkt_params_lora_t pp = {};
+  if (targetCfg == RADIO_CFG_LR) {
+    pp.preamble_len_in_symb = 5;
+    pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
+    pp.pld_len_in_bytes     = 3;
+    pp.crc_is_on            = false;
+  } else {
+    pp.preamble_len_in_symb = LORA_PREAMBLE;
+    pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
+    pp.pld_len_in_bytes     = 255;
+    pp.crc_is_on            = true;
+  }
+  pp.invert_iq_is_on = false;
+  sx126x_set_lora_pkt_params(&radioCtx, &pp);
+
+  appliedCfg = targetCfg;
+}
 
 void nonblockingRadio() {
   if (!loraReady) return;
@@ -605,15 +658,16 @@ void nonblockingRadio() {
   unsigned long now      = micros();
   unsigned long elapsed  = now - syncAnchorUs;
   uint32_t      slotNum  = (uint32_t)(elapsed / SLOT_DURATION_US);
-  uint32_t      posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
   uint8_t       seqIdx   = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
   WindowMode    win      = SLOT_SEQUENCE[seqIdx];
 
   static bool slotActionDone = false;  // true after TX fired or RX started this slot
 
-  // On new slot boundary: if radioState is still RX_ACTIVE, we missed the window for this slot
-  // (RX from previous slot is still active). Abandon the slot rather than wait—TX now would be late
-  // and out of sync. The safety cutoff below handles the case where RX is truly stuck (missed DIO1).
+  // On new slot boundary: never force standby on an active RX. If radioState is still
+  // RADIO_RX_ACTIVE, the SX1262 is either still in the preamble detection window or actively
+  // receiving a packet. The hardware timeout (no preamble) or packet-end IRQ will return it
+  // to STANDBY on its own. Forcing standby mid-packet loses the frame.
+  // applyCfgIfNeeded() is a no-op while RX_ACTIVE and will retry next slot boundary.
   // Safety cutoff: if RX has been active for more than RX_STUCK_MAX_SLOTS full slots,
   // something is stuck (missed DIO1 or IRQ failure) — force standby to recover.
   static unsigned long rxActiveStartUs = 0;
@@ -631,62 +685,13 @@ void nonblockingRadio() {
     lastHandledSlotNum = slotNum;
     slotActionDone = false;
 
-    // Slot boundary: if radioState != STANDBY, we missed the window. Log and skip.
-    if (radioState != RADIO_STANDBY) {
-      Serial.print("SLOT_MISS: posInSlot="); Serial.print(posInSlot);
-      Serial.print("us slot="); Serial.print(slotNum);
-      Serial.print(" seqIdx="); Serial.print(seqIdx);
-      Serial.print(" win="); Serial.print((int)win);
-      Serial.print(" radioState="); Serial.println((int)radioState);
-      return;  // Abandon this slot — TX now would be late
-    }
-
-    // Apply config for this slot (or fail and abandon if BUSY).
     RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
-    targetCfg = newTarget;
+    if (newTarget != targetCfg) targetCfg = newTarget;
 
-    // Unconditionally apply config—don't assume we're in targetCfg already.
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.print("SLOT_MISS: applyCfg BUSY at posInSlot="); Serial.print(posInSlot);
-      Serial.print("us slot="); Serial.println(slotNum);
-      return;  // Radio is busy; abandon slot rather than wait.
-    }
-
-    sx126x_mod_params_lora_t mp = {};
-    if (targetCfg == RADIO_CFG_LR) {
-      mp.sf   = (sx126x_lora_sf_t)LORA_LR_SF;
-      mp.bw   = bwKHzToEnum(activeBwKHz);
-      mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR;
-      mp.ldro = 1;
-    } else {
-      mp.sf   = sfToEnum(activeSF);
-      mp.bw   = bwKHzToEnum(activeBwKHz);
-      mp.cr   = SX126X_LORA_CR_4_5;
-      mp.ldro = 0;
-    }
-    sx126x_set_lora_mod_params(&radioCtx, &mp);
-
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 100) {}
-
-    sx126x_pkt_params_lora_t pp = {};
-    if (targetCfg == RADIO_CFG_LR) {
-      pp.preamble_len_in_symb = 5;
-      pp.header_type          = SX126X_LORA_PKT_IMPLICIT;
-      pp.pld_len_in_bytes     = 3;
-      pp.crc_is_on            = false;
-    } else {
-      pp.preamble_len_in_symb = LORA_PREAMBLE;
-      pp.header_type          = SX126X_LORA_PKT_EXPLICIT;
-      pp.pld_len_in_bytes     = 255;
-      pp.crc_is_on            = true;
-    }
-    pp.invert_iq_is_on = false;
-    sx126x_set_lora_pkt_params(&radioCtx, &pp);
-
-    appliedCfg = targetCfg;
+    applyCfgIfNeeded();
   }
 
+  if (radioState != RADIO_STANDBY) return;
   if (slotActionDone) return;  // TX complete or RX started — wait for next slot boundary
 
   slotActionDone = true;
