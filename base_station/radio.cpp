@@ -486,10 +486,11 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
   uint32_t nowMs = millis();
   uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
 
-  // Drift calibration: if synced and receiving telemetry/LR, track drift and apply gentle correction.
+  // Drift calibration: if synced and receiving telemetry, track drift and apply gentle correction.
   // Drift = arrival position relative to expected (start + airtime).
   // Target: signedPosInSlot ≈ timeOnAirMs * 1000 µs (offset from slot start to RX_DONE).
-  if (bsSynced && (win == WIN_TELEM || win == WIN_LR)) {
+  // Note: exclude WIN_LR (implicit header, long preamble = unreliable for drift calc).
+  if (bsSynced && win == WIN_TELEM) {
     if (fabsf(bsDriftEmaUs) > (float)BS_DRIFT_DEADBAND_US) {
       // Only correct if consistently drifted (deadband)
 
