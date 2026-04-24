@@ -594,12 +594,12 @@ void nonblockingRadio() {
 // Called once per slot boundary — not every loop — so 100µs is well within budget.
 
 static bool applyCfgIfNeeded() {
+  uint64_t nowUs = (uint64_t)micros();
+  uint64_t elapsed = nowUs - (uint64_t)syncAnchorUs;
+  uint32_t slotNum = (uint32_t)(elapsed / SLOT_DURATION_US);
+  uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+  uint8_t seqIdx = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
   if (radioState != RADIO_STANDBY) {
-    uint64_t nowUs = (uint64_t)micros();
-    uint64_t elapsed = nowUs - (uint64_t)syncAnchorUs;
-    uint32_t slotNum = (uint32_t)(elapsed / SLOT_DURATION_US);
-    uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
-    uint8_t seqIdx = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
     Serial.print("applyCfg FAILED: radioState="); Serial.print(radioState);
     Serial.print(" (not STANDBY) at posInSlot="); Serial.print(posInSlot);
     Serial.print("us slot="); Serial.print(slotNum);
@@ -620,7 +620,8 @@ static bool applyCfgIfNeeded() {
     mp.bw   = bwKHzToEnum(activeBwKHz);
     mp.cr   = SX126X_LORA_CR_4_5;
     mp.ldro = 0;
-    Serial.println("applyCfg: NORMAL");
+    Serial.print("applyCfg: NORMAL @ pis=");
+    Serial.println(posInSlot);
   }
   sx126x_set_lora_mod_params(&radioCtx, &mp);
 
