@@ -1,5 +1,7 @@
 PACKET TYPES (0x80-0xFF)
 These define the over-the-air and over-WebSocket message framing. The type byte values are chosen to be unlikely to appear by coincidence in unrelated traffic.
+
+
 ```
 0xAF  Telemetry packet - a compact minimal value for every packet, followed by one data page which cycles through different pages each time
       uint8   type (0xAF)
@@ -76,6 +78,9 @@ This packet is also valid over normal radio settings (with the packet type 0xBB 
 ```
 
 DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but can also be logged directly, include details from specific sensors)
+Payloads are size sensitive, so these are all tightly packed and these dont represent the underlying units. Currently the largest page is 11 bytes, and bigger than this limits our allowable modulations vs airtime.
+Thrust curve is special being so long, but it has special radio handling to be so big.
+
 ```
 0x01  Raw GPS position (10 bytes)
       int32   lat, degrees × 1e7
@@ -131,14 +136,13 @@ DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but
       uint16  max acceleration, 0.01g
       int16   max vertical velocity, 0.1 m/s
 
-0x0A  Command ack + signal quality (15 bytes)
+0x0A  Command ack + signal quality (10 bytes)
       uint32  last command nonce
       uint8   last command result (0=OK, nonzero=error code)
       int8    command RSSI, dBm
       int8    command SNR, dB × 4
       uint16  invalid HMAC count (command packets received that failed HMAC validation)
-      uint32  command RX time, microseconds (lower 32 bits of DIO1 capture timestamp)
-      uint16  command RX position in slot, microseconds (0 to SLOT_DURATION_US)
+      uint8   command RX position in slot, 2-millisecond units (clamped)
 
 0x0B  Flight status (6 bytes)
       int32   ms since launch detect (-1 = not launched)
@@ -155,16 +159,18 @@ DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but
               [9:15] reserved
 
 
-0x0C  Radio health (5 bytes)
+0x0C  Radio health (7 bytes)
       uint16  delayed TX count (times TX was postponed due to 
               channel busy)
       uint16  invalid RX count (packets received that failed 
               validation — wrong type, wrong device ID, bad CRC, 
               etc)
       int8    background RSSI, dB (average only measured when not transmitting and when no command incoming - to estimate channel noise outside of packet times)
+      uint8   packet window slot index
+      uint8   flags [0]=Sync OK (true if currently using tight listen windows for power saving, because we have recently heard a valid command during a listen. if no commands heard, window becomes wider)
 
 0x0D  Timestamp (8 bytes)
-     uint64   UTC time, ms since 1/1/1970
+      uint64   UTC time, ms since 1/1/1970
 
 
 0x0E  Thrust curve — X-axis acceleration history (variable length)

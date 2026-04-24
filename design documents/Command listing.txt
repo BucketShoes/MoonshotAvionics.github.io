@@ -106,21 +106,11 @@ Commands for any device type (rockets and bases/relays both handle):
       Effect: establishes the slot clock sync point on both sides.
         - The RxDone moment on the rocket (end of this packet's reception) is the rocket's sync anchor.
         - The TxDone moment on the base station (hardware-captured via MCPWM DIO1 edge) is the base's anchor.
-        - Both sides set their slot index to 1 (WIN_CMD begins now; this packet occupied slot 0 = WIN_TELEM).
-        - After sync, both sides enter the slot-based radio schedule:
-            WIN_TELEM (slot 0): rocket TX telemetry / base RX
-            WIN_CMD   (slot 1): base TX commands / rocket RX
-        - Each slot is 2 seconds. Sequence repeats.
-        - Base station auto-sends this 2s after boot.
-        - Base resends automatically if too many consecutive WIN_TELEM slots arrive with no telemetry (sync loss detection).
+        - Both sides set their slot index to 1
+        - Base station auto-sends this 2s after boot and a few times with phase walk
         - JS or BLE can also trigger a resync at any time.
-        - Before sync: rocket runs continuous RX (bootstrap). Base runs continuous RX.
-        - Nonce and HMAC apply as normal (base station signs with shared key, increments nonce in NVS).
-        - Acknowledged by rocket in the normal 0x0A ack page.
-        - CMD_SET_SYNC is queued as a normal command (same path as any other command). The sync anchor
-          is derived from the hardware-latched TxDone timestamp (MCPWM capture), not a blocking transmit.
-        - Phase 1 (current): single channel only, 2-second slots, 10ms early listen, 40ms timeout.
-        - Future: frequency/SF/timing parameters may be added as params when frequency hopping is implemented.
+        - frequency/SF/timing parameters may be added as params when frequency hopping is implemented.
+        - TODO: for relays alternate base stations that hear this should also switch to tracking the rocket with the new expected anchor (although, dont assume the rocket will hear it, hold the old anchor until confirmed)
 
 0xF0  REBOOT
       Params: none
