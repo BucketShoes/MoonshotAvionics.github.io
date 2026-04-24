@@ -136,7 +136,7 @@ Thrust curve is special being so long, but it has special radio handling to be s
       uint16  max acceleration, 0.01g
       int16   max vertical velocity, 0.1 m/s
 
-0x0A  Command ack + signal quality (9 bytes)
+0x0A  Command ack + signal quality (10 bytes)
       uint32  last command nonce
       uint8   last command result (0=OK, nonzero=error code)
       int8    command RSSI, dBm
@@ -159,7 +159,7 @@ Thrust curve is special being so long, but it has special radio handling to be s
               [9:15] reserved
 
 
-0x0C  Radio health (7 bytes)
+0x0C  Radio health (6 bytes)
       uint16  delayed TX count (times TX was postponed due to
               channel busy)
       uint16  invalid RX count (packets received that failed

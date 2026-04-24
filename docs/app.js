@@ -177,9 +177,9 @@
   PD[7]={n:'Kalman',s:10,d:function(v,o){return{alt_cm:v.getInt32(o,1),vel:v.getInt16(o+4,1)/10,altUnc:v.getUint8(o+6),velUnc:v.getUint8(o+7),accUnc:v.getUint8(o+8),innov:v.getUint8(o+9)}},f:function(d){return(d.alt_cm/100).toFixed(1)+'m v:'+d.vel.toFixed(1)+' u:'+d.altUnc+'/'+d.velUnc}};
   PD[8]={n:'System',s:11,d:function(v,o){return{temp:v.getInt8(o),heap:v.getUint16(o+1,1),up:v.getUint16(o+3,1),batt:v.getUint16(o+5,1),logRec:v.getUint32(o+7,1)}},f:function(d){return d.temp+'C '+d.batt+'mV '+d.heap+'KB '+d.up+'s log#'+d.logRec}};
   PD[9]={n:'Peaks',s:8,d:function(v,o){return{alt:v.getInt32(o,1),acc:v.getUint16(o+4,1)/100,vvel:v.getInt16(o+6,1)/10}},f:function(d){return(d.alt/100).toFixed(1)+'m '+d.acc.toFixed(1)+'g vv:'+d.vvel.toFixed(1)}};
-  PD[10]={n:'Cmd Ack',s:9,d:function(v,o){return{nonce:v.getUint32(o,1),res:v.getUint8(o+4),rssi:v.getInt8(o+5),snr:v.getInt8(o+6)/4,hmacFail:v.getUint16(o+7,1)}},f:function(d){return 'N:'+d.nonce+(d.res===0?' OK':' E'+d.res)+' rssi:'+d.rssi+' snr:'+d.snr.toFixed(1)+' hmF:'+d.hmacFail}};
+  PD[10]={n:'Cmd Ack',s:10,d:function(v,o){return{nonce:v.getUint32(o,1),res:v.getUint8(o+4),rssi:v.getInt8(o+5),snr:v.getInt8(o+6)/4,hmacFail:v.getUint16(o+7,1),rxPosInSlot:v.getUint8(o+9)}},f:function(d){return 'N:'+d.nonce+(d.res===0?' OK':' E'+d.res)+' rssi:'+d.rssi+' snr:'+d.snr.toFixed(1)+' hmF:'+d.hmacFail+' rxPos:'+d.rxPosInSlot+'*2ms'}};
   PD[11]={n:'Flight',s:6,d:function(v,o){var ms=v.getInt32(o,1);var fl=v.getUint16(o+4,1);return{ms:ms,p1c:!!(fl&1),p1f:!!(fl&2),p1a:!!(fl&4),p2c:!!(fl&8),p2f:!!(fl&16),p2a:!!(fl&32),cc:!!(fl&64),cf:!!(fl&128),ca:!!(fl&256)}},f:function(d){return(d.ms<0?'pre':'T+'+(d.ms/1000).toFixed(1)+'s')+' P1:'+(d.p1c?'*':'o')+(d.p1f?'F':'')+' P2:'+(d.p2c?'*':'o')+(d.p2f?'F':'')+' Ch:'+(d.cc?'*':'o')+(d.cf?'F':'')}};
-  PD[12]={n:'Radio',s:5,d:function(v,o){return{dtx:v.getUint16(o,1),irx:v.getUint16(o+2,1),bgRssi:v.getInt8(o+4)}},f:function(d){return 'dTX:'+d.dtx+' bRX:'+d.irx+' bg:'+d.bgRssi+'dBm'}};
+  PD[12]={n:'Radio',s:6,d:function(v,o){var f=v.getUint8(o+5);return{dtx:v.getUint16(o,1),irx:v.getUint16(o+2,1),bgRssi:v.getInt8(o+4),radioSynced:!!(f&1),seqIdx:(f>>1)&0x7F}},f:function(d){return 'dTX:'+d.dtx+' bRX:'+d.irx+' bg:'+d.bgRssi+'dBm sync:'+(d.radioSynced?'Y':'N')+' seq:'+d.seqIdx}};
   PD[13]={n:'Time',s:8,d:function(v,o){var lo=v.getUint32(o,1),hi=v.getUint32(o+4,1);var ms=hi*4294967296+lo;return{ms:ms,utc:ms>0?new Date(ms):null}},f:function(d){return d.utc?d.utc.toISOString().replace('T',' ').substring(0,19)+'Z':'no time'}};
   // Page 0x0E: Thrust Curve — variable-length accel ring buffer snapshot
   // Header: durationMs u16, minAccel8 s16, maxAccel8 s16 (8mg units), then N sample bytes.
@@ -300,9 +300,9 @@ function initCharts() {
   PF[7]=[{k:'alt_cm',n:'Alt',u:'m AGL',fmt:function(v){return(v/100).toFixed(1)}},{k:'vel',n:'Vel',u:'m/s',fmt:function(v){return v.toFixed(1)}},{k:'altUnc',n:'AltU',u:'log'},{k:'velUnc',n:'VelU',u:'log'},{k:'accUnc',n:'AccU',u:'log'},{k:'innov',n:'Inn',u:'log'}];
   PF[8]=[{k:'temp',n:'Temp',u:'°C'},{k:'heap',n:'Heap',u:'KB'},{k:'up',n:'Up',u:'s'},{k:'batt',n:'Batt',u:'mV'},{k:'logRec',n:'Log#',u:''}];
   PF[9]=[{k:'alt',n:'MaxAlt',u:'m',fmt:function(v){return(v/100).toFixed(1)}},{k:'acc',n:'MaxAcc',u:'g',fmt:function(v){return v.toFixed(2)}},{k:'vvel',n:'MaxVV',u:'m/s',fmt:function(v){return v.toFixed(1)}}];
-  PF[10]=[{k:'nonce',n:'Nonce',u:''},{k:'res',n:'Result',u:'0=OK'},{k:'rssi',n:'RSSI',u:'dBm'},{k:'snr',n:'SNR',u:'dB',fmt:function(v){return v.toFixed(1)}},{k:'hmacFail',n:'HmacF',u:'count'}];
+  PF[10]=[{k:'nonce',n:'Nonce',u:''},{k:'res',n:'Result',u:'0=OK'},{k:'rssi',n:'RSSI',u:'dBm'},{k:'snr',n:'SNR',u:'dB',fmt:function(v){return v.toFixed(1)}},{k:'hmacFail',n:'HmacF',u:'count'},{k:'rxPosInSlot',n:'RxPos',u:'2ms',fmt:function(v){return(v*2)+'ms'}}];
   PF[11]=[{k:'ms',n:'T+launch',u:'ms'},{k:'p1c',n:'P1cont',u:'bool'},{k:'p1f',n:'P1fire',u:'bool'},{k:'p1a',n:'P1act',u:'bool'},{k:'p2c',n:'P2cont',u:'bool'},{k:'p2f',n:'P2fire',u:'bool'},{k:'p2a',n:'P2act',u:'bool'},{k:'cc',n:'Chcont',u:'bool'},{k:'cf',n:'Chfire',u:'bool'},{k:'ca',n:'Chact',u:'bool'}];
-  PF[12]=[{k:'dtx',n:'DlyTX',u:'count'},{k:'irx',n:'BadRX',u:'count'},{k:'bgRssi',n:'BgRSSI',u:'dBm'}];
+  PF[12]=[{k:'dtx',n:'DlyTX',u:'count'},{k:'irx',n:'BadRX',u:'count'},{k:'bgRssi',n:'BgRSSI',u:'dBm'},{k:'radioSynced',n:'Sync',u:'Y/N'},{k:'seqIdx',n:'SeqIdx',u:'slot'}];
   PF[13]=[{k:'utc',n:'UTC',u:'',fmt:function(v){return v?v.toISOString().replace('T',' ').substring(0,19)+'Z':'none'}}];
   PF[14]=[{k:'durationMs',n:'Duration',u:'ms'},{k:'minMg',n:'Min',u:'mg'},{k:'maxMg',n:'Max',u:'mg'},{k:'sampleCount',n:'Samples',u:''}];
 

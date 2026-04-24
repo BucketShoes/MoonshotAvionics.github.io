@@ -206,7 +206,7 @@ static void buildPage09(uint8_t* buf, size_t* pos) {
   writeS16(buf, pos, peaks.maxVvel10);
 }
 
-// Page 0x0A: Command ack + signal quality (9 bytes)
+// Page 0x0A: Command ack + signal quality (10 bytes)
 static void buildPage0A(uint8_t* buf, size_t* pos) {
   writeU32(buf, pos, lastAck.nonce);
   writeU8(buf, pos, lastAck.result);
@@ -230,7 +230,7 @@ static void buildPage0B(uint8_t* buf, size_t* pos) {
   writeU16(buf, pos, pyroFlags);
 }
 
-// Page 0x0C: Radio health (7 bytes)
+// Page 0x0C: Radio health (6 bytes)
 static void buildPage0C(uint8_t* buf, size_t* pos) {
   writeU16(buf, pos, delayedTxCount);
   writeU16(buf, pos, invalidRxCount);
