@@ -342,33 +342,8 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
   int8_t snr4 = (int8_t)(snrF * 4);
   uint32_t nowMs = millis();
 
-  // Preprocess 0xBB packets to ensure full 5-byte format for logging and transmission
-  uint8_t synthBuf[5] = {0};
-  size_t synthLen = 0;
-  const uint8_t* logBuf = buf;
-  size_t logLen = len;
-
-  if ((len == 3 || len == 4 || len == 5) && buf[0] == PKT_LONGRANGE) {
-    // Reconstruct as [type][device_id][3-byte core]
-    synthBuf[0] = PKT_LONGRANGE;
-    synthBuf[1] = FAVORITE_ROCKET_DEVICE_ID;
-    if (len == 3) {
-      // Only core: [3-byte core]
-      memcpy(synthBuf + 2, buf, 3);
-    } else if (len == 4) {
-      // Missing device_id: [type][3-byte core] → add device_id
-      memcpy(synthBuf + 2, buf + 1, 3);
-    } else {
-      // Full format or [type][device_id][3-byte core]
-      memcpy(synthBuf + 2, buf + 2, 3);
-    }
-    synthLen = 5;
-    logBuf = synthBuf;
-    logLen = 5;
-  }
-
   int32_t recNum = -1;
-  if (logStoreOk) recNum = logStore.writeRecord(logBuf, (uint8_t)logLen, snr4, nowMs);
+  if (logStoreOk) recNum = logStore.writeRecord(buf, (uint8_t)len, snr4, nowMs);
 
   if (len >= 10 && buf[0] == 0xAF) {
     memcpy(latestTelem.data, buf, len);
@@ -376,8 +351,8 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
     latestTelem.timestamp = nowMs; latestTelem.valid = true;
   }
 
-  if (synthLen > 0) {
-    uint32_t word   = (uint32_t)synthBuf[2] | ((uint32_t)synthBuf[3] << 8) | ((uint32_t)synthBuf[4] << 16);
+  if (len >= 5 && buf[0] == PKT_LONGRANGE) {
+    uint32_t word   = (uint32_t)buf[2] | ((uint32_t)buf[3] << 8) | ((uint32_t)buf[4] << 16);
     uint16_t latFrac = (uint16_t)(word & 0x7FF);
     uint16_t lonFrac = (uint16_t)((word >> 11) & 0x7FF);
     bool     lowBatt = (word >> 22) & 1;
@@ -391,8 +366,8 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
   memcpy(wsBuf, &snrF, 4);
   memcpy(wsBuf + 4, &rssiF, 4);
   memcpy(wsBuf + 8, &recNum, 4);
-  memcpy(wsBuf + 12, synthLen > 0 ? synthBuf : buf, synthLen > 0 ? synthLen : len);
-  pushToAllTransports(wsBuf, 12 + (synthLen > 0 ? synthLen : len));
+  memcpy(wsBuf + 12, buf, len);
+  pushToAllTransports(wsBuf, 12 + len);
 // Consolidated RX logging: signal + record num + slot timing + airtime + drift + packet size + hex dump
   //Slot:500=5(0)@1.234ms+2ms drift:7266us->ema Sync+123s 17B [AF230391098910831...]
   Serial.printf("BS OnPackRx: Sig:%.1f/%.0f #%d Slot:%lu=%u(%u)@%.2fms+%lums drift:%.1fms ema:%.1fms tss:%.1fs %dB: [",
