@@ -243,13 +243,18 @@ void bsRadioApplyConfig_BLOCKING() {
 static unsigned long bsBusyStuckSinceMs = 0;
 
 // Called whenever we observe BUSY high when we need the radio to be idle.
-// Triggers a full re-init after 1 second of continuous stuck-BUSY.
+// Triggers a full re-init after RX_STUCK_MAX_SLOTS worth of time. This aligns with
+// the slot machine's safety cutoff and prevents the watchdog from resetting before
+// the slot machine has a chance to force standby.
 static void bsCheckBusyWatchdog() {
   if (!digitalRead(LORA_BUSY_PIN)) { bsBusyStuckSinceMs = 0; return; }
   unsigned long now = millis();
   if (bsBusyStuckSinceMs == 0) { bsBusyStuckSinceMs = now; return; }
-  if (now - bsBusyStuckSinceMs >= 1000) {
-    Serial.println("BS LoRa: BUSY stuck >1s — resetting radio");
+  uint32_t busyDurationMs = now - bsBusyStuckSinceMs;
+  uint32_t maxBusyMs = (RX_STUCK_MAX_SLOTS * SLOT_DURATION_US) / 1000;
+  if (busyDurationMs >= maxBusyMs) {
+    Serial.print("BS LoRa: BUSY stuck >"); Serial.print(RX_STUCK_MAX_SLOTS);
+    Serial.println(" slots — resetting radio");
     bsBusyStuckSinceMs = 0;
     bsAppliedCfg = RADIO_CFG_NORMAL;  // force re-apply after reinit
     bsTargetCfg  = RADIO_CFG_NORMAL;
@@ -285,11 +290,13 @@ void bsApplyCfgIfNeeded() {
   bsBusyStuckSinceMs = 0;
 
   sx126x_mod_params_lora_t mp = buildModParams(bsTargetCfg);
-  if (bsTargetCfg == RADIO_CFG_LR) {
-    Serial.print("BS applyCfg: LR SF"); Serial.print(LORA_LR_SF);
-    Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
-  } else {
-    Serial.println("BS applyCfg: NORMAL");
+  if (LOG_APPLYCFG) {
+    if (bsTargetCfg == RADIO_CFG_LR) {
+      Serial.print("BS applyCfg: LR SF"); Serial.print(LORA_LR_SF);
+      Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
+    } else {
+      Serial.println("BS applyCfg: NORMAL");
+    }
   }
   sx126x_set_lora_mod_params(&bsRadioCtx, &mp);
 
@@ -307,7 +314,8 @@ void bsApplyCfgIfNeeded() {
 
 void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.println("BS RX: BUSY — skip");
+    Serial.print("BS RX: BUSY — skip timeout "); Serial.print(timeoutRtcSteps);
+    Serial.println(" RTC");
     bsCheckBusyWatchdog();
     return;
   }
@@ -332,7 +340,8 @@ void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
       Serial.print(" timeout="); Serial.print(timeoutUs); Serial.println("us");
     }
   } else {
-    Serial.print("BS RX: start fail st="); Serial.println(st);
+    Serial.print("BS RX: set_rx fail st="); Serial.print(st);
+    Serial.print(" rtc="); Serial.println(timeoutRtcSteps);
     bsRadioState = BS_RADIO_STANDBY;
   }
 }
@@ -907,8 +916,9 @@ void bsHandleRadio() {
       if (nextWin == WIN_TELEM) {
         timeoutUs = (bsSynced ? BS_RX_TIMEOUT_US : BS_LONG_RX_TIMEOUT_US) + BS_RX_EARLY_US;
       } else {
-        // WIN_LR: see on-boundary WIN_LR branch below for rationale.
-        timeoutUs = (uint32_t)(SLOT_DURATION_US - 50'000UL) + BS_RX_EARLY_US;
+        // WIN_LR: timeout covers listening from 50ms before slot boundary to 50ms margin in slot.
+        // Starting at -50ms with 420ms timeout = same end time as on-boundary (370ms into slot).
+        timeoutUs = (SLOT_DURATION_US - 50'000UL) + BS_RX_EARLY_US;
       }
       if (nextWin == WIN_TELEM) bsMissedTelemSlots++;
       bsRadioStartRxTimeout((uint32_t)(timeoutUs / 15.625f));

@@ -131,6 +131,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define LOG_TX_START false
 #define LOG_TX_TIMEOUT false
 #define LOG_TX_DONE false
+#define LOG_APPLYCFG false  // per-slot config apply (spammy)
 
 
 // ===================== RADIO STATE =====================
