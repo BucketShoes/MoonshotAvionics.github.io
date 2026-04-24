@@ -467,58 +467,58 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
     // IIR filter — alpha=0.1, gentle tracking
     bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
 
-    // Safety check: if accumulated drift exceeds max safe value, stop correcting and alert.
-    if (abs(bsAnchorDriftUs) >= (int32_t)BS_DRIFT_MAX_ACCUMULATED_US) {
-      static unsigned long lastAlertMs = 0;
-      unsigned long nowMs = millis();
-      if (nowMs - lastAlertMs >= 10000) {  // alert at most every 10 seconds
-        lastAlertMs = nowMs;
-        Serial.print("BS DRIFT: accumulated drift "); Serial.print(bsAnchorDriftUs);
-        Serial.print("us exceeds limit "); Serial.print((int32_t)BS_DRIFT_MAX_ACCUMULATED_US);
-        Serial.println("us — stopping corrections (airtime calc may be wrong)");
-      }
-    } else if (fabsf(bsDriftEmaUs) > (float)BS_DRIFT_DEADBAND_US) {
+    if (fabsf(bsDriftEmaUs) > (float)BS_DRIFT_DEADBAND_US) {
       // Only correct if consistently drifted (deadband)
 
-      // Dynamic rate limit: faster immediately after sync, slower later
       uint32_t nowMs = millis();
       uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
+
+      // Dynamic rate limit: aggressive in fast window, then ramp to conservative.
+      // Allows quick recovery from bad initial sync, but prevents long-term creep.
       uint32_t dynamicLimitUs;
       if (timeSinceSyncMs < BS_DRIFT_FAST_WINDOW_MS) {
-        // In fast window: use aggressive limit, allow quick convergence
         dynamicLimitUs = BS_DRIFT_MAX_PER_MINUTE_FAST_US;
       } else {
-        // After fast window: ramp from fast to conservative over next 30 minutes
-        // Linear ramp: at 30min, reach conservative; before 30min, interpolate
-        uint32_t rampMs = 30 * 60 * 1000;  // 30 minutes
+        // Ramp from fast to conservative over BS_DRIFT_RAMP_DURATION_MS
         uint32_t timeSinceRampStartMs = timeSinceSyncMs - BS_DRIFT_FAST_WINDOW_MS;
-        if (timeSinceRampStartMs >= rampMs) {
+        if (timeSinceRampStartMs >= BS_DRIFT_RAMP_DURATION_MS) {
           dynamicLimitUs = BS_DRIFT_MAX_PER_MINUTE_US;
         } else {
-          // Linear interpolation
+          // Linear interpolation from fast to conservative
           uint32_t rangeFast = BS_DRIFT_MAX_PER_MINUTE_FAST_US - BS_DRIFT_MAX_PER_MINUTE_US;
-          dynamicLimitUs = BS_DRIFT_MAX_PER_MINUTE_FAST_US - (rangeFast * timeSinceRampStartMs) / rampMs;
+          dynamicLimitUs = BS_DRIFT_MAX_PER_MINUTE_FAST_US - (rangeFast * timeSinceRampStartMs) / BS_DRIFT_RAMP_DURATION_MS;
         }
       }
 
-      // Per-minute rate limiting
+      // Per-minute rate limiting: track NET drift (signed), allowing bidirectional jitter.
+      // This means oscillation (e.g. +50µs then -50µs) doesn't consume budget in both directions.
       if ((int32_t)(nowMs - bsDriftMinuteStartMs) > 60000) {
         bsDriftMinuteStartMs  = nowMs;
-        bsDriftThisMinuteUs   = 0;
+        bsDriftThisMinuteUs   = 0;  // reset net drift tracker
       }
-      int32_t remainingBudgetUs = (int32_t)dynamicLimitUs - abs(bsDriftThisMinuteUs);
-      if (remainingBudgetUs > 0) {
-        // Per-packet cap: ±BS_DRIFT_MAX_PER_PACKET_US; also respect minute budget
-        int32_t rawCorrection = (int32_t)(bsDriftEmaUs * BS_DRIFT_CORRECTION_FACTOR);
-        rawCorrection = constrain(rawCorrection, -(int32_t)BS_DRIFT_MAX_PER_PACKET_US, (int32_t)BS_DRIFT_MAX_PER_PACKET_US);
-        rawCorrection = constrain(rawCorrection, -remainingBudgetUs, remainingBudgetUs);
 
-        // Apply: anchor += rawCorrection makes signedPosInSlot smaller by rawCorrection
-        // rawCorrection < 0 means packet early, we want to decrease anchor (increase posInSlot)
-        // Math is done in int64_t; anchor is unsigned but arithmetic is safe via signed intermediate.
+      // Check if we have budget for this correction (net drift accounting)
+      int32_t rawCorrection = (int32_t)(bsDriftEmaUs * BS_DRIFT_CORRECTION_FACTOR);
+      rawCorrection = constrain(rawCorrection, -(int32_t)BS_DRIFT_MAX_PER_PACKET_US, (int32_t)BS_DRIFT_MAX_PER_PACKET_US);
+
+      int32_t projectedNetDrift = bsDriftThisMinuteUs + rawCorrection;
+      if (abs(projectedNetDrift) <= (int32_t)dynamicLimitUs) {
+        // Within budget; apply the correction
         bsSyncAnchorUs   = (unsigned long)((int64_t)bsSyncAnchorUs + rawCorrection);
         bsAnchorDriftUs += rawCorrection;
-        bsDriftThisMinuteUs += abs(rawCorrection);
+        bsDriftThisMinuteUs = projectedNetDrift;
+      }
+
+      // Safety check: if accumulated drift gets large, stop correcting (may indicate bad airtime calc).
+      // Scale limit by time since sync: allow more drift as time passes (crystal drift accumulates).
+      // At 5min: 50ms + 1ms*5 = 55ms. At 1hr: 50ms + 1ms*60 = 110ms. At 8hr: 50ms + 1ms*480 = 530ms.
+      uint32_t minutesSinceSyncU = (timeSinceSyncMs + 30000) / 60000;  // round to nearest minute
+      int32_t accumulatedLimitUs = (int32_t)BS_DRIFT_MAX_ACCUMULATED_BASE_US +
+                                   (int32_t)minutesSinceSyncU * (int32_t)BS_DRIFT_MAX_ACCUMULATED_PER_MIN;
+      if (abs(bsAnchorDriftUs) > accumulatedLimitUs) {
+        // Stop correcting; accumulated drift has grown beyond crystal error + expected buffer.
+        // This likely indicates the airtime calculation is systematically wrong.
+        // Silently stop; in field, user can't see console. Data will just slowly drift out of window.
       }
     }
   }
