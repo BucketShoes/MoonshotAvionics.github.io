@@ -924,7 +924,7 @@ void setup() {
   NimBLEDevice::getAdvertising()->setAdvertisingInterval(1600);
   esp_wifi_set_max_tx_power(20);
   esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
-  setCpuFrequencyMhz(80);
+  setCpuFrequencyMhz(160);
 }
 
 // ===================== MAIN LOOP =====================

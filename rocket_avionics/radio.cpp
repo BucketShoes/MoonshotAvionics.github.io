@@ -277,6 +277,8 @@ void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
     Serial.println("RX: BUSY — skip");
     return;
   }
+  uint32_t timeoutUs = (uint32_t)(timeoutRtcSteps * 15.625f);
+  Serial.print("RX: set timeout="); Serial.print(timeoutUs); Serial.print("us ("); Serial.print(timeoutRtcSteps); Serial.println(" RTC)");
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
   sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRtcSteps);
@@ -501,6 +503,7 @@ static void radioHandleIrq() {
   }
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
+    Serial.println("RX: TIMEOUT fired");
     radioState = RADIO_STANDBY;
     ledOff();
     if (LOG_RX_TIMEOUT) {
