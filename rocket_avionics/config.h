@@ -104,7 +104,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 // cannot make this fire after missing only one ping.
 // Widening the window does NOT clear radioSynced and does NOT trigger any TX.
 // The main putrpose of this time is to safe power when we know we are safe.
-#define ROCKET_NO_BASE_HEARD_THRESHOLD_US  124'000'000UL  // 124 seconds (>2 ping intervals)
+#define ROCKET_NO_BASE_HEARD_THRESHOLD_US  130'000'000UL  //  (>2 ping intervals)
 
 
 #define LOG_RX_DONE true

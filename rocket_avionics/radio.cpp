@@ -86,9 +86,9 @@ static sx126x_lora_sf_t sfToEnum(uint8_t sf) {
 static void ledOnTX()  { ledcWrite(LED_PIN, 64); }
 static void ledOnRX()  { ledcWrite(LED_PIN, 5); }
 static void ledOff() {
-  // Idle LED: show whether we're in good sync (heard command within 30 seconds).
+  // Idle LED: show whether we're in good sync (heard command recently).
   // Brightness indicates quality: bright = good sync, dim = lost sync.
-  bool inGoodSync = (lastValidCmdUs != 0 && (micros() - lastValidCmdUs) < 30'000'000UL);
+  bool inGoodSync = (lastValidCmdUs != 0 && (micros() - lastValidCmdUs) < ROCKET_NO_BASE_HEARD_THRESHOLD_US);
   ledcWrite(LED_PIN, inGoodSync ? 0 : 1);
 }
 
