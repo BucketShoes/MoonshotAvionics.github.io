@@ -827,37 +827,6 @@ void bsHandleRadio() {
   // Update LED directly from BUSY pin if in BUSY_DRIVEN mode.
   bsLedUpdateFromBusy();
 
-  // Diagnostic wide-RX window: overrides the slot machine for BS_DIAG_RX_DURATION_MS every
-  // BS_DIAG_RX_INTERVAL_MS. Only runs while synced (pre-sync is already wide RX). Purpose:
-  // prove the radio can still hear the rocket at all. If this catches packets but the slot
-  // windows don't, the slot machine is the bug. If this catches nothing either, the radio is
-  // stuck. Kept brief so the rest of the machine still exercises.
-  {
-    static unsigned long bsDiagNextMs  = 0;
-    static unsigned long bsDiagStartMs = 0;
-    static bool          bsDiagActive  = false;
-    unsigned long nowMs = millis();
-    if (bsSynced && !bsDiagActive && nowMs >= bsDiagNextMs && bsRadioState == BS_RADIO_STANDBY) {
-      bsDiagActive  = true;
-      bsDiagStartMs = nowMs;
-      bsDiagNextMs  = nowMs + BS_DIAG_RX_INTERVAL_MS;
-      // Force NORMAL config + long RX window. timeoutUs must fit uint32_t / 15.625.
-      bsTargetCfg = RADIO_CFG_NORMAL;
-      bsApplyCfgIfNeeded();
-      uint32_t diagUs = BS_DIAG_RX_DURATION_MS * 1000UL;
-      bsRadioStartRxTimeout((uint32_t)(diagUs / 15.625f));
-      Serial.print("BS DIAG: wide-RX "); Serial.print(BS_DIAG_RX_DURATION_MS); Serial.println("ms");
-    }
-    if (bsDiagActive && (nowMs - bsDiagStartMs) >= BS_DIAG_RX_DURATION_MS) {
-      bsDiagActive = false;
-      // If still RX_ACTIVE, let the HW timeout end it naturally — don't force standby (could
-      // cut a preamble). The slot machine will resume on the next STANDBY transition.
-      // bsLastHandledSlot is left alone; slot progression resumes with whatever slot we land in.
-      Serial.println("BS DIAG: window done");
-    }
-    if (bsDiagActive) return;  // don't run the slot machine during diagnostic window
-  }
-
   // Background RSSI sampling: every loop while RX is active, after the first loop.
   // The first loop after radioStartRx() is skipped (bsBgRssiReady=false) because the
   // radio has just been commanded into RX and the RSSI register hasn't settled.
