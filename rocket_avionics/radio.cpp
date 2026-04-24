@@ -485,6 +485,13 @@ static void radioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     radioState = RADIO_STANDBY;
+    // Force standby after RX_DONE. Some RX modes (implicit header, high SF like WIN_LR)
+    // leave the radio in a transitional state where it won't idle naturally.
+    // Issue explicit standby command to force the transition.
+    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
+    // Wait for BUSY to clear. Typical: <20µs, but cap at 1ms to avoid infinite spin.
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
     // Log RxDone timing relative to current slot — diagnostic for sync drift. Pre-sync
     // the anchor is 0 so posInSlot is (micros() % SLOT_DURATION); that's still useful
     // because CMD_SET_SYNC RxDone is the event that SETS the anchor.

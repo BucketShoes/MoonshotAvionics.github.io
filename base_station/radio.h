@@ -63,12 +63,12 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 
 // Base station RX window parameters (converted to RTC steps via /15.625 at use site).
-#define BS_RX_TIMEOUT_US           100'000UL                   // synced telemetry RX window
-#define BS_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 80'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
+#define BS_RX_TIMEOUT_US           80'000UL                   // synced telemetry RX window
+#define BS_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 100'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
 
 // Base station TX timing.
-#define BS_RX_EARLY_US             50'000UL    // start RX this many µs before a receive-type slot boundary
-#define BS_CMD_TX_OFFSET_US        10'000UL    // fire command this many µs into WIN_CMD (safety margin for early-starting rocket)
+#define BS_RX_EARLY_US             40'000UL    // start RX this many µs before a receive-type slot boundary
+#define BS_CMD_TX_OFFSET_US        5'000UL    // fire command this many µs into WIN_CMD (safety margin for early-starting rocket)
 
 // Sync timing. See "Hopping radio slot structure.md" for the full model.
 // Sync is only ever sent automatically while still never-synced this session (plus the user

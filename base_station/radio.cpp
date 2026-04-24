@@ -613,6 +613,16 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
+    // Force standby after RX_DONE. Some RX modes (implicit header, high SF like WIN_LR)
+    // leave the radio in a transitional state where it won't idle naturally.
+    // Issue explicit standby command to force the transition.
+    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
+    // Wait for BUSY to clear. Typical: <20µs, but cap at 1ms to avoid infinite spin.
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("BS RxDone: BUSY stuck even after explicit standby");
+    }
     uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
     uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
     uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
