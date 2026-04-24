@@ -109,7 +109,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 //   2. Ramp phase: gradually relax from fast to conservative over BS_DRIFT_RAMP_DURATION_MS
 //   3. Conservative phase: hold tight (crystal accuracy rarely changes)
 #define BS_DRIFT_DEADBAND_US            500UL       // only correct if |EMA drift| > this (µs)
-#define BS_DRIFT_CORRECTION_FACTOR      0.1f        // apply this fraction of EMA per packet
+#define BS_DRIFT_CORRECTION_FACTOR      0.02f        // apply this fraction of EMA per packet
 #define BS_DRIFT_MAX_PER_PACKET_US      100UL       // max correction per single packet (µs) — low to filter jitter
 #define BS_DRIFT_MAX_PER_MINUTE_US      2'000UL     // conservative per-minute limit after ramp (µs, NET drift)
 #define BS_DRIFT_MAX_PER_MINUTE_FAST_US 20'000UL    // aggressive per-minute limit in fast window (µs, NET drift)
