@@ -228,9 +228,9 @@ size_t buildLRPacketCore(uint8_t* buf) {
   if (gps.valid) {
     double latF = fmod(fabs(gps.lat), 1.0) * 2000.0;
     double lonF = fmod(fabs(gps.lon), 1.0) * 2000.0;
-    // Probabilistic rounding: fractional part = probability of rounding up.
-    latFrac = (uint16_t)latF + ((rand() / (float)RAND_MAX) < (latF - (int)latF) ? 1 : 0);
-    lonFrac = (uint16_t)lonF + ((rand() / (float)RAND_MAX) < (lonF - (int)lonF) ? 1 : 0);
+    // Round away from zero (ceil) for consistent higher-fidelity values across multiple samples
+    latFrac = (uint16_t)ceil(latF);
+    lonFrac = (uint16_t)ceil(lonF);
     if (latFrac > 1999) latFrac = 1999;
     if (lonFrac > 1999) lonFrac = 1999;
   }
