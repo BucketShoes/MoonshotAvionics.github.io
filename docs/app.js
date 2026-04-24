@@ -728,7 +728,7 @@ function initCharts() {
   }
 
   var wsObj = null;
-  function connectWS(){try{wsObj=new WebSocket(getBaseWs());wsObj.binaryType='arraybuffer'}catch(e){setTimeout(connectWS,3000);return}wsObj.onopen=function(){setWs(true);fetchStatus()};wsObj.onclose=function(){setWs(false);setTimeout(connectWS,2000)};wsObj.onmessage=function(ev){if(!(ev.data instanceof ArrayBuffer)||ev.data.byteLength<13)return;var dv=new DataView(ev.data);var pktBuf=ev.data.slice(12);var snr=dv.getFloat32(0,true);var rssi=dv.getFloat32(4,true);var recNum=dv.getInt32(8,true);var firstByte=new Uint8Array(pktBuf)[0];if(firstByte===0xCA){onLogChunk(pktBuf,snr,rssi,recNum)}else{onLivePkt(pktBuf,snr,rssi,recNum)}};wsObj.onerror=function(){wsObj.close()}}
+  function connectWS(){try{wsObj=new WebSocket(getBaseWs());wsObj.binaryType='arraybuffer'}catch(e){setWs(false);return}wsObj.onopen=function(){setWs(true);fetchStatus()};wsObj.onclose=function(){setWs(false)};wsObj.onmessage=function(ev){if(!(ev.data instanceof ArrayBuffer)||ev.data.byteLength<13)return;var dv=new DataView(ev.data);var pktBuf=ev.data.slice(12);var snr=dv.getFloat32(0,true);var rssi=dv.getFloat32(4,true);var recNum=dv.getInt32(8,true);var firstByte=new Uint8Array(pktBuf)[0];if(firstByte===0xCA){onLogChunk(pktBuf,snr,rssi,recNum)}else{onLivePkt(pktBuf,snr,rssi,recNum)}};wsObj.onerror=function(){wsObj.close()}}
 
   // =============================================================
   // BLE TRANSPORT (Web Bluetooth GATT)
@@ -2510,7 +2510,6 @@ function initCharts() {
   window.addEventListener('load', function() {
     initGrid();
     loadCDN();
-    connectWS();
     setInterval(function(){ fetchStatus(); }, 30000);
 
     document.getElementById('btn-cl').addEventListener('click', function() { document.getElementById('log').innerHTML = ''; });
@@ -2523,6 +2522,7 @@ function initCharts() {
     document.getElementById('btn-live-rkt').addEventListener('click', function() { liveSource='rkt'; showView(-1); });
     document.getElementById('btn-ble').addEventListener('click', connectBLE);
     document.getElementById('btn-rktble').addEventListener('click', connectRocketBLE);
+    document.getElementById('btn-ws-reconnect').addEventListener('click', connectWS);
 
     // Rocket BLE settings panel toggle
     document.getElementById('btn-rkt-settings').addEventListener('click', function() {
