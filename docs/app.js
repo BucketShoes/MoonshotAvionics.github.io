@@ -1946,6 +1946,7 @@ function initCharts() {
   var mapAnimInt = null;
   var mapIDB = null;
   var mapRafPend = false;
+  var mapAgeMax = 600;       // max age of WIN_LR points on map (seconds)
 
   function mapScheduleDraw() {
     if (!mapVisible || mapRafPend) return;
