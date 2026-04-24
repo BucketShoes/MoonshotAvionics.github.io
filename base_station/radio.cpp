@@ -542,8 +542,13 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
     synth[0] = PKT_LONGRANGE;
     synth[1] = FAVORITE_ROCKET_DEVICE_ID;
     synth[2] = buf[0]; synth[3] = buf[1]; synth[4] = buf[2];
+    Serial.println("BB: Synthesized 5-byte packet");
     bsOnPacketReceived(synth, 5, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs, bsDriftEmaUs, timeSinceSyncMs);
     return;
+  } else if (rxLen == 3) {
+    Serial.print("BB: Got 3-byte but NOT synthesized (bsCurrentSlotIsLR="); Serial.print(bsCurrentSlotIsLR);
+    Serial.print(" rxLen="); Serial.print(rxLen);
+    Serial.print(" win="); Serial.println((int)win);
   }
 
   bool isTelemetry = (rxLen >= 10 && buf[0] == 0xAF && buf[1] == FAVORITE_ROCKET_DEVICE_ID);

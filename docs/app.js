@@ -2171,8 +2171,8 @@ function initCharts() {
       for (var key in counts) {
         var parts = key.split(',');
         var latFrac = parseInt(parts[0]), lonFrac = parseInt(parts[1]);
-        var approxLat = cellLat + latFrac / 2000;
-        var approxLon = cellLon + lonFrac / 2000;
+        var approxLat = cellLat + (latFrac / 2000) * Math.sign(cellLat);
+        var approxLon = cellLon + (lonFrac / 2000) * Math.sign(cellLon);
         var cp = mapW2C(approxLat, approxLon, cw, ch);
         var radiusPx = Math.max(2, (25 / 111319) * mapVScale);
         var opacity = Math.min(0.5, 0.05 * counts[key]);
