@@ -284,7 +284,8 @@ void bsApplyCfgIfNeeded() {
   unsigned long t0 = micros();
   while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 100) {}
 
-  sx126x_pkt_params_lora_t pp = buildPktParams(bsTargetCfg, 255);
+  uint8_t pktLen = (bsTargetCfg == RADIO_CFG_LR) ? 0 : 255;
+  sx126x_pkt_params_lora_t pp = buildPktParams(bsTargetCfg, pktLen);
   sx126x_set_lora_pkt_params(&bsRadioCtx, &pp);
 
   bsAppliedCfg = bsTargetCfg;
