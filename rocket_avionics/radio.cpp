@@ -593,14 +593,18 @@ void nonblockingRadio() {
 // Two SPI commands back-to-back; BUSY between them spins up to 100µs (typical: <20µs).
 // Called once per slot boundary — not every loop — so 100µs is well within budget.
 
-static void applyCfgIfNeeded() {
+static bool applyCfgIfNeeded() {
   if (radioState != RADIO_STANDBY) {
-    static uint32_t deferredCfgCount = 0;
-    deferredCfgCount++;
-    if (deferredCfgCount % 100 == 0) {
-      Serial.print("applyCfg deferred (not STANDBY): "); Serial.println(deferredCfgCount);
-    }
-    return;  // defer until RX/TX completes naturally
+    uint64_t nowUs = (uint64_t)micros();
+    uint64_t elapsed = nowUs - (uint64_t)syncAnchorUs;
+    uint32_t slotNum = (uint32_t)(elapsed / SLOT_DURATION_US);
+    uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
+    uint8_t seqIdx = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+    Serial.print("applyCfg FAILED: radioState="); Serial.print(radioState);
+    Serial.print(" (not STANDBY) at posInSlot="); Serial.print(posInSlot);
+    Serial.print("us slot="); Serial.print(slotNum);
+    Serial.print(" seqIdx="); Serial.println(seqIdx);
+    return false;
   }
 
   sx126x_mod_params_lora_t mp = {};
@@ -640,6 +644,7 @@ static void applyCfgIfNeeded() {
   sx126x_set_lora_pkt_params(&radioCtx, &pp);
 
   appliedCfg = targetCfg;
+  return true;
 }
 
 void nonblockingRadio() {
@@ -688,7 +693,11 @@ void nonblockingRadio() {
     RadioSlotConfig newTarget = (win == WIN_LR) ? RADIO_CFG_LR : RADIO_CFG_NORMAL;
     if (newTarget != targetCfg) targetCfg = newTarget;
 
-    applyCfgIfNeeded();
+    if (!applyCfgIfNeeded()) {
+      // Config failed to apply — skip TX/RX for this slot.
+      slotActionDone = true;
+      return;
+    }
   }
 
   if (radioState != RADIO_STANDBY) return;
