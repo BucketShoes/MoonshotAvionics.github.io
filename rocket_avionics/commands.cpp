@@ -300,6 +300,15 @@ void processReceivedPacket(const uint8_t* pkt, size_t pktLen, int8_t rssi, int8_
   lastAck.rssi = rssi;
   lastAck.snr  = (int8_t)((float)snr * 4);
 
+  // Capture DIO1 RX timestamp and position in slot
+  lastAck.rxTimeUs = (uint32_t)dio1TimestampUs();
+  if (radioSynced) {
+    uint64_t elapsed = (uint64_t)lastAck.rxTimeUs - (uint64_t)syncAnchorUs;
+    lastAck.rxPosInSlot = (uint16_t)(elapsed % SLOT_DURATION_US);
+  } else {
+    lastAck.rxPosInSlot = (uint16_t)(lastAck.rxTimeUs % SLOT_DURATION_US);
+  }
+
   size_t paramsOffset = 7;
   size_t paramsLen = pktLen - paramsOffset - HMAC_TRUNC_LEN;
   const uint8_t* params = &pkt[paramsOffset];

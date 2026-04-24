@@ -131,12 +131,14 @@ DATA PAGE TYPES: (these pages are included at the end of a telemetry packet; but
       uint16  max acceleration, 0.01g
       int16   max vertical velocity, 0.1 m/s
 
-0x0A  Command ack + signal quality (9 bytes)
+0x0A  Command ack + signal quality (15 bytes)
       uint32  last command nonce
       uint8   last command result (0=OK, nonzero=error code)
       int8    command RSSI, dBm
       int8    command SNR, dB × 4
       uint16  invalid HMAC count (command packets received that failed HMAC validation)
+      uint32  command RX time, microseconds (lower 32 bits of DIO1 capture timestamp)
+      uint16  command RX position in slot, microseconds (0 to SLOT_DURATION_US)
 
 0x0B  Flight status (6 bytes)
       int32   ms since launch detect (-1 = not launched)

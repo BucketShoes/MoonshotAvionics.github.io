@@ -17,6 +17,8 @@ struct CommandAck {
   int8_t   rssi;              // dBm of the command packet
   int8_t   snr;               // dB*4 of the command packet
   uint16_t invalidHmacCount;  // running count of HMAC failures
+  uint32_t rxTimeUs;          // lower 32 bits of DIO1 timestamp when command RX completed
+  uint16_t rxPosInSlot;       // position within current slot when command RX completed, microseconds
   bool     pending;           // true = force 0x0A page on next TX
 };
 

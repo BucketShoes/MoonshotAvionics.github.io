@@ -206,13 +206,15 @@ static void buildPage09(uint8_t* buf, size_t* pos) {
   writeS16(buf, pos, peaks.maxVvel10);
 }
 
-// Page 0x0A: Command ack + signal quality (9 bytes)
+// Page 0x0A: Command ack + signal quality (15 bytes)
 static void buildPage0A(uint8_t* buf, size_t* pos) {
   writeU32(buf, pos, lastAck.nonce);
   writeU8(buf, pos, lastAck.result);
   writeU8(buf, pos, (uint8_t)lastAck.rssi);
   writeU8(buf, pos, (uint8_t)lastAck.snr);
   writeU16(buf, pos, lastAck.invalidHmacCount);
+  writeU32(buf, pos, lastAck.rxTimeUs);
+  writeU16(buf, pos, lastAck.rxPosInSlot);
 }
 
 // Page 0x0B: Flight status (6 bytes)
