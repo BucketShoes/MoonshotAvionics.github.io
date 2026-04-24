@@ -63,7 +63,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 
 // Base station TX timing.
 #define BS_RX_EARLY_US             30'000UL    // start RX this many µs before a receive-type slot boundary
-#define BS_CMD_TX_OFFSET_US        5'000UL     // fire command this many µs into WIN_CMD
+#define BS_CMD_TX_OFFSET_US        10'000UL    // fire command this many µs into WIN_CMD (safety margin for early-starting rocket)
 
 // Sync timing. See "Hopping radio slot structure.md" for the full model.
 // Sync is only ever sent automatically while still never-synced this session (plus the user
