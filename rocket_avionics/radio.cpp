@@ -300,16 +300,11 @@ void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
 void radioStartRx() {
   // Always use a timeout — continuous RX means the radio never returns to standby
   // between slots, blocking any TX that needs to preempt it.
-  // Long RX window (nearly full slot) applies when:
-  //   - never synced this session (pre-sync bootstrap), OR
-  //   - synced but haven't heard a valid command in >ROCKET_NO_BASE_HEARD_THRESHOLD_US.
-  // The second case is lost-rocket recovery: widening the window lets a fresh
-  // CMD_SET_SYNC from the base land even after short-window timing has drifted.
-  // Does NOT clear radioSynced and does NOT trigger any TX.
-  bool useLongWindow = !radioSynced ||
-                       (lastValidCmdUs != 0 &&
-                        (micros() - lastValidCmdUs) >= ROCKET_NO_BASE_HEARD_THRESHOLD_US);
-  uint32_t timeoutUs = useLongWindow ? ROCKET_LONG_RX_TIMEOUT_US : ROCKET_RX_TIMEOUT_US;
+  // Short RX window when we've heard a valid command recently (within ROCKET_NO_BASE_HEARD_THRESHOLD_US).
+  // Long RX window otherwise (lost-rocket recovery) to catch a fresh command after timing drift.
+  bool hasRecentCommand = (lastValidCmdUs != 0 &&
+                           (micros() - lastValidCmdUs) < ROCKET_NO_BASE_HEARD_THRESHOLD_US);
+  uint32_t timeoutUs = hasRecentCommand ? ROCKET_RX_TIMEOUT_US : ROCKET_LONG_RX_TIMEOUT_US;
   radioStartRxTimeout((uint32_t)(timeoutUs / 15.625f));
 }
 
