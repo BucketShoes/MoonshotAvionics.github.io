@@ -264,9 +264,21 @@ void bsApplyCfgIfNeeded() {
   // Only apply config when the radio is STANDBY. Issuing SPI mod/pkt-param commands while an
   // RX or TX is in progress would corrupt it. Retry next loop — the caller is called from
   // bsHandleRadio every iteration, so config will apply as soon as the radio returns to standby.
-  if (bsRadioState != BS_RADIO_STANDBY) return;
+  if (bsRadioState != BS_RADIO_STANDBY) {
+    static uint32_t deferredCfgCount = 0;
+    deferredCfgCount++;
+    if (deferredCfgCount % 100 == 0) {
+      Serial.print("BS cfg deferred (not STANDBY): "); Serial.println(deferredCfgCount);
+    }
+    return;
+  }
 
   if (digitalRead(LORA_BUSY_PIN)) {
+    static uint32_t busyDeferCount = 0;
+    busyDeferCount++;
+    if (busyDeferCount % 10 == 0) {
+      Serial.print("BS cfg deferred (BUSY): "); Serial.println(busyDeferCount);
+    }
     bsCheckBusyWatchdog();
     return;  // retry next slot boundary
   }
