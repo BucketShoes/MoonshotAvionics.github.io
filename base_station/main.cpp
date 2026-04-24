@@ -368,10 +368,12 @@ void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
   memcpy(wsBuf + 8, &recNum, 4);
   memcpy(wsBuf + 12, buf, len);
   pushToAllTransports(wsBuf, 12 + len);
-
-  // Consolidated RX logging: signal + record num + slot timing + airtime + drift + packet size + hex dump
-  Serial.printf("BS OnPackRx: Sig:%.1f/%.0f #%d slot:%.3fms/%lu/%u/%u toa:%lums drift:%ldus ema:%.0f tss:%lums %dB: [",
-                snrF, rssiF, recNum, signedPosInSlot/1000.0f, slotNum, seqIdx, win, timeOnAirMs, bsAnchorDriftUs, driftEmaUs, timeSinceSyncMs, len);
+// Consolidated RX logging: signal + record num + slot timing + airtime + drift + packet size + hex dump
+  //Slot:500=5(0)@1.234ms+2ms drift:7266us->ema Sync+123s 17B [AF230391098910831...]
+  Serial.printf("BS OnPackRx: Sig:%.1f/%.0f #%d Slot:%lu=%u(%u)@%.2fms+%lums drift:%.1fms ema:%.1fms tss:%.1fs %dB: [",
+                snrF, rssiF, recNum, slotNum,seqIdx,win, (signedPosInSlot/1000.0f-timeOnAirMs),timeOnAirMs, bsAnchorDriftUs/1000.0f, driftEmaUs/1000.0f, timeSinceSyncMs/1000.0f, len);
+  // Serial.printf("BS OnPackRx: Sig:%.1f/%.0f #%d slot:%.3fms/%lu/%u/%u toa:%lums drift:%ldus ema:%.0f tss:%lums %dB: [",
+  //               snrF, rssiF, recNum, signedPosInSlot/1000.0f, slotNum, seqIdx, win, timeOnAirMs, bsAnchorDriftUs, driftEmaUs, timeSinceSyncMs, len);
   size_t hexLen = (len < 14) ? len : 14;
   for (size_t i = 0; i < hexLen; i++) {
     Serial.printf("%02X", buf[i]);
