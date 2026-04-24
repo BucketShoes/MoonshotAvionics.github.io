@@ -136,13 +136,13 @@ Thrust curve is special being so long, but it has special radio handling to be s
       uint16  max acceleration, 0.01g
       int16   max vertical velocity, 0.1 m/s
 
-0x0A  Command ack + signal quality (10 bytes)
+0x0A  Command ack + signal quality (9 bytes)
       uint32  last command nonce
       uint8   last command result (0=OK, nonzero=error code)
       int8    command RSSI, dBm
       int8    command SNR, dB × 4
       uint16  invalid HMAC count (command packets received that failed HMAC validation)
-      uint8   command RX position in slot, 2-millisecond units (clamped)
+      uint8   command RX position in slot, 2-millisecond units (clamped to 255)
 
 0x0B  Flight status (6 bytes)
       int32   ms since launch detect (-1 = not launched)
@@ -160,14 +160,15 @@ Thrust curve is special being so long, but it has special radio handling to be s
 
 
 0x0C  Radio health (7 bytes)
-      uint16  delayed TX count (times TX was postponed due to 
+      uint16  delayed TX count (times TX was postponed due to
               channel busy)
-      uint16  invalid RX count (packets received that failed 
-              validation — wrong type, wrong device ID, bad CRC, 
+      uint16  invalid RX count (packets received that failed
+              validation — wrong type, wrong device ID, bad CRC,
               etc)
       int8    background RSSI, dB (average only measured when not transmitting and when no command incoming - to estimate channel noise outside of packet times)
-      uint8   packet window slot index
-      uint8   flags [0]=Sync OK (true if currently using tight listen windows for power saving, because we have recently heard a valid command during a listen. if no commands heard, window becomes wider)
+      uint8   sync and slot flags
+              [0]     radioSynced (1 = tight, 0 = wide. if currently using tight listen windows for power saving, because we have recently heard a valid command during a listen. if no commands heard, window becomes wider. false if using wide listen windows (pre-sync or no recent command heard)
+              [7:1]   current slot sequence index (seqIdx % SLOT_SEQUENCE_LEN)
 
 0x0D  Timestamp (8 bytes)
       uint64   UTC time, ms since 1/1/1970

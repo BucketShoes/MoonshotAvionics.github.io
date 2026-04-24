@@ -206,15 +206,14 @@ static void buildPage09(uint8_t* buf, size_t* pos) {
   writeS16(buf, pos, peaks.maxVvel10);
 }
 
-// Page 0x0A: Command ack + signal quality (15 bytes)
+// Page 0x0A: Command ack + signal quality (9 bytes)
 static void buildPage0A(uint8_t* buf, size_t* pos) {
   writeU32(buf, pos, lastAck.nonce);
   writeU8(buf, pos, lastAck.result);
   writeU8(buf, pos, (uint8_t)lastAck.rssi);
   writeU8(buf, pos, (uint8_t)lastAck.snr);
   writeU16(buf, pos, lastAck.invalidHmacCount);
-  writeU32(buf, pos, lastAck.rxTimeUs);
-  writeU16(buf, pos, lastAck.rxPosInSlot);
+  writeU8(buf, pos, lastAck.rxPosInSlot);
 }
 
 // Page 0x0B: Flight status (6 bytes)
@@ -231,12 +230,22 @@ static void buildPage0B(uint8_t* buf, size_t* pos) {
   writeU16(buf, pos, pyroFlags);
 }
 
-// Page 0x0C: Radio health (5 bytes)
+// Page 0x0C: Radio health (7 bytes)
 static void buildPage0C(uint8_t* buf, size_t* pos) {
   writeU16(buf, pos, delayedTxCount);
   writeU16(buf, pos, invalidRxCount);
   int8_t noiseFloor = (int8_t)constrain((int)rssiEma, -128, 127);
   writeU8(buf, pos, (uint8_t)noiseFloor);
+
+  // Sync status and current slot index
+  uint8_t syncFlags = radioSynced ? 0x01 : 0x00;
+  if (radioSynced) {
+    uint64_t elapsed = (uint64_t)micros() - (uint64_t)syncAnchorUs;
+    uint32_t slotNum = (uint32_t)(elapsed / SLOT_DURATION_US);
+    uint8_t seqIdx = (uint8_t)((syncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
+    syncFlags |= (seqIdx & 0x7F) << 1;
+  }
+  writeU8(buf, pos, syncFlags);
 }
 
 // Page 0x0D: Timestamp (8 bytes) — UTC ms since 1970-01-01

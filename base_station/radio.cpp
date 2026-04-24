@@ -521,13 +521,6 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
     }
   }
 
-  // Calculate drift values for logging (outside the correction condition, so always available)
-  int32_t expectedUs = (int32_t)timeOnAirMs * 1000;
-  int32_t driftUs    = signedPosInSlot - expectedUs;
-  bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
-  uint32_t nowMs = millis();
-  uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
-
   // WIN_LR uses implicit header — no type byte on air. Identify by slot + length.
   if (bsCurrentSlotIsLR && rxLen == 3) {
     // Synthesise the 5-byte natural packet format (type + deviceID + 3-byte core)
