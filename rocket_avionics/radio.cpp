@@ -594,7 +594,6 @@ void nonblockingRadio() {
 // Called once per slot boundary — not every loop — so 100µs is well within budget.
 
 static void applyCfgIfNeeded() {
-  if (appliedCfg == targetCfg) return;
   if (radioState != RADIO_STANDBY) return;  // defer until RX/TX completes naturally
 
   sx126x_mod_params_lora_t mp = {};
