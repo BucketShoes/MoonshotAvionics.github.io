@@ -140,7 +140,7 @@ struct SlotConfig {
 // Minimum loop iteration time (prevents micros() math issues at >100kHz).
 #define MIN_LOOP_US            10UL
 // Slow loop blame threshold: only report iterations longer than this (unarmed).
-#define SLOW_LOOP_THRESHOLD_US 10000UL
+#define SLOW_LOOP_THRESHOLD_US 2000UL
 
 // ===================== HMAC / NVS =====================
 
