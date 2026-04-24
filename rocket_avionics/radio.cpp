@@ -164,6 +164,10 @@ bool radioInit() {
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   Serial.println("LoRa: IRQ cleared");
 
+  // Enable RX boosted mode for improved sensitivity (must be set each init)
+  st = sx126x_cfg_rx_boosted(&radioCtx, true);
+  Serial.print("LoRa: RX boosted -> "); Serial.println(st);
+
   radioMcpwmInit(LORA_DIO1_PIN);
   Serial.print("LoRa: DIO1 interrupt attached on GPIO"); Serial.println(LORA_DIO1_PIN);
 

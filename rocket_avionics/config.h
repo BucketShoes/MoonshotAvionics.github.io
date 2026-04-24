@@ -33,7 +33,7 @@
 // BW is derived from channel index (ch<64 = 125kHz, ch>=64 = 500kHz).
 
 #define LORA_CR         5       // 4/5 coding rate (fixed, not command-configurable)
-#define LORA_PREAMBLE   6       // preamble symbols
+#define LORA_PREAMBLE   8       // preamble symbols
 #define LORA_SYNCWORD   0x12    // private network
 // WIN_LR slot config. BW follows activeChannel (same as normal slots — changeable via CMD_SET_RADIO,
 // and BW500 is fine for bench testing). SF is separate because LR uses a higher SF than normal
