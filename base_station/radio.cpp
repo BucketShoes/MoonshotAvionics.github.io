@@ -637,6 +637,13 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     bsRadioState = BS_RADIO_STANDBY;
+    // Also force standby explicitly after timeout, as with RX_DONE.
+    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("BS RxTimeout: BUSY stuck even after explicit standby");
+    }
     bsLedOff();
     if (LOG_RX_TIMEOUT) {
       uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
@@ -652,6 +659,13 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
     bsRadioState = BS_RADIO_STANDBY;
+    // Also force standby explicitly after errors, as with RX_DONE.
+    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("BS RxError: BUSY stuck even after explicit standby");
+    }
     bsLedOff();
     static unsigned long lastRxErrLogMs = 0;
     unsigned long nowMs = millis();
@@ -665,7 +679,15 @@ static void bsRadioHandleIrq() {
   }
 
   if (irqFlags == 0) {
-    Serial.println("BS IRQ: flags=0 (spurious)");
+    static unsigned long lastSpuriousLogMs = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - lastSpuriousLogMs >= 1000) {
+      lastSpuriousLogMs = nowMs;
+      Serial.print("BS IRQ: flags=0 (spurious or ISR race) bsRadioState=");
+      Serial.print(bsRadioState);
+      Serial.print(" BUSY=");
+      Serial.println(digitalRead(LORA_BUSY_PIN));
+    }
   }
 }
 

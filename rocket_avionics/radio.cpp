@@ -39,7 +39,7 @@ float   activeBwKHz   = 500.0f;
 // ===================== RADIO STATE =====================
 
 bool        loraReady  = false;
-RadioState  radioState = RADIO_OFF;
+RadioState  radioState = RADIO_STANDBY;
 
 // ===================== PER-SLOT CONFIG STATE (forward-declared for radioStartTx) =====================
 
@@ -492,6 +492,9 @@ static void radioHandleIrq() {
     // Wait for BUSY to clear. Typical: <20µs, but cap at 1ms to avoid infinite spin.
     unsigned long t0 = micros();
     while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("RxDone: BUSY stuck even after explicit standby");
+    }
     // Log RxDone timing relative to current slot — diagnostic for sync drift. Pre-sync
     // the anchor is 0 so posInSlot is (micros() % SLOT_DURATION); that's still useful
     // because CMD_SET_SYNC RxDone is the event that SETS the anchor.
@@ -511,6 +514,13 @@ static void radioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     radioState = RADIO_STANDBY;
+    // Also force standby explicitly after timeout, as with RX_DONE.
+    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("RxTimeout: BUSY stuck even after explicit standby");
+    }
     ledOff();
     if (LOG_RX_TIMEOUT) {
       uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
@@ -526,6 +536,13 @@ static void radioHandleIrq() {
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
     radioState = RADIO_STANDBY;
+    // Also force standby explicitly after errors, as with RX_DONE.
+    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("RxError: BUSY stuck even after explicit standby");
+    }
     ledOff();
     invalidRxCount++;
     // Rate-limit header/CRC error logs — they can be frequent on a busy channel.
@@ -541,7 +558,15 @@ static void radioHandleIrq() {
   }
 
   if (irqFlags == 0) {
-    Serial.println("IRQ: flags=0 (spurious or ISR race)");
+    static unsigned long lastSpuriousLogMs = 0;
+    unsigned long nowMs = millis();
+    if (nowMs - lastSpuriousLogMs >= 1000) {
+      lastSpuriousLogMs = nowMs;
+      Serial.print("IRQ: flags=0 (spurious or ISR race) radioState=");
+      Serial.print(radioState);
+      Serial.print(" BUSY=");
+      Serial.println(digitalRead(LORA_BUSY_PIN));
+    }
     // Don't change state — radio is still doing whatever it was doing.
   }
 }
