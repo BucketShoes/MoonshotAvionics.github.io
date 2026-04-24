@@ -939,8 +939,9 @@ void loop() {
     bsHandleRadio();
 
     // Auto-sync: bsHandleSyncSend sets bsSyncNeedsQueue while never-synced (tight walk-retries
-    // then slow backoff). After TxDone, bsSynced=true and no further automatic sync is queued.
-    // Ping is queued separately on a 60s cadence.
+    // every 340ms, then slow backoff). Sync flag only sets when telemetry is first received,
+    // not on TX. Until then, phase walk continues with anchor updated to each sync TX.
+    // Ping is queued separately on a 60s cadence, only while synced and hearing telemetry.
     bsHandleSyncSend();
 
     // Build and load sync packet when flagged. Only load if no TX already queued.

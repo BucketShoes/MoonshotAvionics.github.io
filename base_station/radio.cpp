@@ -409,6 +409,9 @@ void bsRadioStandby() {
 // ===================== SYNC =====================
 
 void bsSetSyncedFromTx(uint64_t anchorUs) {
+  // Anchor to this sync TX moment (if rocket heard it, it will send telemetry at predicted slots).
+  // Do NOT set bsSynced flag here — we're not confirmed synced until we receive telemetry.
+  // The anchor moves with each sync attempt so RX windows track the most recent sync attempt.
   bsSyncAnchorUs     = (unsigned long)anchorUs;
   bsSyncAnchorOriginalUs = (unsigned long)anchorUs;
   bsAnchorDriftUs = 0;
@@ -421,9 +424,8 @@ void bsSetSyncedFromTx(uint64_t anchorUs) {
   // Next slot (slotNum=1) will be seqIdx=(1+1)%2=0=WIN_TELEM — rocket TX, base RX. Correct.
   bsSyncSlotIndex    = 1;
   bsLastHandledSlot  = 0xFFFFFFFF;
-  bsSynced           = true;
   bsMissedTelemSlots = 0;
-  Serial.print("BS SYNCED: anchor="); Serial.print(bsSyncAnchorUs);
+  Serial.print("BS SYNC TX: anchor="); Serial.print(bsSyncAnchorUs);
   Serial.print("us slotIdx="); Serial.println(bsSyncSlotIndex);
 }
 
@@ -550,6 +552,12 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
   if (isTelemetry) {
     bsMissedTelemSlots = 0;
     bsLastTelemRxMs = millis();
+    // Confirm sync on first telemetry from the rocket. Anchor is already set from the sync TX
+    // that the rocket heard; now we know it's receiving and we can narrow the RX window.
+    if (!bsSynced) {
+      bsSynced = true;
+      Serial.println("BS SYNCED: first telemetry received, narrowing RX window");
+    }
   }
 
   bsOnPacketReceived(buf, rxLen, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs, bsDriftEmaUs, timeSinceSyncMs);
