@@ -322,7 +322,7 @@ bool radioStartTx(const uint8_t* pkt, size_t len) {
   dio1Fired = false;
 
   // Set pkt params to match current slot config. WIN_LR uses implicit header + no CRC;
-  // all other slots use explicit header + CRC. Must be set before each TX.
+  // all other slots (currently) use explicit header + CRC. Must be set before each TX.
   sx126x_pkt_params_lora_t pp = {};
   if (appliedCfg == RADIO_CFG_LR) {
     pp.preamble_len_in_symb = 5;

@@ -69,11 +69,15 @@
 // anchors to RxDone. Both compute slot position from that anchor.
 
 enum WindowMode : uint8_t {
-  WIN_TELEM  = 0,  // rocket TX telemetry / base RX
-  WIN_CMD     = 1,  // base TX commands / rocket RX
-  WIN_OFF    = 2,  // radio off — neither side active
-  WIN_LR     = 3,  // long-range low-rate TX with very small payload
-  WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
+  WIN_TELEM  = 0,  // rocket TX telemetry / base RX - using hopping channel with user-configurable telem modulation
+  WIN_CMD     = 1, // base TX commands / rocket RX - using the command channel, with command modulation params (typically same modulation as telem)
+  WIN_OFF    = 2,  // radio off — neither side active, power save
+  WIN_LR     = 3,  // long-range low-rate TX at high sf, implicit headers, etc
+  WIN_FINDME = 4,  //  long-preamble beacon for passive scan without bootstrap, on specific modulation regardless of radio settings
+  WIN_BACKHAUL = 5, //timeslot reserved for relay backhaul beween multiple bae stations - rocket stays quiet, but listens similar to a WIN_CMD but on hop channel with backhaul modulation. not valid for sending normal commands, but can help sync
+  WIN_MULTIPURPOSE = 6,//long slow cycle between various functions. full anchor timing and state machine required to know which modulation to use.
+  WIN_RDF = 7, //for radio distance/direction finding. send multiple short packets at variable signal strength and changing SF/BW for improved distance estimation
+  WIN_GFSK = 8,//
 };
 
 // Compile-time slot sequence. Edit here to change the pattern.
@@ -84,7 +88,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
-#define ROCKET_RX_TIMEOUT_US           23'000UL                        // short: synced + heard base recently, save battery
+#define ROCKET_RX_TIMEOUT_US           150'000UL                        // short: synced + heard base recently, save battery
 #define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 20'000UL)    // long: pre-sync, or base-silent lost-rocket fallback
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.

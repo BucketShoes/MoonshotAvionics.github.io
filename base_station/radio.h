@@ -46,11 +46,15 @@
 // ===================== SLOT TIMING =====================
 
 enum WindowMode : uint8_t {
-  WIN_TELEM  = 0,  // rocket TX telemetry / base RX
-  WIN_CMD     = 1,  // base TX commands / rocket RX
-  WIN_OFF    = 2,  // radio off — neither side active
-  WIN_LR     = 3,  // future: long-range low-rate TX
-  WIN_FINDME = 4,  // future: long-preamble beacon for passive scan without bootstrap
+  WIN_TELEM  = 0,  // rocket TX telemetry / base RX - using hopping channel with user-configurable telem modulation
+  WIN_CMD     = 1, // base TX commands / rocket RX - using the command channel, with command modulation params (typically same modulation as telem)
+  WIN_OFF    = 2,  // radio off — neither side active, power save
+  WIN_LR     = 3,  // long-range low-rate TX at high sf, implicit headers, etc
+  WIN_FINDME = 4,  //  long-preamble beacon for passive scan without bootstrap, on specific modulation regardless of radio settings
+  WIN_BACKHAUL = 5, //timeslot reserved for relay backhaul beween multiple bae stations - rocket stays quiet, but listens similar to a WIN_CMD but on hop channel with backhaul modulation. not valid for sending normal commands, but can help sync
+  WIN_MULTIPURPOSE = 6,//long slow cycle between various functions. full anchor timing and state machine required to know which modulation to use.
+  WIN_RDF = 7, //for radio distance/direction finding. send multiple short packets at variable signal strength and changing SF/BW for improved distance estimation
+  WIN_GFSK = 8,//
 };
 
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
@@ -58,11 +62,11 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 
 // Base station RX window parameters (converted to RTC steps via /15.625 at use site).
-#define BS_RX_TIMEOUT_US           50'000UL                   // synced telemetry RX window
-#define BS_LONG_RX_TIMEOUT_US      70'000UL//(SLOT_DURATION_US - 50'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
+#define BS_RX_TIMEOUT_US           100'000UL                   // synced telemetry RX window
+#define BS_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 80'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
 
 // Base station TX timing.
-#define BS_RX_EARLY_US             30'000UL    // start RX this many µs before a receive-type slot boundary
+#define BS_RX_EARLY_US             50'000UL    // start RX this many µs before a receive-type slot boundary
 #define BS_CMD_TX_OFFSET_US        10'000UL    // fire command this many µs into WIN_CMD (safety margin for early-starting rocket)
 
 // Sync timing. See "Hopping radio slot structure.md" for the full model.
@@ -220,7 +224,7 @@ void bsUpdateActiveFreqBw();
 
 // Per-slot radio config enum. NORMAL = standard operating params; LR = WIN_LR SF12 implicit.
 enum RadioSlotConfig : uint8_t {
-  RADIO_CFG_NORMAL = 0,
+  RADIO_CFG_NORMAL = 0, //TODO: we shouldnt have normal/abnormal - the expectation should be that mnost types are all different. we also cant assume the old normal is the same as the new normal, if settings have changed since we applied it
   RADIO_CFG_LR     = 1,
 };
 

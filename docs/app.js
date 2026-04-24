@@ -300,7 +300,7 @@ function initCharts() {
   PF[7]=[{k:'alt_cm',n:'Alt',u:'m AGL',fmt:function(v){return(v/100).toFixed(1)}},{k:'vel',n:'Vel',u:'m/s',fmt:function(v){return v.toFixed(1)}},{k:'altUnc',n:'AltU',u:'log'},{k:'velUnc',n:'VelU',u:'log'},{k:'accUnc',n:'AccU',u:'log'},{k:'innov',n:'Inn',u:'log'}];
   PF[8]=[{k:'temp',n:'Temp',u:'°C'},{k:'heap',n:'Heap',u:'KB'},{k:'up',n:'Up',u:'s'},{k:'batt',n:'Batt',u:'mV'},{k:'logRec',n:'Log#',u:''}];
   PF[9]=[{k:'alt',n:'MaxAlt',u:'m',fmt:function(v){return(v/100).toFixed(1)}},{k:'acc',n:'MaxAcc',u:'g',fmt:function(v){return v.toFixed(2)}},{k:'vvel',n:'MaxVV',u:'m/s',fmt:function(v){return v.toFixed(1)}}];
-  PF[10]=[{k:'nonce',n:'Nonce',u:''},{k:'res',n:'Result',u:'0=OK'},{k:'rssi',n:'RSSI',u:'dBm'},{k:'snr',n:'SNR',u:'dB',fmt:function(v){return v.toFixed(1)}},{k:'hmacFail',n:'HmacF',u:'count'},{k:'rxPosInSlot',n:'RxPos',u:'2ms',fmt:function(v){return(v*2)+'ms'}}];
+  PF[10]=[{k:'nonce',n:'Nonce',u:''},{k:'res',n:'Result',u:'0=OK'},{k:'rssi',n:'RSSI',u:'dBm'},{k:'snr',n:'SNR',u:'dB',fmt:function(v){return v.toFixed(1)}},{k:'hmacFail',n:'HmacF',u:'count'},{k:'rxPosInSlot',n:'RxPos',u:'ms',fmt:function(v){return(v*2)}}];
   PF[11]=[{k:'ms',n:'T+launch',u:'ms'},{k:'p1c',n:'P1cont',u:'bool'},{k:'p1f',n:'P1fire',u:'bool'},{k:'p1a',n:'P1act',u:'bool'},{k:'p2c',n:'P2cont',u:'bool'},{k:'p2f',n:'P2fire',u:'bool'},{k:'p2a',n:'P2act',u:'bool'},{k:'cc',n:'Chcont',u:'bool'},{k:'cf',n:'Chfire',u:'bool'},{k:'ca',n:'Chact',u:'bool'}];
   PF[12]=[{k:'dtx',n:'DlyTX',u:'count'},{k:'irx',n:'BadRX',u:'count'},{k:'bgRssi',n:'BgRSSI',u:'dBm'},{k:'radioSynced',n:'Sync',u:'Y/N'},{k:'seqIdx',n:'SeqIdx',u:'slot'}];
   PF[13]=[{k:'utc',n:'UTC',u:'',fmt:function(v){return v?v.toISOString().replace('T',' ').substring(0,19)+'Z':'none'}}];

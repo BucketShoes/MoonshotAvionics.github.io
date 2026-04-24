@@ -18,7 +18,7 @@ uint8_t  hmacKey[HMAC_KEY_LEN];
 bool     hmacKeyValid = false;
 uint32_t highestNonce = 0;
 
-CommandAck lastAck = {0, CMD_ERR_UNKNOWN, 0, 0, 0, false};
+CommandAck lastAck = {0, CMD_ERR_UNKNOWN, 0, 0, 0, 0, false};
 unsigned long lastValidCmdUs = 0;
 
 // ===================== HMAC-SHA256 =====================
