@@ -274,11 +274,10 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
 
 void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
   if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.println("RX: BUSY — skip");
+    Serial.print("RX: BUSY — skip timeout "); Serial.print(timeoutRtcSteps);
+    Serial.println(" RTC");
     return;
   }
-  uint32_t timeoutUs = (uint32_t)(timeoutRtcSteps * 15.625f);
-  Serial.print("RX: set timeout="); Serial.print(timeoutUs); Serial.print("us ("); Serial.print(timeoutRtcSteps); Serial.println(" RTC)");
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
   sx126x_status_t st = sx126x_set_rx_with_timeout_in_rtc_step(&radioCtx, timeoutRtcSteps);
@@ -299,7 +298,8 @@ void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
       Serial.print(" timeout="); Serial.print(timeoutUs); Serial.println("us");
     }
   } else {
-    Serial.print("RX: start fail st="); Serial.println(st);
+    Serial.print("RX: set_rx fail st="); Serial.print(st);
+    Serial.print(" rtc="); Serial.println(timeoutRtcSteps);
     radioState = RADIO_STANDBY;
   }
 }
@@ -503,7 +503,6 @@ static void radioHandleIrq() {
   }
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
-    Serial.println("RX: TIMEOUT fired");
     radioState = RADIO_STANDBY;
     ledOff();
     if (LOG_RX_TIMEOUT) {
@@ -616,15 +615,19 @@ static bool applyCfgIfNeeded() {
     mp.bw   = bwKHzToEnum(activeBwKHz);
     mp.cr   = (sx126x_lora_cr_t)LORA_LR_CR;
     mp.ldro = 1;
-    Serial.print("applyCfg: LR SF"); Serial.print(LORA_LR_SF);
-    Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
+    if (LOG_APPLYCFG) {
+      Serial.print("applyCfg: LR SF"); Serial.print(LORA_LR_SF);
+      Serial.print(" BW"); Serial.print((int)activeBwKHz); Serial.println(" CR-LI LDRO");
+    }
   } else {
     mp.sf   = sfToEnum(activeSF);
     mp.bw   = bwKHzToEnum(activeBwKHz);
     mp.cr   = SX126X_LORA_CR_4_5;
     mp.ldro = 0;
-    Serial.print("applyCfg: NORMAL @ pis=");
-    Serial.println(posInSlot);
+    if (LOG_APPLYCFG) {
+      Serial.print("applyCfg: NORMAL @ pis=");
+      Serial.println(posInSlot);
+    }
   }
   sx126x_set_lora_mod_params(&radioCtx, &mp);
 

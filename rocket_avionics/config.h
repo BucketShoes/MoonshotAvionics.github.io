@@ -81,18 +81,18 @@ enum WindowMode : uint8_t {
 };
 
 // Compile-time slot sequence. Edit here to change the pattern.
-static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, };
+static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, WIN_TELEM, WIN_TELEM,WIN_CMD,};
 #define SLOT_SEQUENCE_LEN   (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))
-#define SLOT_DURATION_US    1'000'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
+#define SLOT_DURATION_US    420'000UL //how long between the timing points where messages are sent/listened for. note that this may change in futue, and some comments incorrectly assume itll always be this long.
 
 
 // Rocket WIN_CMD RX timeouts (converted to RTC steps via /15.625 at use site).
 #define ROCKET_RX_TIMEOUT_US           100'000UL                        // short: synced + heard base recently, save battery
-#define ROCKET_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 20'000UL)    // long: pre-sync, or base-silent lost-rocket fallback
+#define ROCKET_LONG_RX_TIMEOUT_US      750'000UL     // long: pre-sync, or base-silent lost-rocket fallback - note: this is about 1.8 slots long; so the following windows are skipped because it hasnt completed yet
 
 // Safety cutoff: force standby if RX has been active for more than this many slot durations.
 // Indicates a missed DIO1 IRQ or stuck DIO1 line. Mirrors base station's RX_STUCK_MAX_SLOTS.
-#define RX_STUCK_MAX_SLOTS             20UL
+#define RX_STUCK_MAX_SLOTS             10UL
 
 // When to widen RX window: no valid command heard from base for this long.
 // "Silence" is the wrong framing — signal can be fine but we may have lost sync
@@ -112,6 +112,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define LOG_RX_START false
 #define LOG_TX_START true
 #define LOG_TX_DONE true
+#define LOG_APPLYCFG false  // per-slot config apply (spammy)
 
 
 
