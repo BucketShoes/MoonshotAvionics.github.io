@@ -262,6 +262,6 @@ void bsHandleSyncSend();
 // Implemented in main.cpp (handles transport push, log write, telem store).
 void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
                         int32_t signedPosInSlot, uint32_t slotNum, uint8_t seqIdx,
-                        uint8_t win, uint32_t timeOnAirMs);
+                        uint8_t win, uint32_t timeOnAirMs, float driftEmaUs, uint32_t timeSinceSyncMs);
 
 #endif // BS_RADIO_H

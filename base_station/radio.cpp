@@ -419,7 +419,7 @@ void bsSetSyncedFromTx(uint64_t anchorUs) {
 // Forward declare packet received callback (defined in main.cpp)
 extern void bsOnPacketReceived(const uint8_t* buf, size_t len, float snrF, float rssiF,
                                int32_t signedPosInSlot, uint32_t slotNum, uint8_t seqIdx,
-                               uint8_t win, uint32_t timeOnAirMs);
+                               uint8_t win, uint32_t timeOnAirMs, float driftEmaUs, uint32_t timeSinceSyncMs);
 
 static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t seqIdx, uint8_t win) {
   sx126x_rx_buffer_status_t bufStatus = {};
@@ -457,23 +457,19 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
   // Clamp airtime to reasonable range (5-400ms). Empirically determined bounds.
   timeOnAirMs = constrain(timeOnAirMs, 5U, 400U);
 
+  // Calculate drift values for logging and correction
+  int32_t expectedUs = (int32_t)timeOnAirMs * 1000;
+  int32_t driftUs    = signedPosInSlot - expectedUs;
+  bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
+  uint32_t nowMs = millis();
+  uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
+
   // Drift calibration: if synced and receiving telemetry/LR, track drift and apply gentle correction.
   // Drift = arrival position relative to expected (start + airtime).
   // Target: signedPosInSlot ≈ timeOnAirMs * 1000 µs (offset from slot start to RX_DONE).
   if (bsSynced && (win == WIN_TELEM || win == WIN_LR)) {
-    int32_t expectedUs = (int32_t)timeOnAirMs * 1000;
-    int32_t driftUs    = signedPosInSlot - expectedUs;
-
-    // IIR filter — alpha=0.1, gentle tracking
-    bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
-Serial.print("BS DRIFT EMA:");
-Serial.println(bsDriftEmaUs);
-
     if (fabsf(bsDriftEmaUs) > (float)BS_DRIFT_DEADBAND_US) {
       // Only correct if consistently drifted (deadband)
-
-      uint32_t nowMs = millis();
-      uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
 
       // Dynamic rate limit: aggressive in fast window, then ramp to conservative.
       // Allows quick recovery from bad initial sync, but prevents long-term creep.
@@ -525,6 +521,13 @@ Serial.println(bsDriftEmaUs);
     }
   }
 
+  // Calculate drift values for logging (outside the correction condition, so always available)
+  int32_t expectedUs = (int32_t)timeOnAirMs * 1000;
+  int32_t driftUs    = signedPosInSlot - expectedUs;
+  bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
+  uint32_t nowMs = millis();
+  uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
+
   // WIN_LR uses implicit header — no type byte on air. Identify by slot + length.
   if (bsCurrentSlotIsLR && rxLen == 3) {
     // Synthesise the 5-byte natural packet format (type + deviceID + 3-byte core)
@@ -533,7 +536,7 @@ Serial.println(bsDriftEmaUs);
     synth[0] = PKT_LONGRANGE;
     synth[1] = FAVORITE_ROCKET_DEVICE_ID;
     synth[2] = buf[0]; synth[3] = buf[1]; synth[4] = buf[2];
-    bsOnPacketReceived(synth, 5, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs);
+    bsOnPacketReceived(synth, 5, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs, bsDriftEmaUs, timeSinceSyncMs);
     return;
   }
 
@@ -543,7 +546,7 @@ Serial.println(bsDriftEmaUs);
     bsLastTelemRxMs = millis();
   }
 
-  bsOnPacketReceived(buf, rxLen, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs);
+  bsOnPacketReceived(buf, rxLen, snrF, rssiF, signedPosInSlot, slotNum, seqIdx, win, timeOnAirMs, bsDriftEmaUs, timeSinceSyncMs);
 }
 
 // ===================== IRQ HANDLER =====================
