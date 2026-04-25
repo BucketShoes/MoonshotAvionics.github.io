@@ -642,6 +642,14 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     bsRadioState = BS_RADIO_STANDBY;
+    // Debug: log when RX timeout fires
+    static unsigned long bsRxTimeoutCountTotal = 0;
+    bsRxTimeoutCountTotal++;
+    if (bsRxTimeoutCountTotal % 10 == 0) {
+      Serial.print("BS RX_TIMEOUT fired (count="); Serial.print(bsRxTimeoutCountTotal);
+      Serial.print(" slot="); Serial.print((eventUs - bsSyncAnchorUs) / SLOT_DURATION_US);
+      Serial.println(")");
+    }
     // Also force standby explicitly after timeout, as with RX_DONE.
     sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
@@ -933,10 +941,14 @@ void bsHandleRadio() {
   // Fires when: radio is STANDBY, RX not yet started for the CURRENT slot (we reuse
   // bsRxStartedThisSlot to mean "RX for this *or the upcoming* slot has begun"), and we're
   // within BS_RX_EARLY_US of the slot boundary with an upcoming receive-type slot.
+  // EXCEPTION: if a command is queued and the next slot is WIN_CMD, skip early-listen so
+  // the radio stays STANDBY and ready to TX the command without residual RX airtime.
+  uint8_t    nextSeqIdx = (uint8_t)((bsSyncSlotIndex + slotNum + 1) % SLOT_SEQUENCE_LEN);
+  WindowMode nextWin    = SLOT_SEQUENCE[nextSeqIdx];
+  bool shouldSkipEarlyListen = (cmdTx.active && nextWin == WIN_CMD);
+
   if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY &&
-      posInSlot >= (SLOT_DURATION_US - BS_RX_EARLY_US)) {
-    uint8_t    nextSeqIdx = (uint8_t)((bsSyncSlotIndex + slotNum + 1) % SLOT_SEQUENCE_LEN);
-    WindowMode nextWin    = SLOT_SEQUENCE[nextSeqIdx];
+      posInSlot >= (SLOT_DURATION_US - BS_RX_EARLY_US) && !shouldSkipEarlyListen) {
     if (bsSlotIsReceive(nextWin)) {
       // Pre-apply the upcoming slot's config (doc §8). applyCfgIfNeeded defers if radio isn't
       // STANDBY; we checked above, so it will apply here.

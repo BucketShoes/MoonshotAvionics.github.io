@@ -518,6 +518,14 @@ static void radioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TIMEOUT) {
     radioState = RADIO_STANDBY;
+    // Debug: log when RX timeout fires
+    static unsigned long rxTimeoutCountTotal = 0;
+    rxTimeoutCountTotal++;
+    if (rxTimeoutCountTotal % 10 == 0) {
+      Serial.print("RX_TIMEOUT fired (count="); Serial.print(rxTimeoutCountTotal);
+      Serial.print(" slot="); Serial.print((eventUs - syncAnchorUs) / SLOT_DURATION_US);
+      Serial.println(")");
+    }
     // Also force standby explicitly after timeout, as with RX_DONE.
     sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
