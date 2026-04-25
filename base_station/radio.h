@@ -57,6 +57,8 @@ enum WindowMode : uint8_t {
   WIN_GFSK = 8,//
 };
 
+
+
 static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_CMD, WIN_LR, WIN_CMD, WIN_TELEM, WIN_TELEM,WIN_CMD,};
 
 #define SLOT_SEQUENCE_LEN   (sizeof(SLOT_SEQUENCE) / sizeof(SLOT_SEQUENCE[0]))

@@ -10,6 +10,20 @@
 #include "sx126x.h"
 #include "sx126x_hal.h"
 
+// ===================== EXTERNAL STATE (from main.cpp) =====================
+
+struct CmdTxState {
+  uint8_t pkt[64];
+  uint8_t pktLen;
+  uint8_t sends;
+  uint8_t sent;
+  uint16_t waitMs;
+  unsigned long lastSendMs;
+  unsigned long queuedMs;
+  bool active;
+};
+extern CmdTxState cmdTx;
+
 // ===================== HARDWARE OBJECTS =====================
 
 SPIClass bsLoraSPI(FSPI);
