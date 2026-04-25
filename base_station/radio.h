@@ -28,7 +28,7 @@
 #define LED_MODE       LED_MODE_LOGIC
 
 #define LORA_CR       5      // 4/5 coding rate
-#define LORA_PREAMBLE 6      // preamble symbols
+#define LORA_PREAMBLE 8      // preamble symbols
 // Sync word 0x12 (private) written as register pair 0x14, 0x24
 
 #define PKT_LONGRANGE  0xBB
@@ -64,7 +64,7 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 
 // Base station RX window parameters (converted to RTC steps via /15.625 at use site).
 #define BS_RX_TIMEOUT_US           80'000UL                   // synced telemetry RX window
-#define BS_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 100'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
+#define BS_LONG_RX_TIMEOUT_US      (SLOT_DURATION_US - 120'000UL)  // pre-sync: nearly full slot - dont long for active sync, we only care if we got one at the right time, the rest are non-synced random noise
 
 // Base station TX timing.
 #define BS_RX_EARLY_US             40'000UL    // start RX this many µs before a receive-type slot boundary
@@ -133,6 +133,8 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define LOG_TX_DONE false
 #define LOG_APPLYCFG false  // per-slot config apply (spammy)
 
+#define LORA_RX_BOOSTED true //+3db rx gain, +3ma power usage
+
 
 // ===================== RADIO STATE =====================
 
@@ -145,8 +147,8 @@ extern bool                 bsLoraReady;
 
 // ===================== ACTIVE RADIO CONFIG =====================
 
-#define DEFAULT_CHANNEL  65
-#define DEFAULT_SF       5
+#define DEFAULT_CHANNEL  3
+#define DEFAULT_SF       9
 #define DEFAULT_POWER    -9
 
 extern uint8_t activeChannel;

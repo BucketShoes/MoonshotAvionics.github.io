@@ -52,8 +52,8 @@
 #define PYRO_HV_DIVIDER_RATIO 11     // (10k + 100k) / 10k
 
 // Default channel if NVS is erased (0xFF). Channel 65 = BW500, 917.5 MHz.
-#define DEFAULT_CHANNEL  65
-#define DEFAULT_SF       5
+#define DEFAULT_CHANNEL  3
+#define DEFAULT_SF       9
 #define DEFAULT_POWER    -9     // dBm (bench testing)
 
 // ===================== CHANNEL TABLE (AU915-aligned) =====================
@@ -113,6 +113,9 @@ static const WindowMode SLOT_SEQUENCE[] = { WIN_TELEM, WIN_CMD, WIN_TELEM, WIN_C
 #define LOG_TX_START true
 #define LOG_TX_DONE true
 #define LOG_APPLYCFG false  // per-slot config apply (spammy)
+
+
+#define LORA_RX_BOOSTED true
 
 
 
