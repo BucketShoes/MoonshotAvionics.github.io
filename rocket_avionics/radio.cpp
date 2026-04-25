@@ -473,13 +473,6 @@ static void radioHandleIrq() {
     digitalWrite(LORA_FEM_PA_PIN, LOW);
 #endif
     radioState = RADIO_STANDBY;
-    // Force standby after TX_DONE. Transmit completion leaves radio in transitional state.
-    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("TxDone: BUSY stuck even after explicit standby");
-    }
     if (LOG_TX_DONE)
     {
       uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;

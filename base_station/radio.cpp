@@ -609,13 +609,6 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
-    // Force standby after TX_DONE. Transmit completion leaves radio in transitional state.
-    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("BS TxDone: BUSY stuck even after explicit standby");
-    }
     bsLedOff();
     // Log TxDone timing relative to the current slot. For CMD_SET_SYNC this is the
     // moment the anchor is set; for regular commands this should be near BS_CMD_TX_OFFSET_US
@@ -966,7 +959,8 @@ void bsHandleRadio() {
   // the radio stays STANDBY and ready to TX the command without residual RX airtime.
   uint8_t    nextSeqIdx = (uint8_t)((bsSyncSlotIndex + slotNum + 1) % SLOT_SEQUENCE_LEN);
   WindowMode nextWin    = SLOT_SEQUENCE[nextSeqIdx];
-  bool shouldSkipEarlyListen = (cmdTx.active && nextWin == WIN_CMD);
+  // TEMP: disable early-listen skip to test if this is causing telem RX to break
+  bool shouldSkipEarlyListen = false; //(cmdTx.active && nextWin == WIN_CMD);
 
   if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY &&
       posInSlot >= (SLOT_DURATION_US - BS_RX_EARLY_US) && !shouldSkipEarlyListen) {
