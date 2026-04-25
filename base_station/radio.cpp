@@ -486,7 +486,7 @@ static void bsHandleRxDone(int32_t signedPosInSlot, uint32_t slotNum, uint8_t se
   // Calculate drift values for logging and correction
   int32_t expectedUs = (int32_t)timeOnAirMs * 1000;
   int32_t driftUs    = signedPosInSlot - expectedUs;
-  bsDriftEmaUs = bsDriftEmaUs * 0.9f + driftUs * 0.1f;
+  bsDriftEmaUs = (bsDriftEmaUs * (1.0f-BS_DRIFT_EMA_RATIO)) + (driftUs * BS_DRIFT_EMA_RATIO);
   uint32_t nowMs = millis();
   uint32_t timeSinceSyncMs = nowMs - bsDriftMinuteStartMs;
 
