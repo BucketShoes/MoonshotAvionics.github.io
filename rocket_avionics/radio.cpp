@@ -476,7 +476,7 @@ static void radioHandleIrq() {
     // Force standby after TX_DONE. Transmit completion leaves radio in transitional state.
     sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("TxDone: BUSY stuck even after explicit standby");
     }
@@ -502,7 +502,7 @@ static void radioHandleIrq() {
     sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
     // Wait for BUSY to clear. Typical: <20µs, but cap at 1ms to avoid infinite spin.
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("RxDone: BUSY stuck even after explicit standby");
     }
@@ -536,7 +536,7 @@ static void radioHandleIrq() {
     // Also force standby explicitly after timeout, as with RX_DONE.
     sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("RxTimeout: BUSY stuck even after explicit standby");
     }
@@ -558,7 +558,7 @@ static void radioHandleIrq() {
     // Also force standby explicitly after errors, as with RX_DONE.
     sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("RxError: BUSY stuck even after explicit standby");
     }
