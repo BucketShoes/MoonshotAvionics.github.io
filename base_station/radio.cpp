@@ -609,6 +609,13 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
+    // Force standby after TX_DONE. Transmit completion leaves radio in transitional state.
+    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}
+    if (digitalRead(LORA_BUSY_PIN)) {
+      Serial.println("BS TxDone: BUSY stuck even after explicit standby");
+    }
     bsLedOff();
     // Log TxDone timing relative to the current slot. For CMD_SET_SYNC this is the
     // moment the anchor is set; for regular commands this should be near BS_CMD_TX_OFFSET_US
