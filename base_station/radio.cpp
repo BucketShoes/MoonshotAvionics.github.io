@@ -959,8 +959,7 @@ void bsHandleRadio() {
   // the radio stays STANDBY and ready to TX the command without residual RX airtime.
   uint8_t    nextSeqIdx = (uint8_t)((bsSyncSlotIndex + slotNum + 1) % SLOT_SEQUENCE_LEN);
   WindowMode nextWin    = SLOT_SEQUENCE[nextSeqIdx];
-  // TEMP: disable early-listen skip to test if this is causing telem RX to break
-  bool shouldSkipEarlyListen = false; //(cmdTx.active && nextWin == WIN_CMD);
+  bool shouldSkipEarlyListen = (cmdTx.active && nextWin == WIN_CMD);
 
   if (!bsRxStartedThisSlot && bsRadioState == BS_RADIO_STANDBY &&
       posInSlot >= (SLOT_DURATION_US - BS_RX_EARLY_US) && !shouldSkipEarlyListen) {
