@@ -331,11 +331,19 @@ void bsApplyCfgIfNeeded() {
 // ===================== RX / TX =====================
 
 void bsRadioStartRxTimeout(uint32_t timeoutRtcSteps) {
-  if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.print("BS RX: BUSY — skip timeout "); Serial.print(timeoutRtcSteps);
-    Serial.println(" RTC");
-    bsCheckBusyWatchdog();
-    return;
+  // Wait for BUSY to clear (BUSY should drop within ~20µs after standby is set in IRQ).
+  // If it stays high, the watchdog will catch the stuck state.
+  // Bounded to 100µs to avoid blocking while armed; matches the guard in bsRadioStartTx.
+  {
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN)) {
+      if (micros() - t0 > 100) {
+        Serial.print("BS RX: BUSY stuck >100µs timeout="); Serial.print(timeoutRtcSteps);
+        Serial.println(" RTC");
+        bsCheckBusyWatchdog();
+        return;
+      }
+    }
   }
   bsBusyStuckSinceMs = 0;
   sx126x_clear_irq_status(&bsRadioCtx, SX126X_IRQ_ALL);
@@ -609,13 +617,6 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_TX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
-    // Force standby after TX_DONE. Transmit completion leaves radio in transitional state.
-    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {} //TODO: @@@@@ fix 5ms blocking wait
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("BS TxDone: BUSY stuck even after explicit standby");
-    }
     bsLedOff();
     // Log TxDone timing relative to the current slot. For CMD_SET_SYNC this is the
     // moment the anchor is set; for regular commands this should be near BS_CMD_TX_OFFSET_US
@@ -639,16 +640,6 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     bsRadioState = BS_RADIO_STANDBY;
-    // Force standby after RX_DONE. Some RX modes (implicit header, high SF like WIN_LR)
-    // leave the radio in a transitional state where it won't idle naturally.
-    // Issue explicit standby command to force the transition.
-    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
-    // Wait for BUSY to clear. Typical: <20µs, but cap at 1ms to avoid infinite spin.
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}//TODO: @@@@@ fix 5ms blocking wait
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("BS RxDone: BUSY stuck even after explicit standby");
-    }
     int64_t elapsed    = (int64_t)eventUs - (int64_t)bsSyncAnchorUs;
     uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
     int32_t signedPosInSlot = (int32_t)(elapsed % SLOT_DURATION_US);
@@ -669,12 +660,6 @@ static void bsRadioHandleIrq() {
       Serial.println(")");
     }
     // Also force standby explicitly after timeout, as with RX_DONE.
-    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}//TODO: @@@@@ fix 5ms blocking wait
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("BS RxTimeout: BUSY stuck even after explicit standby");
-    }
     bsLedOff();
     if (LOG_RX_TIMEOUT) {
       uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
@@ -690,13 +675,6 @@ static void bsRadioHandleIrq() {
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
     bsRadioState = BS_RADIO_STANDBY;
-    // Also force standby explicitly after errors, as with RX_DONE.
-    sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}//TODO: @@@@@ fix 5ms blocking wait
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("BS RxError: BUSY stuck even after explicit standby");
-    }
     bsLedOff();
     static unsigned long lastRxErrLogMs = 0;
     unsigned long nowMs = millis();

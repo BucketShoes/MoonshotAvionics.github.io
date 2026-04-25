@@ -277,10 +277,18 @@ void radioSetSynced(unsigned long anchorUs, uint8_t slotIdx) {
 // ===================== RX / TX =====================
 
 void radioStartRxTimeout(uint32_t timeoutRtcSteps) {
-  if (digitalRead(LORA_BUSY_PIN)) {
-    Serial.print("RX: BUSY — skip timeout "); Serial.print(timeoutRtcSteps);
-    Serial.println(" RTC");
-    return;
+  // Wait for BUSY to clear (BUSY should drop within ~20µs after standby is set in IRQ).
+  // If it stays high, we skip this RX attempt and will retry next slot.
+  // Bounded to 100µs to avoid blocking while armed.
+  {
+    unsigned long t0 = micros();
+    while (digitalRead(LORA_BUSY_PIN)) {
+      if (micros() - t0 > 100) {
+        Serial.print("RX: BUSY stuck >100µs timeout="); Serial.print(timeoutRtcSteps);
+        Serial.println(" RTC");
+        return;
+      }
+    }
   }
   sx126x_clear_irq_status(&radioCtx, SX126X_IRQ_ALL);
   dio1Fired = false;
