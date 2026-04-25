@@ -612,7 +612,7 @@ static void bsRadioHandleIrq() {
     // Force standby after TX_DONE. Transmit completion leaves radio in transitional state.
     sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {} //TODO: @@@@@ fix 5ms blocking wait
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {} //TODO: @@@@@ fix 5ms blocking wait
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("BS TxDone: BUSY stuck even after explicit standby");
     }
@@ -645,7 +645,7 @@ static void bsRadioHandleIrq() {
     sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
     // Wait for BUSY to clear. Typical: <20µs, but cap at 1ms to avoid infinite spin.
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}//TODO: @@@@@ fix 5ms blocking wait
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("BS RxDone: BUSY stuck even after explicit standby");
     }
@@ -674,7 +674,7 @@ static void bsRadioHandleIrq() {
     // Also force standby explicitly after timeout, as with RX_DONE.
     sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}//TODO: @@@@@ fix 5ms blocking wait
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("BS RxTimeout: BUSY stuck even after explicit standby");
     }
@@ -696,7 +696,7 @@ static void bsRadioHandleIrq() {
     // Also force standby explicitly after errors, as with RX_DONE.
     sx126x_set_standby(&bsRadioCtx, SX126X_STANDBY_CFG_RC);
     unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait
+    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 1000) {}//TODO: @@@@@ fix 5ms blocking wait
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("BS RxError: BUSY stuck even after explicit standby");
     }

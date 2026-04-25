@@ -473,13 +473,6 @@ static void radioHandleIrq() {
     digitalWrite(LORA_FEM_PA_PIN, LOW);
 #endif
     radioState = RADIO_STANDBY;
-    // Force standby after TX_DONE. Transmit completion leaves radio in transitional state.
-    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("TxDone: BUSY stuck even after explicit standby");
-    }
     if (LOG_TX_DONE)
     {
       uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
@@ -496,16 +489,6 @@ static void radioHandleIrq() {
 
   if (irqFlags & SX126X_IRQ_RX_DONE) {
     radioState = RADIO_STANDBY;
-    // Force standby after RX_DONE. Some RX modes (implicit header, high SF like WIN_LR)
-    // leave the radio in a transitional state where it won't idle naturally.
-    // Issue explicit standby command to force the transition.
-    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
-    // Wait for BUSY to clear. Typical: <20µs, but cap at 1ms to avoid infinite spin.
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("RxDone: BUSY stuck even after explicit standby");
-    }
     // Log RxDone timing relative to current slot — diagnostic for sync drift. Pre-sync
     // the anchor is 0 so posInSlot is (micros() % SLOT_DURATION); that's still useful
     // because CMD_SET_SYNC RxDone is the event that SETS the anchor.
@@ -533,13 +516,6 @@ static void radioHandleIrq() {
       Serial.print(" slot="); Serial.print((eventUs - syncAnchorUs) / SLOT_DURATION_US);
       Serial.println(")");
     }
-    // Also force standby explicitly after timeout, as with RX_DONE.
-    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("RxTimeout: BUSY stuck even after explicit standby");
-    }
     ledOff();
     if (LOG_RX_TIMEOUT) {
       uint64_t elapsed   = eventUs - (uint64_t)syncAnchorUs;
@@ -555,13 +531,6 @@ static void radioHandleIrq() {
 
   if (irqFlags & (SX126X_IRQ_CRC_ERROR | SX126X_IRQ_HEADER_ERROR)) {
     radioState = RADIO_STANDBY;
-    // Also force standby explicitly after errors, as with RX_DONE.
-    sx126x_set_standby(&radioCtx, SX126X_STANDBY_CFG_RC);
-    unsigned long t0 = micros();
-    while (digitalRead(LORA_BUSY_PIN) && (micros() - t0) < 5000) {}//TODO: @@@@@ fix 5ms blocking wait - MAJOR SAFETY VIOLATION - RISK OF HUMAN IUNJURY AND FIRE - LACK OF AERODYNAMIC CONTROL LOSS AND PYRO CHANNEL TIMING - PARACHUTE NONDEPLOYMENT - max wait is 100 usec or it MUST be in the total loop time budget comments in main.cpp and max is 1ms per loop() iteration or the feature MUST be entirely removed during flight
-    if (digitalRead(LORA_BUSY_PIN)) {
-      Serial.println("RxError: BUSY stuck even after explicit standby");
-    }
     ledOff();
     invalidRxCount++;
     // Rate-limit header/CRC error logs — they can be frequent on a busy channel.
