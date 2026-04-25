@@ -649,12 +649,9 @@ static void bsRadioHandleIrq() {
     if (digitalRead(LORA_BUSY_PIN)) {
       Serial.println("BS RxDone: BUSY stuck even after explicit standby");
     }
-    uint64_t elapsed   = eventUs - (uint64_t)bsSyncAnchorUs;
+    int64_t elapsed    = (int64_t)eventUs - (int64_t)bsSyncAnchorUs;
     uint32_t slotNum   = (uint32_t)(elapsed / SLOT_DURATION_US);
-    uint32_t posInSlot = (uint32_t)(elapsed % SLOT_DURATION_US);
-    int32_t signedPosInSlot = (posInSlot > SLOT_DURATION_US / 2)
-        ? (int32_t)posInSlot - (int32_t)SLOT_DURATION_US
-        : (int32_t)posInSlot;
+    int32_t signedPosInSlot = (int32_t)(elapsed % SLOT_DURATION_US);
     uint8_t  seqIdx    = (uint8_t)((bsSyncSlotIndex + slotNum) % SLOT_SEQUENCE_LEN);
     uint8_t  win       = (uint8_t)SLOT_SEQUENCE[seqIdx];
     bsHandleRxDone(signedPosInSlot, slotNum, seqIdx, win);
