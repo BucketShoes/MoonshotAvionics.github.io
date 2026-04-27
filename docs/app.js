@@ -839,24 +839,27 @@ function initCharts() {
       // Subscribe to log fetch notifications
       await bleLogFetchChar_.startNotifications();
       bleLogFetchChar_.addEventListener('characteristicvaluechanged', function(ev) {
-        var buf = ev.target.value.buffer;
-        if (buf.byteLength === 0) {
-          // End marker — current batch done
+        // Use the DataView directly — its byteLength is the actual notification length.
+        // ev.target.value.buffer can be a larger underlying ArrayBuffer with padding.
+        var dv = ev.target.value;
+        var len = dv.byteLength;
+        if (len === 0) {
+          console.log('[ble fetch] end marker');
           bleFetchDone = true;
           return;
         }
-        // Track bytes for speed display
-        fetchSpeedBytes += buf.byteLength;
-        // Parse records — same format as /api/logs response
-        var dv = new DataView(buf);
+        console.log('[ble fetch] notify len=' + len);
+        fetchSpeedBytes += len;
         var off = 0;
-        while (off + 10 <= buf.byteLength) {
+        var parsed = 0, dupes = 0;
+        while (off + 10 <= len) {
           var rn = dv.getUint32(off, true); off += 4;
           var pl = dv.getUint8(off); off++;
           var sn = dv.getInt8(off); off++;
           var ts = dv.getUint32(off, true); off += 4;
-          if (pl === 0 || off + pl > buf.byteLength) break;
-          var payload = buf.slice(off, off + pl);
+          if (pl === 0 || off + pl > len) break;
+          // Slice via byteOffset into the underlying buffer to get just this record's bytes
+          var payload = dv.buffer.slice(dv.byteOffset + off, dv.byteOffset + off + pl);
           off += pl;
           if (!allFetched[rn]) {
             var b0 = payload.byteLength > 0 ? new Uint8Array(payload)[0] : 0;
@@ -864,8 +867,12 @@ function initCharts() {
             if (rn < fetchedLowest) fetchedLowest = rn;
             if (rn > fetchedHighest) fetchedHighest = rn;
             fetchSpeedRecs++;
+            parsed++;
+          } else {
+            dupes++;
           }
         }
+        if (parsed === 0) console.log('[ble fetch] WARN no records parsed from ' + len + 'B (dupes=' + dupes + ')');
       });
 
       bleConnected = true;

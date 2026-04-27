@@ -245,7 +245,11 @@ struct BleLogFetch {
   uint8_t  pendingBuf[500];
   uint16_t pendingLen;  // 0 = no chunk pending
   bool     endPending;  // 0-byte end marker not yet sent
-} bleLogFetch = {false, 0, 0, 0, {}, {}, 0, false};
+  // Diagnostics — reset on each new request
+  uint32_t notifyOk;
+  uint32_t notifyDrop;
+  uint32_t bytesSent;
+} bleLogFetch = {false, 0, 0, 0, {}, {}, 0, false, 0, 0, 0};
 
 // Forward declaration — defined below, used in dispatchCmdTx
 static bool BlockingReadyWait();
@@ -725,6 +729,9 @@ class BleLogFetchCallbacks : public NimBLECharacteristicCallbacks {
     bleLogFetch.seq = logStore.seqReader(startRec, endRec);
     bleLogFetch.pendingLen = 0;
     bleLogFetch.endPending = false;
+    bleLogFetch.notifyOk = 0;
+    bleLogFetch.notifyDrop = 0;
+    bleLogFetch.bytesSent = 0;
 
     Serial.print("BLE fetch: "); Serial.print(startRec);
     Serial.print("-"); Serial.println(endRec);
@@ -749,9 +756,12 @@ void handleBleLogFetch() {
   // Retry held chunk if previous notify() was dropped by congestion.
   if (bleLogFetch.pendingLen > 0) {
     if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, bleLogFetch.pendingLen, true)) {
+      bleLogFetch.notifyDrop++;
       yield();  // let async_tcp / BLE host run while we wait for queue to drain
       return;
     }
+    bleLogFetch.notifyOk++;
+    bleLogFetch.bytesSent += bleLogFetch.pendingLen;
     bleLogFetch.pendingLen = 0;
   }
 
@@ -760,7 +770,10 @@ void handleBleLogFetch() {
     if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) { yield(); return; }
     bleLogFetch.endPending = false;
     bleLogFetch.active = false;
-    Serial.print("BLE fetch done @"); Serial.println(bleLogFetch.currentRec);
+    Serial.print("BLE fetch done @"); Serial.print(bleLogFetch.currentRec);
+    Serial.print(" notifyOk="); Serial.print(bleLogFetch.notifyOk);
+    Serial.print(" drop="); Serial.print(bleLogFetch.notifyDrop);
+    Serial.print(" bytes="); Serial.println(bleLogFetch.bytesSent);
     return;
   }
 
@@ -770,7 +783,10 @@ void handleBleLogFetch() {
       return;
     }
     bleLogFetch.active = false;
-    Serial.print("BLE fetch done @"); Serial.println(bleLogFetch.currentRec);
+    Serial.print("BLE fetch done @"); Serial.print(bleLogFetch.currentRec);
+    Serial.print(" notifyOk="); Serial.print(bleLogFetch.notifyOk);
+    Serial.print(" drop="); Serial.print(bleLogFetch.notifyDrop);
+    Serial.print(" bytes="); Serial.println(bleLogFetch.bytesSent);
     return;
   }
 
@@ -796,7 +812,11 @@ void handleBleLogFetch() {
   if (chunkPos > 0) {
     if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, chunkPos, true)) {
       bleLogFetch.pendingLen = chunkPos;  // hold for retry
+      bleLogFetch.notifyDrop++;
       yield();  // let async_tcp / BLE host run
+    } else {
+      bleLogFetch.notifyOk++;
+      bleLogFetch.bytesSent += chunkPos;
     }
   }
 }
