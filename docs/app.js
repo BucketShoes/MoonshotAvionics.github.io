@@ -642,28 +642,33 @@ function initCharts() {
 
     // Base station BLE fetch path
     if (bleConnected && bleLogFetchChar_) {
+      console.log('[fetch] starting base BLE fetch');
       bleReadStatus().then(function() {
         var recEl = document.getElementById('val-logrec');
         var newest = parseInt(recEl.textContent) || 0;
+        console.log('[fetch] newest='+newest);
         if (newest === 0) { document.getElementById('btn-stop').style.display='none'; return; }
         // Fetch newest-first, skip already-fetched ranges, so re-clicking extends downward
         var cursor = newest;
         var batchSize = 2000;
         function blePage() {
-          if (fetchAbort || cursor <= 0) { bleDone(); return; }
+          if (fetchAbort || cursor <= 0) { console.log('[fetch] done condition cursor='+cursor+' abort='+fetchAbort); bleDone(); return; }
           var start = Math.max(cursor - batchSize, 0);
           var count = cursor - start;
           // Skip ranges already in memory (allows re-click to continue where we left off)
           if (start >= fetchedLowest && cursor <= fetchedHighest) {
+            console.log('[fetch] skipping cached '+start+'-'+cursor);
             cursor = start; blePage(); return;
           }
+          console.log('[fetch] requesting batch '+start+'-'+(start+count));
           document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
           bleFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
+            console.log('[fetch] batch '+start+'-'+(start+count)+' returned ok='+ok+' recsTotal='+fetchSpeedRecs+' bytesTotal='+fetchSpeedBytes);
             if (!ok) { bleDone(); return; }  // timeout/abort — stop instead of skipping ahead
             cursor = start;
             fetchIntermediateUpdate(cursor);
             if (cursor > 0 && !fetchAbort) blePage(); else bleDone();
-          });
+          }).catch(function(e){ console.error('[fetch] batch promise rejected: '+e); bleDone(); });
         }
         function bleDone() {
           document.getElementById('btn-stop').style.display='none';
@@ -839,6 +844,7 @@ function initCharts() {
       // Subscribe to log fetch notifications
       await bleLogFetchChar_.startNotifications();
       bleLogFetchChar_.addEventListener('characteristicvaluechanged', function(ev) {
+       try {
         // Use the DataView directly — its byteLength is the actual notification length.
         // ev.target.value.buffer can be a larger underlying ArrayBuffer with padding.
         var dv = ev.target.value;
@@ -873,6 +879,9 @@ function initCharts() {
           }
         }
         if (parsed === 0) console.log('[ble fetch] WARN no records parsed from ' + len + 'B (dupes=' + dupes + ')');
+       } catch(e) {
+         console.error('[ble fetch] handler exception: '+(e&&e.message?e.message:e)+(e&&e.stack?'\n'+e.stack:''));
+       }
       });
 
       bleConnected = true;
@@ -949,15 +958,16 @@ function initCharts() {
   // Uses sliding window: request a batch, wait for notifications, request more.
   // onProgress (optional): called every ~400ms during wait so the UI can update mid-batch.
   async function bleFetchLogs(startRec, count, onProgress) {
-    if (!bleConnected || !bleLogFetchChar_) return false;
+    if (!bleConnected || !bleLogFetchChar_) { console.warn('[bleFetchLogs] no connection'); return false; }
     bleFetchDone = false;
     var req = new Uint8Array(6);
     var rdv = new DataView(req.buffer);
     rdv.setUint32(0, startRec, true);
     rdv.setUint16(4, count, true);
     try {
+      console.log('[bleFetchLogs] write req start='+startRec+' count='+count);
       await bleLogFetchChar_.writeValueWithResponse(req);
-      // Wait for end marker (empty notification), calling onProgress periodically
+      console.log('[bleFetchLogs] write ack — waiting for end marker');
       var timeout = 10000;
       var start = Date.now();
       var lastProg = Date.now();
@@ -968,9 +978,10 @@ function initCharts() {
           onProgress();
         }
       }
+      if (!bleFetchDone) console.warn('[bleFetchLogs] timeout after '+(Date.now()-start)+'ms — no end marker');
       return bleFetchDone;
     } catch (e) {
-      console.error('BLE fetch error:', e);
+      console.error('[bleFetchLogs] exception: '+(e&&e.message?e.message:e));
       return false;
     }
   }

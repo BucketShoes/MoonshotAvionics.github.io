@@ -326,6 +326,89 @@
     <br /><br /><br />
     <div style="text-align:center"><a href="https://bucketshoes.github.io/MoonshotAvionics/">Moonshot Avionics</a></div>
     <br /><br /><br />
+
+<!-- ============ ON-PAGE DEBUG LOG (mobile-friendly devtools replacement) ============ -->
+<div id="dbg-bar" style="position:fixed;bottom:0;left:0;right:0;background:#111;border-top:1px solid #444;font-family:monospace;font-size:10px;z-index:9999">
+  <div style="display:flex;align-items:center;padding:2px 4px;gap:4px;background:#222">
+    <button id="dbg-toggle" style="font-size:10px;padding:2px 6px">Debug</button>
+    <button id="dbg-clear" style="font-size:10px;padding:2px 6px;display:none">Clr</button>
+    <label style="color:#aaa;font-size:10px;display:none" id="dbg-pause-lbl"><input type="checkbox" id="dbg-pause" style="vertical-align:middle"> pause</label>
+    <span id="dbg-count" style="color:#888;flex:1"></span>
+  </div>
+  <pre id="dbg-log" style="display:none;margin:0;padding:4px;max-height:40vh;overflow-y:auto;color:#ccc;background:#0a0a0a;white-space:pre-wrap;word-break:break-all"></pre>
+</div>
+<script>
+(function(){
+  var maxLines = 500;
+  var lines = [];
+  var paused = false;
+  var counts = {log:0, warn:0, err:0};
+  var logEl = document.getElementById('dbg-log');
+  var toggleBtn = document.getElementById('dbg-toggle');
+  var clearBtn = document.getElementById('dbg-clear');
+  var pauseLbl = document.getElementById('dbg-pause-lbl');
+  var pauseCb = document.getElementById('dbg-pause');
+  var countEl = document.getElementById('dbg-count');
+  function fmt(args){
+    var out=[];
+    for(var i=0;i<args.length;i++){
+      var a=args[i];
+      try{
+        if(a===null) out.push('null');
+        else if(a===undefined) out.push('undefined');
+        else if(typeof a==='string') out.push(a);
+        else if(typeof a==='number'||typeof a==='boolean') out.push(String(a));
+        else if(a instanceof Error) out.push(a.message + (a.stack?('\n'+a.stack):''));
+        else out.push(JSON.stringify(a));
+      }catch(e){ out.push('[unserialisable '+(typeof a)+']'); }
+    }
+    return out.join(' ');
+  }
+  function ts(){
+    var d=new Date();
+    return d.toTimeString().slice(0,8) + '.' + ('00'+d.getMilliseconds()).slice(-3);
+  }
+  function append(level, msg){
+    counts[level]++;
+    if(paused) return;
+    var line = ts()+' ['+level+'] '+msg;
+    lines.push(line);
+    if(lines.length>maxLines) lines.splice(0, lines.length-maxLines);
+    if(logEl.style.display!=='none'){
+      logEl.textContent = lines.join('\n');
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    countEl.textContent = 'log:'+counts.log+' warn:'+counts.warn+' err:'+counts.err;
+  }
+  var origLog = console.log, origWarn = console.warn, origErr = console.error;
+  console.log = function(){ try{append('log', fmt(arguments));}catch(e){} origLog.apply(console, arguments); };
+  console.warn = function(){ try{append('warn', fmt(arguments));}catch(e){} origWarn.apply(console, arguments); };
+  console.error = function(){ try{append('err', fmt(arguments));}catch(e){} origErr.apply(console, arguments); };
+  window.addEventListener('error', function(ev){
+    append('err', 'window.onerror: '+(ev.message||'?')+' @ '+(ev.filename||'?')+':'+(ev.lineno||'?')+':'+(ev.colno||'?')+(ev.error&&ev.error.stack?('\n'+ev.error.stack):''));
+  });
+  window.addEventListener('unhandledrejection', function(ev){
+    var r=ev.reason;
+    var s = (r && r.message) ? r.message : String(r);
+    if(r && r.stack) s += '\n' + r.stack;
+    append('err', 'unhandledrejection: '+s);
+  });
+  toggleBtn.addEventListener('click', function(){
+    var open = logEl.style.display==='none';
+    logEl.style.display = open ? 'block' : 'none';
+    clearBtn.style.display = open ? 'inline-block' : 'none';
+    pauseLbl.style.display = open ? 'inline' : 'none';
+    if(open){ logEl.textContent = lines.join('\n'); logEl.scrollTop = logEl.scrollHeight; }
+  });
+  clearBtn.addEventListener('click', function(){
+    lines = []; counts={log:0,warn:0,err:0};
+    logEl.textContent=''; countEl.textContent='';
+  });
+  pauseCb.addEventListener('change', function(){ paused = pauseCb.checked; });
+  console.log('[dbg] on-page console ready');
+})();
+</script>
+
 <script src="app.js"></script>
 </body>
 </html>
