@@ -618,11 +618,20 @@ function initCharts() {
           document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
           rktFetchDone = false;
           rktFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
-            if (!ok) { rktDone(); return; }  // timeout/abort — stop instead of skipping ahead
-            cursor = start;
+            console.log('[fetch] rkt batch '+start+'-'+(start+count)+' ok='+ok+' lowestRn='+rktFetchLowestRn+' recsTotal='+fetchSpeedRecs);
+            if (fetchAbort) { rktDone(); return; }
+            if (ok) {
+              cursor = start;
+            } else if (rktFetchLowestRn >= 0 && rktFetchLowestRn < cursor) {
+              console.warn('[fetch] rkt batch stalled — resuming below '+rktFetchLowestRn);
+              cursor = rktFetchLowestRn;
+            } else {
+              console.warn('[fetch] rkt batch stalled with no records — stopping');
+              rktDone(); return;
+            }
             fetchIntermediateUpdate(cursor);
-            if (cursor > 0 && !fetchAbort) rktPage(); else rktDone();
-          });
+            if (cursor > 0) rktPage(); else rktDone();
+          }).catch(function(e){ console.error('[fetch] rkt batch promise rejected: '+e); rktDone(); });
         }
         function rktDone() {
           document.getElementById('btn-stop').style.display='none';
@@ -663,11 +672,20 @@ function initCharts() {
           console.log('[fetch] requesting batch '+start+'-'+(start+count));
           document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
           bleFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
-            console.log('[fetch] batch '+start+'-'+(start+count)+' returned ok='+ok+' recsTotal='+fetchSpeedRecs+' bytesTotal='+fetchSpeedBytes);
-            if (!ok) { bleDone(); return; }  // timeout/abort — stop instead of skipping ahead
-            cursor = start;
+            console.log('[fetch] batch '+start+'-'+(start+count)+' ok='+ok+' lowestRn='+bleFetchLowestRn+' recsTotal='+fetchSpeedRecs+' bytesTotal='+fetchSpeedBytes);
+            if (fetchAbort) { bleDone(); return; }
+            if (ok) {
+              cursor = start;
+            } else if (bleFetchLowestRn >= 0 && bleFetchLowestRn < cursor) {
+              // Stalled mid-batch: advance to just below lowest received so we don't lose progress.
+              console.warn('[fetch] batch stalled — resuming below '+bleFetchLowestRn);
+              cursor = bleFetchLowestRn;
+            } else {
+              console.warn('[fetch] batch stalled with no records — stopping');
+              bleDone(); return;
+            }
             fetchIntermediateUpdate(cursor);
-            if (cursor > 0 && !fetchAbort) blePage(); else bleDone();
+            if (cursor > 0) blePage(); else bleDone();
           }).catch(function(e){ console.error('[fetch] batch promise rejected: '+e); bleDone(); });
         }
         function bleDone() {
@@ -764,6 +782,8 @@ function initCharts() {
   var bleFetchQueue = [];     // pending fetch requests [{start,count,resolve}]
   var bleFetchBuffer = [];    // received records from current fetch batch
   var bleFetchDone = false;
+  var bleFetchLastNotifyMs = 0;
+  var bleFetchLowestRn = -1; // lowest recNum seen in current batch (-1 = none)
 
   function setBle(on) {
     document.getElementById('dot-ble').className = 'dot ' + (on ? 'dg' : 'dd');
@@ -854,7 +874,7 @@ function initCharts() {
           bleFetchDone = true;
           return;
         }
-        console.log('[ble fetch] notify len=' + len);
+        bleFetchLastNotifyMs = Date.now();
         fetchSpeedBytes += len;
         var off = 0;
         var parsed = 0, dupes = 0;
@@ -872,9 +892,11 @@ function initCharts() {
             allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload, type: b0 === 0xAF ? 'pkt' : 'logpage' };
             if (rn < fetchedLowest) fetchedLowest = rn;
             if (rn > fetchedHighest) fetchedHighest = rn;
+            if (bleFetchLowestRn < 0 || rn < bleFetchLowestRn) bleFetchLowestRn = rn;
             fetchSpeedRecs++;
             parsed++;
           } else {
+            if (bleFetchLowestRn < 0 || rn < bleFetchLowestRn) bleFetchLowestRn = rn;
             dupes++;
           }
         }
@@ -960,6 +982,8 @@ function initCharts() {
   async function bleFetchLogs(startRec, count, onProgress) {
     if (!bleConnected || !bleLogFetchChar_) { console.warn('[bleFetchLogs] no connection'); return false; }
     bleFetchDone = false;
+    bleFetchLowestRn = -1;
+    bleFetchLastNotifyMs = Date.now();
     var req = new Uint8Array(6);
     var rdv = new DataView(req.buffer);
     rdv.setUint32(0, startRec, true);
@@ -968,17 +992,16 @@ function initCharts() {
       console.log('[bleFetchLogs] write req start='+startRec+' count='+count);
       await bleLogFetchChar_.writeValueWithResponse(req);
       console.log('[bleFetchLogs] write ack — waiting for end marker');
-      var timeout = 10000;
-      var start = Date.now();
+      var idleTimeoutMs = 3000; // 3s with no notify = stalled
       var lastProg = Date.now();
-      while (!bleFetchDone && !fetchAbort && (Date.now() - start) < timeout) {
+      while (!bleFetchDone && !fetchAbort && (Date.now() - bleFetchLastNotifyMs) < idleTimeoutMs) {
         await new Promise(function(r) { setTimeout(r, 50); });
         if (onProgress && Date.now() - lastProg > 400) {
           lastProg = Date.now();
           onProgress();
         }
       }
-      if (!bleFetchDone) console.warn('[bleFetchLogs] timeout after '+(Date.now()-start)+'ms — no end marker');
+      if (!bleFetchDone) console.warn('[bleFetchLogs] idle timeout — no notify for '+(Date.now()-bleFetchLastNotifyMs)+'ms; lowestRn='+bleFetchLowestRn);
       return bleFetchDone;
     } catch (e) {
       console.error('[bleFetchLogs] exception: '+(e&&e.message?e.message:e));
@@ -1005,6 +1028,9 @@ function initCharts() {
   var RKT_CS_INTERVAL = 0x01;
   var RKT_CS_PAGEMASK = 0x02;
   var RKT_CS_PHY      = 0x03;
+
+  var rktFetchLastNotifyMs = 0;
+  var rktFetchLowestRn = -1;
 
   var rktDevice = null;
   var rktServer_ = null;
@@ -1124,22 +1150,26 @@ function initCharts() {
   async function rktFetchLogs(startRec, count, onProgress) {
     if (!rktBleConnected || !rktFetchChar_) return false;
     rktFetchDone = false;
+    rktFetchLowestRn = -1;
+    rktFetchLastNotifyMs = Date.now();
     var req = new Uint8Array(6);
     var rdv = new DataView(req.buffer);
     rdv.setUint32(0, startRec, true);
     rdv.setUint16(4, count, true);
     try {
+      console.log('[rktFetchLogs] write req start='+startRec+' count='+count);
       await rktFetchChar_.writeValueWithResponse(req);
-      var timeout = 30000;
-      var start = Date.now();
+      console.log('[rktFetchLogs] write ack — waiting for end marker');
+      var idleTimeoutMs = 3000;
       var lastProg = Date.now();
-      while (!rktFetchDone && !fetchAbort && (Date.now() - start) < timeout) {
+      while (!rktFetchDone && !fetchAbort && (Date.now() - rktFetchLastNotifyMs) < idleTimeoutMs) {
         await new Promise(function(r) { setTimeout(r, 50); });
         if (onProgress && Date.now() - lastProg > 400) {
           lastProg = Date.now();
           onProgress();
         }
       }
+      if (!rktFetchDone) console.warn('[rktFetchLogs] idle timeout — no notify for '+(Date.now()-rktFetchLastNotifyMs)+'ms; lowestRn='+rktFetchLowestRn);
       return rktFetchDone;
     } catch (e) {
       console.error('Rkt BLE fetch error:', e);
@@ -1206,32 +1236,43 @@ function initCharts() {
       // Subscribe to log fetch notifications
       await rktFetchChar_.startNotifications();
       rktFetchChar_.addEventListener('characteristicvaluechanged', function(ev) {
-        var buf = ev.target.value.buffer;
-        if (buf.byteLength === 0) {
+       try {
+        var dv = ev.target.value;
+        var len = dv.byteLength;
+        if (len === 0) {
+          console.log('[rkt fetch] end marker');
           rktFetchDone = true;
           return;
         }
-        // Parse [recNum u32 LE][len u8][snr i8][ts u32 LE][payload: len bytes]
-        // Same format as base station log fetch — store directly into allFetched.
-        fetchSpeedBytes += buf.byteLength;
-        var dv = new DataView(buf);
+        rktFetchLastNotifyMs = Date.now();
+        fetchSpeedBytes += len;
         var off = 0;
-        while (off + 10 <= buf.byteLength) {
+        var parsed = 0, dupes = 0;
+        while (off + 10 <= len) {
           var rn = dv.getUint32(off, true); off += 4;
           var pl = dv.getUint8(off); off++;
           var sn = dv.getInt8(off); off++;
           var ts = dv.getUint32(off, true); off += 4;
-          if (pl === 0 || off + pl > buf.byteLength) break;
-          var payload = buf.slice(off, off + pl);
+          if (pl === 0 || off + pl > len) break;
+          var payload = dv.buffer.slice(dv.byteOffset + off, dv.byteOffset + off + pl);
           off += pl;
           if (!allFetched[rn]) {
             var b0 = payload.byteLength > 0 ? new Uint8Array(payload)[0] : 0;
             allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload, type: b0 === 0xAF ? 'pkt' : 'logpage' };
             if (rn < fetchedLowest) fetchedLowest = rn;
             if (rn > fetchedHighest) fetchedHighest = rn;
+            if (rktFetchLowestRn < 0 || rn < rktFetchLowestRn) rktFetchLowestRn = rn;
             fetchSpeedRecs++;
+            parsed++;
+          } else {
+            if (rktFetchLowestRn < 0 || rn < rktFetchLowestRn) rktFetchLowestRn = rn;
+            dupes++;
           }
         }
+        if (parsed === 0) console.log('[rkt fetch] WARN no records parsed from ' + len + 'B (dupes=' + dupes + ')');
+       } catch(e) {
+         console.error('[rkt fetch] handler exception: '+(e&&e.message?e.message:e)+(e&&e.stack?'\n'+e.stack:''));
+       }
       });
 
       rktBleConnected = true;

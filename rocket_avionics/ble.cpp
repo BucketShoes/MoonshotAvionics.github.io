@@ -606,6 +606,11 @@ static void bleFetchOnePdu() {
     } else {
       rktFetchNotifyOk++;
       rktFetchBytesSent += pduLen;
+      if ((rktFetchNotifyOk % 8) == 1) {
+        Serial.printf("[BLEFetch] notify ok #%lu len=%u curRec=%lu bytesTot=%lu\n",
+          (unsigned long)rktFetchNotifyOk, (unsigned)pduLen,
+          (unsigned long)bleState.fetchCurrentRec, (unsigned long)rktFetchBytesSent);
+      }
     }
   }
 }
