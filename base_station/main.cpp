@@ -234,7 +234,7 @@ static uint8_t otaHandleConfirm() {
 
 // ===================== BLE log fetch state machine — runs in main loop
 struct BleLogFetch {
-  bool active;
+  volatile bool active;  // volatile: written by NimBLE task, read by loopTask
   uint32_t startRec;
   uint32_t endRec;      // exclusive
   uint32_t currentRec;
@@ -245,11 +245,12 @@ struct BleLogFetch {
   uint8_t  pendingBuf[500];
   uint16_t pendingLen;  // 0 = no chunk pending
   bool     endPending;  // 0-byte end marker not yet sent
+  unsigned long lastTryMs;  // millis() of last notify attempt — throttles retries
   // Diagnostics — reset on each new request
   uint32_t notifyOk;
   uint32_t notifyDrop;
   uint32_t bytesSent;
-} bleLogFetch = {false, 0, 0, 0, {}, {}, 0, false, 0, 0, 0};
+} bleLogFetch = {false, 0, 0, 0, {}, {}, 0, false, 0, 0, 0, 0};
 
 // Forward declaration — defined below, used in dispatchCmdTx
 static bool BlockingReadyWait();
@@ -731,7 +732,9 @@ class BleLogFetchCallbacks : public NimBLECharacteristicCallbacks {
     uint32_t endRec = startRec + count;
     if (endRec > newest) endRec = newest;
 
-    bleLogFetch.active = true;
+    // Disable in-flight fetch so loopTask can't observe a half-built state while
+    // we re-init seq below.
+    bleLogFetch.active = false;
     bleLogFetch.startRec = startRec;
     bleLogFetch.endRec = endRec;
     bleLogFetch.currentRec = startRec;
@@ -741,9 +744,12 @@ class BleLogFetchCallbacks : public NimBLECharacteristicCallbacks {
     bleLogFetch.notifyOk = 0;
     bleLogFetch.notifyDrop = 0;
     bleLogFetch.bytesSent = 0;
+    bleLogFetch.lastTryMs = 0;
 
-    Serial.printf("[BLEFetch] BLE fetch: %lu-%lu (active=true)\n",
+    Serial.printf("[BLEFetch] BLE fetch: %lu-%lu — going active\n",
       (unsigned long)startRec, (unsigned long)endRec);
+    // Set active LAST so loopTask sees a fully-initialized state.
+    bleLogFetch.active = true;
   }
 };
 
@@ -762,15 +768,23 @@ class BleOtaCallbacks : public NimBLECharacteristicCallbacks {
 void handleBleLogFetch() {
   if (!bleLogFetch.active || !bleClientConnected || !bleLogFetchChar) return;
 
+  // Retry throttle: BLE host queue drains roughly every conn-interval (~6-30ms).
+  // Spinning here every loop iteration burns CPU and starves async_tcp/BLE host.
+  unsigned long nowMs = millis();
+  if ((bleLogFetch.pendingLen > 0 || bleLogFetch.endPending)
+      && (nowMs - bleLogFetch.lastTryMs) < 4) {
+    return;
+  }
+  bleLogFetch.lastTryMs = nowMs;
+
   // Retry held chunk if previous notify() was dropped by congestion.
   if (bleLogFetch.pendingLen > 0) {
     if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, bleLogFetch.pendingLen, true)) {
       bleLogFetch.notifyDrop++;
-      if ((bleLogFetch.notifyDrop & 0x1F) == 1) {
+      if ((bleLogFetch.notifyDrop & 0x0F) == 1) {
         Serial.printf("[BLEFetch] drop retry pendingLen=%u dropTot=%lu\n",
           (unsigned)bleLogFetch.pendingLen, (unsigned long)bleLogFetch.notifyDrop);
       }
-      yield();
       return;
     }
     bleLogFetch.notifyOk++;
@@ -780,7 +794,7 @@ void handleBleLogFetch() {
 
   // Retry the end-of-fetch marker if previously dropped.
   if (bleLogFetch.endPending) {
-    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) { yield(); return; }
+    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) { return; }
     bleLogFetch.endPending = false;
     bleLogFetch.active = false;
     Serial.printf("[BLEFetch] done @%lu notifyOk=%lu drop=%lu bytes=%lu (endPending path)\n",
@@ -827,7 +841,6 @@ void handleBleLogFetch() {
       bleLogFetch.notifyDrop++;
       Serial.printf("[BLEFetch] notify dropped len=%u curRec=%lu\n",
         (unsigned)chunkPos, (unsigned long)bleLogFetch.currentRec);
-      yield();
     } else {
       bleLogFetch.notifyOk++;
       bleLogFetch.bytesSent += chunkPos;

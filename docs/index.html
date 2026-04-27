@@ -331,11 +331,13 @@
 <div id="dbg-bar" style="position:fixed;bottom:0;left:0;right:0;background:#111;border-top:1px solid #444;font-family:monospace;font-size:10px;z-index:9999">
   <div style="display:flex;align-items:center;padding:2px 4px;gap:4px;background:#222">
     <button id="dbg-toggle" style="font-size:10px;padding:2px 6px">Debug</button>
+    <button id="dbg-copy" style="font-size:10px;padding:2px 6px;display:none">Copy</button>
     <button id="dbg-clear" style="font-size:10px;padding:2px 6px;display:none">Clr</button>
     <label style="color:#aaa;font-size:10px;display:none" id="dbg-pause-lbl"><input type="checkbox" id="dbg-pause" style="vertical-align:middle"> pause</label>
-    <span id="dbg-count" style="color:#888;flex:1"></span>
+    <span id="dbg-count" style="color:#888;flex:1;font-size:10px"></span>
+    <span id="dbg-copied" style="color:#8f8;font-size:10px;display:none">copied</span>
   </div>
-  <pre id="dbg-log" style="display:none;margin:0;padding:4px;max-height:40vh;overflow-y:auto;color:#ccc;background:#0a0a0a;white-space:pre-wrap;word-break:break-all"></pre>
+  <pre id="dbg-log" style="display:none;margin:0;padding:4px;height:50vh;overflow-y:scroll;-webkit-overflow-scrolling:touch;color:#ccc;background:#0a0a0a;white-space:pre-wrap;word-break:break-all;user-select:text;-webkit-user-select:text"></pre>
 </div>
 <script>
 (function(){
@@ -393,16 +395,31 @@
     if(r && r.stack) s += '\n' + r.stack;
     append('err', 'unhandledrejection: '+s);
   });
+  var copyBtn = document.getElementById('dbg-copy');
+  var copiedEl = document.getElementById('dbg-copied');
   toggleBtn.addEventListener('click', function(){
     var open = logEl.style.display==='none';
     logEl.style.display = open ? 'block' : 'none';
     clearBtn.style.display = open ? 'inline-block' : 'none';
+    copyBtn.style.display = open ? 'inline-block' : 'none';
     pauseLbl.style.display = open ? 'inline' : 'none';
     if(open){ logEl.textContent = lines.join('\n'); logEl.scrollTop = logEl.scrollHeight; }
   });
   clearBtn.addEventListener('click', function(){
     lines = []; counts={log:0,warn:0,err:0};
     logEl.textContent=''; countEl.textContent='';
+  });
+  copyBtn.addEventListener('click', function(){
+    var text = lines.join('\n');
+    function flash(){ copiedEl.style.display='inline'; setTimeout(function(){copiedEl.style.display='none';}, 1200); }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(flash, function(e){
+        // Fallback: select the pre so user can long-press copy
+        try{var r=document.createRange();r.selectNodeContents(logEl);var s=window.getSelection();s.removeAllRanges();s.addRange(r);}catch(_){}
+      });
+    } else {
+      try{var r=document.createRange();r.selectNodeContents(logEl);var s=window.getSelection();s.removeAllRanges();s.addRange(r);}catch(_){}
+    }
   });
   pauseCb.addEventListener('change', function(){ paused = pauseCb.checked; });
   console.log('[dbg] on-page console ready');

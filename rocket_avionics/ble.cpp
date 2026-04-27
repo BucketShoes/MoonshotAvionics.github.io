@@ -277,18 +277,21 @@ class BleFetchCB : public NimBLECharacteristicCallbacks {
     uint32_t endRec    = startRec + count;
     if (endRec > totalRecs) endRec = totalRecs;
 
+    // Disable in-flight fetch so loopTask can't observe a half-built state
+    // while we re-init the seq below. Set active LAST.
+    bleState.fetchActive     = false;
     bleState.fetchCurrentRec = startRec;
     bleState.fetchEndRec     = endRec;
-    bleState.fetchActive     = true;
     bleState.fetchPendingLen = 0;
     bleState.fetchEndPending = false;
-    // Initialise sequential cursor — one-time O(offset-in-chunk) seek, then O(1) per record
+    bleState.fetchLastTryMs  = 0;
     if (logStoreOk) {
       bleState.fetchSeq = logStore.seqReader(startRec, endRec);
     }
-
-    Serial.printf("BLE fetch: start=%lu end=%lu\n",
+    Serial.printf("BLE fetch: start=%lu end=%lu — going active\n",
       (unsigned long)startRec, (unsigned long)endRec);
+    // Set active LAST so loopTask sees a fully-initialized state.
+    bleState.fetchActive = true;
 
     BLE_CB_END();
   }
@@ -517,6 +520,14 @@ static void bleFetchOnePdu() {
     bleState.fetchActive = false;
     return;
   }
+
+  // Throttle retries — BLE host queue drains at conn-interval cadence (~6-30ms).
+  unsigned long nowMs = millis();
+  if ((bleState.fetchPendingLen > 0 || bleState.fetchEndPending)
+      && (nowMs - bleState.fetchLastTryMs) < 4) {
+    return;
+  }
+  bleState.fetchLastTryMs = nowMs;
 
   // Retry held PDU if previous notify() was dropped by congestion.
   if (bleState.fetchPendingLen > 0) {

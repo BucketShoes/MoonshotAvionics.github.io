@@ -39,7 +39,7 @@
 struct BleState {
   bool connected;
   bool telemSubscribed;
-  bool fetchActive;
+  volatile bool fetchActive;  // volatile: written by NimBLE task, read by loopTask
 
   uint32_t subIntervalUs;      // 0 = every loop; default BLE_DEFAULT_INTERVAL_US
   uint64_t subPageMask;        // bit N = include page type N (bits 1-13 default)
@@ -64,6 +64,7 @@ struct BleState {
   uint8_t  fetchPendingBuf[BLE_LOGFETCH_MAX_PDU];
   uint16_t fetchPendingLen;     // 0 = no chunk pending
   bool     fetchEndPending;     // 0-byte end marker not yet sent
+  unsigned long fetchLastTryMs; // millis() of last notify attempt — throttles retries
 
   uint8_t currentTxPhy;        // 1=1M 2=2M 3=Coded (for serial debug / status)
 
