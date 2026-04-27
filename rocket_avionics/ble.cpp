@@ -280,6 +280,8 @@ class BleFetchCB : public NimBLECharacteristicCallbacks {
     bleState.fetchCurrentRec = startRec;
     bleState.fetchEndRec     = endRec;
     bleState.fetchActive     = true;
+    bleState.fetchPendingLen = 0;
+    bleState.fetchEndPending = false;
     // Initialise sequential cursor — one-time O(offset-in-chunk) seek, then O(1) per record
     if (logStoreOk) {
       bleState.fetchSeq = logStore.seqReader(startRec, endRec);
@@ -516,31 +518,47 @@ static void bleFetchOnePdu() {
     return;
   }
 
-  // End of range — or cursor became invalid (e.g. hit erased marker)
-  if (!bleState.fetchSeq.hasMore()) {
-    pFetchChar->notify((uint8_t*)"", 0);
+  // Retry held PDU if previous notify() was dropped by congestion.
+  if (bleState.fetchPendingLen > 0) {
+    if (!pFetchChar->notify(bleState.fetchPendingBuf, bleState.fetchPendingLen)) return;
+    bleState.fetchPendingLen = 0;
+  }
+
+  // Retry the end-of-fetch marker if previously dropped.
+  if (bleState.fetchEndPending) {
+    if (!pFetchChar->notify((uint8_t*)"", 0)) return;
+    bleState.fetchEndPending = false;
     bleState.fetchActive = false;
     Serial.println("BLE fetch: done");
     return;
   }
 
-  // Build one PDU using the sequential cursor — O(1) per record.
+  // End of range — or cursor became invalid (e.g. hit erased marker)
+  if (!bleState.fetchSeq.hasMore()) {
+    if (!pFetchChar->notify((uint8_t*)"", 0)) {
+      bleState.fetchEndPending = true;
+      return;
+    }
+    bleState.fetchActive = false;
+    Serial.println("BLE fetch: done");
+    return;
+  }
+
+  // Build directly into pendingBuf so we can retransmit on congestion.
   // Format: [recNum u32 LE][len u8][snr i8][ts u32 LE][payload: len bytes]
-  // (same as base station log fetch so JS uses identical parsing)
-  uint8_t pdu[BLE_LOGFETCH_MAX_PDU];
   uint16_t pduLen = 0;
+  uint8_t* pdu = bleState.fetchPendingBuf;
 
   uint8_t recBuf[LOG_MAX_PAYLOAD];
   int8_t  snr;
   uint32_t ts;
 
   while (bleState.fetchSeq.hasMore()) {
-    // Stop filling if worst-case next record wouldn't fit
     if (pduLen + 10 + LOG_MAX_PAYLOAD > BLE_LOGFETCH_MAX_PDU) break;
 
     uint32_t recNum = bleState.fetchSeq.currentRec();
     int rLen = bleState.fetchSeq.readNext(recBuf, sizeof(recBuf), &snr, &ts);
-    if (rLen < 0) break;  // hit invalid record — cursor invalid, end marker sent next call
+    if (rLen < 0) break;
 
     pdu[pduLen + 0] = (uint8_t)(recNum);
     pdu[pduLen + 1] = (uint8_t)(recNum >> 8);
@@ -554,12 +572,13 @@ static void bleFetchOnePdu() {
     pdu[pduLen + 9] = (uint8_t)(ts >> 24);
     memcpy(pdu + pduLen + 10, recBuf, rLen);
     pduLen += 10 + (uint16_t)rLen;
+    bleState.fetchCurrentRec = bleState.fetchSeq.currentRec();
   }
 
   if (pduLen > 0) {
-    pFetchChar->notify(pdu, pduLen);
-    // On congestion NimBLE drops the notify; the JS will see missing records
-    // (gaps in recNum). Acceptable for post-flight fetch — no retry buffer needed.
+    if (!pFetchChar->notify(pdu, pduLen)) {
+      bleState.fetchPendingLen = pduLen;  // hold for retry
+    }
   }
 }
 

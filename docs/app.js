@@ -618,6 +618,7 @@ function initCharts() {
           document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
           rktFetchDone = false;
           rktFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
+            if (!ok) { rktDone(); return; }  // timeout/abort — stop instead of skipping ahead
             cursor = start;
             fetchIntermediateUpdate(cursor);
             if (cursor > 0 && !fetchAbort) rktPage(); else rktDone();
@@ -658,6 +659,7 @@ function initCharts() {
           }
           document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
           bleFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
+            if (!ok) { bleDone(); return; }  // timeout/abort — stop instead of skipping ahead
             cursor = start;
             fetchIntermediateUpdate(cursor);
             if (cursor > 0 && !fetchAbort) blePage(); else bleDone();

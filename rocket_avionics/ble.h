@@ -59,6 +59,11 @@ struct BleState {
   uint32_t fetchCurrentRec;
   uint32_t fetchEndRec;
   LogStore::SeqReader fetchSeq;  // sequential cursor — avoids O(N²) re-scan per record
+  // Flow control: hold last built PDU until notify() succeeds — prevents
+  // dropped records when the BLE host queue is full.
+  uint8_t  fetchPendingBuf[BLE_LOGFETCH_MAX_PDU];
+  uint16_t fetchPendingLen;     // 0 = no chunk pending
+  bool     fetchEndPending;     // 0-byte end marker not yet sent
 
   uint8_t currentTxPhy;        // 1=1M 2=2M 3=Coded (for serial debug / status)
 

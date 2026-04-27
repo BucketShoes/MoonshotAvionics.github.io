@@ -239,7 +239,13 @@ struct BleLogFetch {
   uint32_t endRec;      // exclusive
   uint32_t currentRec;
   LogStore::SeqReader seq;
-} bleLogFetch = {false, 0, 0, 0, {}};
+  // Flow control: hold last built chunk until notify() succeeds. If notify
+  // returns false (host queue full) we retry the same bytes next loop instead
+  // of advancing the cursor — prevents holes in the fetched range.
+  uint8_t  pendingBuf[500];
+  uint16_t pendingLen;  // 0 = no chunk pending
+  bool     endPending;  // 0-byte end marker not yet sent
+} bleLogFetch = {false, 0, 0, 0, {}, {}, 0, false};
 
 // Forward declaration — defined below, used in dispatchCmdTx
 static bool BlockingReadyWait();
@@ -717,6 +723,8 @@ class BleLogFetchCallbacks : public NimBLECharacteristicCallbacks {
     bleLogFetch.endRec = endRec;
     bleLogFetch.currentRec = startRec;
     bleLogFetch.seq = logStore.seqReader(startRec, endRec);
+    bleLogFetch.pendingLen = 0;
+    bleLogFetch.endPending = false;
 
     Serial.print("BLE fetch: "); Serial.print(startRec);
     Serial.print("-"); Serial.println(endRec);
@@ -738,34 +746,54 @@ class BleOtaCallbacks : public NimBLECharacteristicCallbacks {
 void handleBleLogFetch() {
   if (!bleLogFetch.active || !bleClientConnected || !bleLogFetchChar) return;
 
-  if (!bleLogFetch.seq.hasMore()) {
-    bleLogFetchChar->notify((uint8_t*)"", 0, true);
+  // Retry held chunk if previous notify() was dropped by congestion.
+  if (bleLogFetch.pendingLen > 0) {
+    if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, bleLogFetch.pendingLen, true)) return;
+    bleLogFetch.pendingLen = 0;
+  }
+
+  // Retry the end-of-fetch marker if previously dropped.
+  if (bleLogFetch.endPending) {
+    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) return;
+    bleLogFetch.endPending = false;
     bleLogFetch.active = false;
     Serial.print("BLE fetch done @"); Serial.println(bleLogFetch.currentRec);
     return;
   }
 
-  uint8_t chunkBuf[500];
-  size_t chunkPos = 0;
+  if (!bleLogFetch.seq.hasMore()) {
+    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) {
+      bleLogFetch.endPending = true;
+      return;
+    }
+    bleLogFetch.active = false;
+    Serial.print("BLE fetch done @"); Serial.println(bleLogFetch.currentRec);
+    return;
+  }
+
+  // Build a chunk directly into pendingBuf so we can retransmit on congestion.
+  uint16_t chunkPos = 0;
   uint8_t recBuf[LOG_MAX_PAYLOAD];
   int8_t snr;
   uint32_t ts;
 
-  while (bleLogFetch.seq.hasMore() && chunkPos + 10 + LOG_MAX_PAYLOAD <= sizeof(chunkBuf)) {
+  while (bleLogFetch.seq.hasMore() && chunkPos + 10 + LOG_MAX_PAYLOAD <= sizeof(bleLogFetch.pendingBuf)) {
     uint32_t rn = bleLogFetch.seq.currentRec();
     int pLen = bleLogFetch.seq.readNext(recBuf, sizeof(recBuf), &snr, &ts);
     if (pLen < 0) break;
 
-    memcpy(chunkBuf + chunkPos, &rn, 4); chunkPos += 4;
-    chunkBuf[chunkPos++] = (uint8_t)pLen;
-    chunkBuf[chunkPos++] = (uint8_t)snr;
-    memcpy(chunkBuf + chunkPos, &ts, 4); chunkPos += 4;
-    memcpy(chunkBuf + chunkPos, recBuf, pLen); chunkPos += pLen;
+    memcpy(bleLogFetch.pendingBuf + chunkPos, &rn, 4); chunkPos += 4;
+    bleLogFetch.pendingBuf[chunkPos++] = (uint8_t)pLen;
+    bleLogFetch.pendingBuf[chunkPos++] = (uint8_t)snr;
+    memcpy(bleLogFetch.pendingBuf + chunkPos, &ts, 4); chunkPos += 4;
+    memcpy(bleLogFetch.pendingBuf + chunkPos, recBuf, pLen); chunkPos += pLen;
     bleLogFetch.currentRec = bleLogFetch.seq.currentRec();
   }
 
   if (chunkPos > 0) {
-    bleLogFetchChar->notify(chunkBuf, chunkPos, true);
+    if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, chunkPos, true)) {
+      bleLogFetch.pendingLen = chunkPos;  // hold for retry
+    }
   }
 }
 
