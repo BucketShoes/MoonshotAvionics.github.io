@@ -222,9 +222,10 @@ struct SlotConfig {
 #define BLE_CONNSET_PHY       0x03   // [phy u8] 0=1M 1=2M 2=Coded-S2 3=Coded-S8
 
 // Max BLE PDU payload for log fetch in bytes. 517 MTU - 3 ATT header - 12 LL overhead = ~502.
-// Using 502 allows 2 LL segments; 517 would spill into a 3rd.
-// NOTE: for thrust curve telem the real ATT limit (517) applies — use 517 directly there.
-#define BLE_LOGFETCH_MAX_PDU   502
+// ATT MTU 517 - 3-byte ATT header = 514 max notify value. Bigger ATT PDUs
+// mean fewer characteristicvaluechanged events on the JS side (which is the
+// real bottleneck). Extra LL fragmentation on air is ~free.
+#define BLE_LOGFETCH_MAX_PDU   514
 
 // Advertising interval in 0.625ms units. 1600 = 1000ms.
 #define BLE_ADV_INTERVAL       1600

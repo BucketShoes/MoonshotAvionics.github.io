@@ -260,14 +260,15 @@ class BleConnSetCB : public NimBLECharacteristicCallbacks {
 class BleFetchCB : public NimBLECharacteristicCallbacks {
   // Write: [startRec u32][count u16]
   void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
-    Serial.println("BLE fetch write start");
     BLE_CB_START();
 
     NimBLEAttValue val = c->getValue();
     const uint8_t* data = val.data();
     size_t len = val.size();
+    Serial.printf("[BLEFetch] onWrite size=%u logStoreOk=%d active=%d\n",
+      (unsigned)len, logStoreOk?1:0, bleState.fetchActive?1:0);
 
-    if (len < 6) { BLE_CB_END(); return; }
+    if (len < 6) { Serial.println("[BLEFetch] onWrite ignored (size<6)"); BLE_CB_END(); return; }
 
     uint32_t startRec = (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
                         ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
@@ -276,6 +277,8 @@ class BleFetchCB : public NimBLECharacteristicCallbacks {
     uint32_t totalRecs = logStoreOk ? logStore.getRecordCounter() : 0;
     uint32_t endRec    = startRec + count;
     if (endRec > totalRecs) endRec = totalRecs;
+    Serial.printf("[BLEFetch] req start=%lu count=%u | totalRecs=%lu endRec=%lu\n",
+      (unsigned long)startRec, (unsigned)count, (unsigned long)totalRecs, (unsigned long)endRec);
 
     // Disable in-flight fetch so loopTask can't observe a half-built state
     // while we re-init the seq below. Set active LAST.
@@ -284,11 +287,13 @@ class BleFetchCB : public NimBLECharacteristicCallbacks {
     bleState.fetchEndRec     = endRec;
     bleState.fetchPendingLen = 0;
     bleState.fetchEndPending = false;
-    bleState.fetchLastTryMs  = 0;
+    rktFetchNotifyOk = 0;
+    rktFetchNotifyDrop = 0;
+    rktFetchBytesSent = 0;
     if (logStoreOk) {
       bleState.fetchSeq = logStore.seqReader(startRec, endRec);
     }
-    Serial.printf("BLE fetch: start=%lu end=%lu — going active\n",
+    Serial.printf("[BLEFetch] BLE fetch: %lu-%lu — going active\n",
       (unsigned long)startRec, (unsigned long)endRec);
     // Set active LAST so loopTask sees a fully-initialized state.
     bleState.fetchActive = true;
@@ -514,6 +519,9 @@ static void bleDrainOnePdu() {
 
 // ===================== LOG FETCH DRAIN =====================
 
+// Per-fetch diagnostics (rocket-side) — reset on each new request via onWrite.
+static uint32_t rktFetchNotifyOk = 0, rktFetchNotifyDrop = 0, rktFetchBytesSent = 0;
+
 static void bleFetchOnePdu() {
   if (!bleState.fetchActive || !pFetchChar) return;
   if (!logStoreOk) {
@@ -521,27 +529,26 @@ static void bleFetchOnePdu() {
     return;
   }
 
-  // Throttle retries — BLE host queue drains at conn-interval cadence (~6-30ms).
-  //TODO: WTF: what? why wopuld we want to wait 4ms if it might be due in 1ms... we need to handle hundreds of packets per second before even trying and waiting 4ms will impact overall throughput.. also, it drains miltuple pdu's per interval... why was this added?
-  unsigned long nowMs = millis();
-  if ((bleState.fetchPendingLen > 0 || bleState.fetchEndPending)
-      && (nowMs - bleState.fetchLastTryMs) < 4) {
-    return;
-  }
-  bleState.fetchLastTryMs = nowMs;
-
-  // Retry held PDU if previous notify() was dropped by congestion.
+  // Flow control is the notify() return value, not a timer.
   if (bleState.fetchPendingLen > 0) {
-    if (!pFetchChar->notify(bleState.fetchPendingBuf, bleState.fetchPendingLen)) return;
+    if (!pFetchChar->notify(bleState.fetchPendingBuf, bleState.fetchPendingLen)) {
+      rktFetchNotifyDrop++;
+      yield();
+      return;
+    }
+    rktFetchNotifyOk++;
+    rktFetchBytesSent += bleState.fetchPendingLen;
     bleState.fetchPendingLen = 0;
   }
 
   // Retry the end-of-fetch marker if previously dropped.
   if (bleState.fetchEndPending) {
-    if (!pFetchChar->notify((uint8_t*)"", 0)) return;
+    if (!pFetchChar->notify((uint8_t*)"", 0)) { yield(); return; }
     bleState.fetchEndPending = false;
     bleState.fetchActive = false;
-    Serial.println("BLE fetch: done");
+    Serial.printf("[BLEFetch] done @%lu notifyOk=%lu drop=%lu bytes=%lu (endPending path)\n",
+      (unsigned long)bleState.fetchCurrentRec, (unsigned long)rktFetchNotifyOk,
+      (unsigned long)rktFetchNotifyDrop, (unsigned long)rktFetchBytesSent);
     return;
   }
 
@@ -549,10 +556,13 @@ static void bleFetchOnePdu() {
   if (!bleState.fetchSeq.hasMore()) {
     if (!pFetchChar->notify((uint8_t*)"", 0)) {
       bleState.fetchEndPending = true;
+      Serial.println("[BLEFetch] end marker dropped — will retry");
       return;
     }
     bleState.fetchActive = false;
-    Serial.println("BLE fetch: done");
+    Serial.printf("[BLEFetch] done @%lu notifyOk=%lu drop=%lu bytes=%lu\n",
+      (unsigned long)bleState.fetchCurrentRec, (unsigned long)rktFetchNotifyOk,
+      (unsigned long)rktFetchNotifyDrop, (unsigned long)rktFetchBytesSent);
     return;
   }
 
@@ -590,6 +600,11 @@ static void bleFetchOnePdu() {
   if (pduLen > 0) {
     if (!pFetchChar->notify(pdu, pduLen)) {
       bleState.fetchPendingLen = pduLen;  // hold for retry
+      rktFetchNotifyDrop++;
+      yield();
+    } else {
+      rktFetchNotifyOk++;
+      rktFetchBytesSent += pduLen;
     }
   }
 }

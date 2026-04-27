@@ -64,7 +64,6 @@ struct BleState {
   uint8_t  fetchPendingBuf[BLE_LOGFETCH_MAX_PDU];
   uint16_t fetchPendingLen;     // 0 = no chunk pending
   bool     fetchEndPending;     // 0-byte end marker not yet sent
-  unsigned long fetchLastTryMs; // millis() of last notify attempt — throttles retries
 
   uint8_t currentTxPhy;        // 1=1M 2=2M 3=Coded (for serial debug / status)
 
