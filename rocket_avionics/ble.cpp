@@ -522,6 +522,7 @@ static void bleFetchOnePdu() {
   }
 
   // Throttle retries — BLE host queue drains at conn-interval cadence (~6-30ms).
+  //TODO: WTF: what? why wopuld we want to wait 4ms if it might be due in 1ms... we need to handle hundreds of packets per second before even trying and waiting 4ms will impact overall throughput.. also, it drains miltuple pdu's per interval... why was this added?
   unsigned long nowMs = millis();
   if ((bleState.fetchPendingLen > 0 || bleState.fetchEndPending)
       && (nowMs - bleState.fetchLastTryMs) < 4) {
