@@ -748,13 +748,16 @@ void handleBleLogFetch() {
 
   // Retry held chunk if previous notify() was dropped by congestion.
   if (bleLogFetch.pendingLen > 0) {
-    if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, bleLogFetch.pendingLen, true)) return;
+    if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, bleLogFetch.pendingLen, true)) {
+      yield();  // let async_tcp / BLE host run while we wait for queue to drain
+      return;
+    }
     bleLogFetch.pendingLen = 0;
   }
 
   // Retry the end-of-fetch marker if previously dropped.
   if (bleLogFetch.endPending) {
-    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) return;
+    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) { yield(); return; }
     bleLogFetch.endPending = false;
     bleLogFetch.active = false;
     Serial.print("BLE fetch done @"); Serial.println(bleLogFetch.currentRec);
@@ -793,6 +796,7 @@ void handleBleLogFetch() {
   if (chunkPos > 0) {
     if (!bleLogFetchChar->notify(bleLogFetch.pendingBuf, chunkPos, true)) {
       bleLogFetch.pendingLen = chunkPos;  // hold for retry
+      yield();  // let async_tcp / BLE host run
     }
   }
 }
