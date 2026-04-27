@@ -27,6 +27,9 @@ static NimBLECharacteristic* pFetchChar   = nullptr;
 static NimBLECharacteristic* pOtaChar     = nullptr;
 static NimBLEAdvertising*    pAdvert      = nullptr;
 
+// Per-fetch diagnostics (rocket-side) — reset on each new request via onWrite.
+static uint32_t rktFetchNotifyOk = 0, rktFetchNotifyDrop = 0, rktFetchBytesSent = 0;
+
 // ===================== CALLBACK TIMING HELPER =====================
 // Use in every callback: record start time, do work, accumulate on exit.
 
@@ -519,8 +522,6 @@ static void bleDrainOnePdu() {
 
 // ===================== LOG FETCH DRAIN =====================
 
-// Per-fetch diagnostics (rocket-side) — reset on each new request via onWrite.
-static uint32_t rktFetchNotifyOk = 0, rktFetchNotifyDrop = 0, rktFetchBytesSent = 0;
 
 static void bleFetchOnePdu() {
   if (!bleState.fetchActive || !pFetchChar) return;
