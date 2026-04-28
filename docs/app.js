@@ -424,7 +424,7 @@ function initCharts() {
     while(el.children.length>1000)el.removeChild(hist?el.firstChild:el.lastChild);
   }
   function onLivePkt(buf,snr,rssi,recNum){livePktCount++;lastPktMs=Date.now();document.getElementById('val-cnt').textContent=livePktCount;if(recNum>=0)document.getElementById('val-logrec').textContent=recNum;setSNR(snr);var bootMs=serverUptimeMs+(Date.now()-serverSyncClockMs);var rec={recNum:recNum,snr:snr,rssi:rssi,ts:bootMs,payload:buf,type:'pkt'};baseLiveRecs.push(rec);if(baseLiveRecs.length>MAX_PTS)baseLiveRecs.shift();showPkt(buf,snr,rssi,bootMs,viewIdx===-1&&liveSource==='base',true);if(viewIdx===-1&&liveSource==='base'){addLogRec(rec,false)}mapAddPt(buf,snr,rssi,recNum);if(new Uint8Array(buf)[0]===0xBB)onLRPkt(buf,snr,rssi,recNum);}
-  function onLRPkt(buf,snr,rssi,recNum){var p=decodeLR(buf);if(!p)return;p.wallTime=Date.now();p.snr=snr;p.rssi=rssi;lrHistory.push(p);if(lrHistory.length>LR_MAX_PTS)lrHistory.shift();updateLRCard(true);mapScheduleDraw()}
+  function onLRPkt(buf,snr,rssi,recNum){var p=decodeLR(buf);if(!p)return;p.wallTime=Date.now();p.snr=snr;p.rssi=rssi;lrHistory.push(p);if(lrHistory.length>LR_MAX_PTS)lrHistory.shift();if(viewIdx===-1)updateLRCard(true);mapScheduleDraw()}
   function updateLRCard(isLive){if(!lrHistory.length)return;var sumLat=0,sumLon=0,cntL=0,cntS=0,validCnt=0;for(var i=0;i<lrHistory.length;i++){var lf=lrHistory[i].latFrac,ln=lrHistory[i].lonFrac;if(lf<2000&&ln<2000){sumLat+=lf;sumLon+=ln;validCnt++}if(lrHistory[i].lowBatt)cntL++;if(lrHistory[i].reserved)cntS++}var n=lrHistory.length;var pctL=String(Math.round(cntL/n*100)).padStart(2,'0');var pctS=String(Math.round(cntS/n*100)).padStart(2,'0');function fmtFrac(v){return'x.'+(v/2000).toFixed(6).slice(2)}var mainTxt=validCnt>0?(fmtFrac(sumLat/validCnt)+','+fmtFrac(sumLon/validCnt)+' L'+pctL+' S'+pctS):'no valid';setV('lr',mainTxt,isLive);if(validCnt>0&&fullGpsLat!==null){var mapLat=Math.trunc(fullGpsLat)+(sumLat/validCnt/2000)*Math.sign(fullGpsLat);var mapLon=Math.trunc(fullGpsLon)+(sumLon/validCnt/2000)*Math.sign(fullGpsLon);document.getElementById('lr-map').href='https://www.google.com/maps?q='+mapLat.toFixed(6)+','+mapLon.toFixed(6);document.getElementById('lr-lnk').style.display='flex'}else{document.getElementById('lr-lnk').style.display='none'}var lines='';var lastN=Math.min(10,lrHistory.length);for(var j=lrHistory.length-1;j>=lrHistory.length-lastN;j--){var e=lrHistory[j];var lf=e.latFrac,ln=e.lonFrac;var lFlag=e.lowBatt?'L':'-';var sFlag=e.reserved?'S':'-';var txt=lf>=2000||ln>=2000?('err:'+lf+','+ln+' '+lFlag+sFlag):fmtFrac(lf)+','+fmtFrac(ln)+' '+lFlag+sFlag;lines+='<span class="df"><span class="dv">'+txt+'</span></span>'}var det=document.getElementById('det-lr');if(det)det.innerHTML=lines}
 
   // =============================================================
@@ -591,6 +591,75 @@ function initCharts() {
   // Fetched sessions split on timestamp resets (reboot boundaries).
   // All record types included (0xAF telem packets and raw data pages).
   // The LoRa download session is appended as a single session if non-empty.
+  // Shared parser for log-fetch PDUs — same wire format used by BLE notifies AND
+  // the save/load roundtrip so any parser fix flows through both paths.
+  // Wire: [recNum u32 LE][len u8][snr i8][ts u32 LE][payload: len bytes] ... repeat
+  // End marker: a single PDU of length 0, or length 1 with byte 0xFF.
+  function parseFetchPdu(dv){
+    var len=dv.byteLength;
+    if(len===0||(len===1&&dv.getUint8(0)===0xFF))return{end:true,parsed:0,dupes:0,lowestRn:-1,bytes:0};
+    var off=0,parsed=0,dupes=0,lowestRn=-1;
+    while(off+10<=len){
+      var rn=dv.getUint32(off,true);off+=4;
+      var pl=dv.getUint8(off);off++;
+      var sn=dv.getInt8(off);off++;
+      var ts=dv.getUint32(off,true);off+=4;
+      if(pl===0||off+pl>len)break;
+      var payload=dv.buffer.slice(dv.byteOffset+off,dv.byteOffset+off+pl);
+      off+=pl;
+      if(!allFetched[rn]){
+        var b0=payload.byteLength>0?new Uint8Array(payload)[0]:0;
+        allFetched[rn]={recNum:rn,snr:sn/4,ts:ts,payload:payload,type:b0===0xAF?'pkt':'logpage'};
+        if(rn<fetchedLowest)fetchedLowest=rn;
+        if(rn>fetchedHighest)fetchedHighest=rn;
+        parsed++;
+      }else dupes++;
+      if(lowestRn<0||rn<lowestRn)lowestRn=rn;
+    }
+    return{end:false,parsed:parsed,dupes:dupes,lowestRn:lowestRn,bytes:len};
+  }
+
+  // Serialize allFetched into one wire-format byte stream.
+  function serializeFetched(){
+    var keys=Object.keys(allFetched).map(function(k){return parseInt(k,10);}).sort(function(a,b){return a-b;});
+    var total=0;
+    for(var i=0;i<keys.length;i++){total+=10+allFetched[keys[i]].payload.byteLength;}
+    var out=new Uint8Array(total);
+    var dv=new DataView(out.buffer);
+    var off=0;
+    for(var i=0;i<keys.length;i++){
+      var r=allFetched[keys[i]];
+      dv.setUint32(off,r.recNum,true);off+=4;
+      dv.setUint8(off,r.payload.byteLength);off++;
+      dv.setInt8(off,Math.round((r.snr||0)*4));off++;
+      dv.setUint32(off,r.ts,true);off+=4;
+      out.set(new Uint8Array(r.payload),off);
+      off+=r.payload.byteLength;
+    }
+    return out;
+  }
+
+  function downloadFetched(){
+    var u8=serializeFetched();
+    var blob=new Blob([u8],{type:'application/octet-stream'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    var d=new Date();
+    var pad=function(n){return n<10?'0'+n:''+n;};
+    a.download='moonshot-fetch-'+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'-'+pad(d.getHours())+pad(d.getMinutes())+'.bin';
+    a.click();
+    setTimeout(function(){URL.revokeObjectURL(a.href);},1000);
+  }
+
+  function loadFetchedFromBytes(buf){
+    var dv=new DataView(buf);
+    var r=parseFetchPdu(dv);
+    console.log('[load] parsed='+r.parsed+' dupes='+r.dupes+' bytes='+r.bytes);
+    rebuildSessions();
+    updateNav();
+    if(sessions.length>0)showView(sessions.length-1);
+  }
+
   function rebuildSessions(){
     var recs=[];
     for(var k in allFetched)recs.push(allFetched[k]);
@@ -932,42 +1001,14 @@ function initCharts() {
       await bleLogFetchChar_.startNotifications();
       bleLogFetchChar_.addEventListener('characteristicvaluechanged', function(ev) {
        try {
-        // Use the DataView directly — its byteLength is the actual notification length.
-        // ev.target.value.buffer can be a larger underlying ArrayBuffer with padding.
         var dv = ev.target.value;
-        var len = dv.byteLength;
         bleFetchLastNotifyMs = Date.now();
-        if (len === 0 || (len === 1 && dv.getUint8(0) === 0xFF)) {
-          if (FETCH_VERBOSE) console.log('[ble fetch] end marker');
-          bleFetchDone = true;
-          return;
-        }
-        fetchSpeedBytes += len;
-        var off = 0;
-        var parsed = 0, dupes = 0;
-        while (off + 10 <= len) {
-          var rn = dv.getUint32(off, true); off += 4;
-          var pl = dv.getUint8(off); off++;
-          var sn = dv.getInt8(off); off++;
-          var ts = dv.getUint32(off, true); off += 4;
-          if (pl === 0 || off + pl > len) break;
-          // Slice via byteOffset into the underlying buffer to get just this record's bytes
-          var payload = dv.buffer.slice(dv.byteOffset + off, dv.byteOffset + off + pl);
-          off += pl;
-          if (!allFetched[rn]) {
-            var b0 = payload.byteLength > 0 ? new Uint8Array(payload)[0] : 0;
-            allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload, type: b0 === 0xAF ? 'pkt' : 'logpage' };
-            if (rn < fetchedLowest) fetchedLowest = rn;
-            if (rn > fetchedHighest) fetchedHighest = rn;
-            if (bleFetchLowestRn < 0 || rn < bleFetchLowestRn) bleFetchLowestRn = rn;
-            fetchSpeedRecs++;
-            parsed++;
-          } else {
-            if (bleFetchLowestRn < 0 || rn < bleFetchLowestRn) bleFetchLowestRn = rn;
-            dupes++;
-          }
-        }
-        if (parsed === 0) console.log('[ble fetch] WARN no records parsed from ' + len + 'B (dupes=' + dupes + ')');
+        var r = parseFetchPdu(dv);
+        if (r.end) { if (FETCH_VERBOSE) console.log('[ble fetch] end marker'); bleFetchDone = true; return; }
+        fetchSpeedBytes += r.bytes;
+        fetchSpeedRecs += r.parsed;
+        if (r.lowestRn >= 0 && (bleFetchLowestRn < 0 || r.lowestRn < bleFetchLowestRn)) bleFetchLowestRn = r.lowestRn;
+        if (r.parsed === 0) console.log('[ble fetch] WARN no records parsed from ' + r.bytes + 'B (dupes=' + r.dupes + ')');
        } catch(e) {
          console.error('[ble fetch] handler exception: '+(e&&e.message?e.message:e)+(e&&e.stack?'\n'+e.stack:''));
        }
@@ -1305,38 +1346,13 @@ function initCharts() {
       rktFetchChar_.addEventListener('characteristicvaluechanged', function(ev) {
        try {
         var dv = ev.target.value;
-        var len = dv.byteLength;
         rktFetchLastNotifyMs = Date.now();
-        if (len === 0 || (len === 1 && dv.getUint8(0) === 0xFF)) {
-          if (FETCH_VERBOSE) console.log('[rkt fetch] end marker');
-          rktFetchDone = true;
-          return;
-        }
-        fetchSpeedBytes += len;
-        var off = 0;
-        var parsed = 0, dupes = 0;
-        while (off + 10 <= len) {
-          var rn = dv.getUint32(off, true); off += 4;
-          var pl = dv.getUint8(off); off++;
-          var sn = dv.getInt8(off); off++;
-          var ts = dv.getUint32(off, true); off += 4;
-          if (pl === 0 || off + pl > len) break;
-          var payload = dv.buffer.slice(dv.byteOffset + off, dv.byteOffset + off + pl);
-          off += pl;
-          if (!allFetched[rn]) {
-            var b0 = payload.byteLength > 0 ? new Uint8Array(payload)[0] : 0;
-            allFetched[rn] = { recNum: rn, snr: sn / 4, ts: ts, payload: payload, type: b0 === 0xAF ? 'pkt' : 'logpage' };
-            if (rn < fetchedLowest) fetchedLowest = rn;
-            if (rn > fetchedHighest) fetchedHighest = rn;
-            if (rktFetchLowestRn < 0 || rn < rktFetchLowestRn) rktFetchLowestRn = rn;
-            fetchSpeedRecs++;
-            parsed++;
-          } else {
-            if (rktFetchLowestRn < 0 || rn < rktFetchLowestRn) rktFetchLowestRn = rn;
-            dupes++;
-          }
-        }
-        if (parsed === 0) console.log('[rkt fetch] WARN no records parsed from ' + len + 'B (dupes=' + dupes + ')');
+        var r = parseFetchPdu(dv);
+        if (r.end) { if (FETCH_VERBOSE) console.log('[rkt fetch] end marker'); rktFetchDone = true; return; }
+        fetchSpeedBytes += r.bytes;
+        fetchSpeedRecs += r.parsed;
+        if (r.lowestRn >= 0 && (rktFetchLowestRn < 0 || r.lowestRn < rktFetchLowestRn)) rktFetchLowestRn = r.lowestRn;
+        if (r.parsed === 0) console.log('[rkt fetch] WARN no records parsed from ' + r.bytes + 'B (dupes=' + r.dupes + ')');
        } catch(e) {
          console.error('[rkt fetch] handler exception: '+(e&&e.message?e.message:e)+(e&&e.stack?'\n'+e.stack:''));
        }
@@ -2645,6 +2661,21 @@ function initCharts() {
     document.getElementById('btn-cdn').addEventListener('click', loadCDN);
     document.getElementById('btn-fetch').addEventListener('click', loadHistory);
     document.getElementById('btn-stop').addEventListener('click', function() { fetchAbort = true; });
+    document.getElementById('btn-fetch-panel').addEventListener('click', function() {
+      var p = document.getElementById('fetch-panel');
+      var open = p.style.display === 'none';
+      p.style.display = open ? 'block' : 'none';
+      this.textContent = (open ? '\u25BE' : '\u25B8') + ' Fetch & Sessions';
+    });
+    document.getElementById('btn-save-fetch').addEventListener('click', downloadFetched);
+    document.getElementById('btn-load-fetch').addEventListener('click', function(){ document.getElementById('file-load-fetch').click(); });
+    document.getElementById('file-load-fetch').addEventListener('change', function(ev){
+      var f = ev.target.files && ev.target.files[0]; if (!f) return;
+      var rd = new FileReader();
+      rd.onload = function(){ loadFetchedFromBytes(rd.result); };
+      rd.readAsArrayBuffer(f);
+      ev.target.value = '';
+    });
     document.getElementById('btn-prev').addEventListener('click', function() { fetchAutoNav=false; if(viewIdx>0)showView(viewIdx-1);else if(viewIdx===-1&&sessions.length)showView(sessions.length-1); });
     document.getElementById('btn-next').addEventListener('click', function() { fetchAutoNav=false; if(viewIdx>=0&&viewIdx<sessions.length-1)showView(viewIdx+1); });
     document.getElementById('btn-live-base').addEventListener('click', function() { liveSource='base'; showView(-1); });

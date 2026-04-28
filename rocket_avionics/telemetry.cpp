@@ -14,10 +14,11 @@
 // ===================== LOG PAGE CONFIG =====================
 //back reference index
 static const uint8_t LOG_PAGE_TYPE[] = {
-  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
+  PKT_TELEMETRY, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
 };
 
 LogPageConfig logPages[LOGI_COUNT] = {
+  { 1000000, 0, 0 },  // 0xAF telem header (fusion alt etc.)
   { 1000000, 0, 0 },  // GPS pos
   { 1000000, 0, 0 },  // Baro
   { 1000000, 0, 0 },  // Mag
@@ -493,6 +494,16 @@ void logDataPage(uint8_t pageType, const uint8_t* pageData, uint8_t pageDataLen)
 }
 
 void logPage(LogPageIdx idx) {
+  if (idx == LOGI_HEADER) {
+    // buildHeaderRecord writes [len=10][0xAF][...10 bytes...] = 11 bytes.
+    // Flash record stores raw payload (no len prefix), so skip the first byte.
+    uint8_t hdr[11];
+    size_t n = buildHeaderRecord(hdr, sizeof(hdr));
+    if (n >= 11 && logStoreOk) {
+      logStore.writeRecord(hdr + 1, 10, LOG_SNR_LOCAL, millis());
+    }
+    return;
+  }
   uint8_t buf[32];
   size_t pos = 0;
   uint8_t pageType = LOG_PAGE_TYPE[idx];

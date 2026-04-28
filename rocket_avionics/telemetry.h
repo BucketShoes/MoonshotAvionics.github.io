@@ -32,7 +32,8 @@ struct LogPageConfig {
 
 // Page indices for the config array (not the page type IDs themselves)
 enum LogPageIdx {
-  LOGI_GPS_POS = 0,   // 0x01
+  LOGI_HEADER = 0,    // 0xAF telemetry header (fusion alt, gps frac, state flags)
+  LOGI_GPS_POS,       // 0x01
   LOGI_BARO,          // 0x02
   LOGI_MAG,           // 0x03
   LOGI_ACCEL,         // 0x04

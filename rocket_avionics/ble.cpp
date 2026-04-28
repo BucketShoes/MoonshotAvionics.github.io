@@ -421,9 +421,11 @@ void initBLE() {
 // Captures all fresh pages into ovfBuf at once. Drains one PDU per loop.
 
 // Maps LOGI_* index to page type byte. Must match LOG_PAGE_TYPE in telemetry.cpp.
+// Index 0 is LOGI_HEADER (0xAF) — handled separately in bleCapture, skipped in the loops.
 static const uint8_t BLE_LOGI_TO_PAGE[LOGI_COUNT] = {
+  PKT_TELEMETRY,
   0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-  0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E
+  0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
 };
 
 static void bleCapture() {
@@ -451,6 +453,7 @@ static void bleCapture() {
 
   // Write each fresh page in the subscription mask (or forced thrust page)
   for (int i = 0; i < LOGI_COUNT; i++) {
+    if (i == LOGI_HEADER) continue;  // header already written above; pageType 0xAF is out of mask range
     uint8_t pageType = BLE_LOGI_TO_PAGE[i];
 
     // Thrust curve page can be forced regardless of subscription (coast entry send)
@@ -472,6 +475,7 @@ static void bleCapture() {
 
   // Clear FRESH_BLE for all subscribed pages
   for (int i = 0; i < LOGI_COUNT; i++) {
+    if (i == LOGI_HEADER) continue;  // pageType 0xAF would shift out of 64-bit mask
     uint8_t pageType = BLE_LOGI_TO_PAGE[i];
     if (bleState.subPageMask & (1ULL << pageType)) {
       logPages[i].freshMask &= ~FRESH_BLE;
