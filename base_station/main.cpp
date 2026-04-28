@@ -19,7 +19,7 @@
 #define VBAT_ADC_CTRL_PIN 2
 #define VBAT_MULTIPLIER   4.9f
 
-#define SERIAL_BAUD   115200
+#define SERIAL_BAUD   2000000
 #include "secrets.h"  // gitignored — copy secrets_example.h to secrets.h
 #define WIFI_CHANNEL  1
 
