@@ -380,7 +380,40 @@ function initCharts() {
 
   function getLiveRecs(){return liveSource==='rkt'?rktLiveRecs:baseLiveRecs}
   function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;var s=sessions[viewIdx];var partTag=(s.partTotal>1)?(' p'+(s.partIdx+1)+'/'+s.partTotal):'';var tsTag='';if(s.startUtcMs){var d=new Date(s.startUtcMs);tsTag=' '+d.toISOString().replace('T',' ').slice(0,19)+'Z';}info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+s.length+')'+partTag+tsTag}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
-  function showView(idx){viewIdx=idx;clearCharts();document.getElementById('log').innerHTML='';updateNav();var recs=idx===-1?getLiveRecs():sessions[idx];for(var i=0;i<recs.length;i++){var r=recs[i];showRecord(r,true,false);addLogRec(r,idx!==-1)}}
+  function showView(idx){viewIdx=idx;clearCharts();document.getElementById('log').innerHTML='';updateNav();renderSessList();var recs=idx===-1?getLiveRecs():sessions[idx];for(var i=0;i<recs.length;i++){var r=recs[i];showRecord(r,true,false);addLogRec(r,idx!==-1)}}
+
+  function fmtSessTime(ms){
+    if(!ms) return '(no time)';
+    var d=new Date(ms);
+    // Local time, ISO-ish: YYYY-MM-DD HH:MM:SS
+    var pad=function(n){return n<10?'0'+n:''+n;};
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+  }
+  function renderSessList(){
+    var el=document.getElementById('sess-list');
+    if(!el || el.style.display==='none') return;
+    var lines=[];
+    for(var i=0;i<sessions.length;i++){
+      var s=sessions[i];
+      var isDl=(s===dlSession);
+      var partTag=(s.partTotal>1)?(' p'+(s.partIdx+1)+'/'+s.partTotal):'';
+      var firstRec=(typeof s.firstRec==='number')?(' #'+s.firstRec):'';
+      var sel=(i===viewIdx)?' style="background:#234;"':'';
+      var label=(isDl?'[DL] ':'')+fmtSessTime(s.startUtcMs)+partTag+'  '+s.length+'rec'+firstRec;
+      lines.push('<div data-idx="'+i+'"'+sel+' style="cursor:pointer;padding:2px 4px;border-bottom:1px solid #222;">'+(i+1)+'. '+label+'</div>');
+    }
+    el.innerHTML=lines.join('');
+    var entries=el.querySelectorAll('[data-idx]');
+    entries.forEach(function(e){ e.addEventListener('click', function(){ showView(parseInt(e.getAttribute('data-idx'),10)); }); });
+  }
+  (function(){
+    var btn=document.getElementById('btn-sess-list');
+    if(btn) btn.addEventListener('click', function(){
+      var el=document.getElementById('sess-list');
+      el.style.display=(el.style.display==='none')?'block':'none';
+      renderSessList();
+    });
+  })();
   function addLogRec(rec,hist){
     var bytes=new Uint8Array(rec.payload);var hex=toHex(bytes);
     var el=document.getElementById('log');var e=document.createElement('div');e.className='le';
@@ -609,6 +642,7 @@ function initCharts() {
       }
     }
     if (dlSession.length > 0) sessions.push(dlSession);
+    renderSessList();
   }
   function updateFetchProgress(cursor) {
     var elapsed = (Date.now() - fetchSpeedStartMs) / 1000;
