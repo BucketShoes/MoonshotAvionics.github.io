@@ -544,7 +544,7 @@ static void bleFetchOnePdu() {
 
   // Retry the end-of-fetch marker if previously dropped.
   if (bleState.fetchEndPending) {
-    if (!pFetchChar->notify((uint8_t*)"", 0)) { yield(); return; }
+    if (!pFetchChar->notify((uint8_t*)"\xFF", 1)) { yield(); return; }
     bleState.fetchEndPending = false;
     bleState.fetchActive = false;
     Serial.printf("[BLEFetch] done @%lu notifyOk=%lu drop=%lu bytes=%lu (endPending path)\n",
@@ -555,7 +555,7 @@ static void bleFetchOnePdu() {
 
   // End of range — or cursor became invalid (e.g. hit erased marker)
   if (!bleState.fetchSeq.hasMore()) {
-    if (!pFetchChar->notify((uint8_t*)"", 0)) {
+    if (!pFetchChar->notify((uint8_t*)"\xFF", 1)) {
       bleState.fetchEndPending = true;
       Serial.println("[BLEFetch] end marker dropped — will retry");
       return;
@@ -606,11 +606,11 @@ static void bleFetchOnePdu() {
     } else {
       rktFetchNotifyOk++;
       rktFetchBytesSent += pduLen;
-      if ((rktFetchNotifyOk % 8) == 1) {
-        Serial.printf("[BLEFetch] notify ok #%lu len=%u curRec=%lu bytesTot=%lu\n",
-          (unsigned long)rktFetchNotifyOk, (unsigned)pduLen,
-          (unsigned long)bleState.fetchCurrentRec, (unsigned long)rktFetchBytesSent);
-      }
+#if BLE_FETCH_VERBOSE
+      Serial.printf("[BLEFetch] notify ok #%lu len=%u curRec=%lu bytesTot=%lu\n",
+        (unsigned long)rktFetchNotifyOk, (unsigned)pduLen,
+        (unsigned long)bleState.fetchCurrentRec, (unsigned long)rktFetchBytesSent);
+#endif
     }
   }
 }

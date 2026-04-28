@@ -25,6 +25,9 @@
 
 #define DEVICE_ID     157
 
+// Verbose per-PDU fetch logs. Disable when BLE log fetch is stable.
+#define BLE_FETCH_VERBOSE 1
+
 // ===================== TAGGED SERIAL =====================
 unsigned long bootMicros = 0;
 //TaggedSerial taggedSerial(&Serial0);
@@ -724,7 +727,7 @@ class BleLogFetchCallbacks : public NimBLECharacteristicCallbacks {
     if (startRec < oldest) startRec = oldest;
     if (startRec >= newest) {
       Serial.println("[BLEFetch] start >= newest — sending immediate end marker");
-      bool ok = chr->notify((uint8_t*)"", 0, true);
+      bool ok = chr->notify((uint8_t*)"\xFF", 1, true);
       Serial.printf("[BLEFetch] empty notify ok=%d\n", ok?1:0);
       return;
     }
@@ -782,7 +785,7 @@ void handleBleLogFetch() {
 
   // Retry the end-of-fetch marker if previously dropped.
   if (bleLogFetch.endPending) {
-    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) { yield(); return; }
+    if (!bleLogFetchChar->notify((uint8_t*)"\xFF", 1, true)) { yield(); return; }
     bleLogFetch.endPending = false;
     bleLogFetch.active = false;
     Serial.printf("[BLEFetch] done @%lu notifyOk=%lu drop=%lu bytes=%lu (endPending path)\n",
@@ -792,7 +795,7 @@ void handleBleLogFetch() {
   }
 
   if (!bleLogFetch.seq.hasMore()) {
-    if (!bleLogFetchChar->notify((uint8_t*)"", 0, true)) {
+    if (!bleLogFetchChar->notify((uint8_t*)"\xFF", 1, true)) {
       bleLogFetch.endPending = true;
       Serial.println("[BLEFetch] end marker dropped — will retry");
       return;
@@ -831,12 +834,11 @@ void handleBleLogFetch() {
     } else {
       bleLogFetch.notifyOk++;
       bleLogFetch.bytesSent += chunkPos;
-      // Periodic progress so we know data is flowing
-      if ((bleLogFetch.notifyOk % 8) == 1) {
-        Serial.printf("[BLEFetch] notify ok #%lu len=%u curRec=%lu bytesTot=%lu\n",
-          (unsigned long)bleLogFetch.notifyOk, (unsigned)chunkPos,
-          (unsigned long)bleLogFetch.currentRec, (unsigned long)bleLogFetch.bytesSent);
-      }
+#if BLE_FETCH_VERBOSE
+      Serial.printf("[BLEFetch] notify ok #%lu len=%u curRec=%lu bytesTot=%lu\n",
+        (unsigned long)bleLogFetch.notifyOk, (unsigned)chunkPos,
+        (unsigned long)bleLogFetch.currentRec, (unsigned long)bleLogFetch.bytesSent);
+#endif
     }
   } else {
     // hasMore() said true but built 0 bytes — readNext returned <0 immediately.

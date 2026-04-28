@@ -227,6 +227,10 @@ struct SlotConfig {
 // real bottleneck). Extra LL fragmentation on air is ~free.
 #define BLE_LOGFETCH_MAX_PDU   514
 
+// Verbose per-PDU fetch logs. Disable for flight (or any time you don't want
+// the serial spam). onWrite/done lines stay regardless.
+#define BLE_FETCH_VERBOSE      1
+
 // Advertising interval in 0.625ms units. 1600 = 1000ms.
 #define BLE_ADV_INTERVAL       1600
 

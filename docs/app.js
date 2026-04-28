@@ -155,6 +155,8 @@
   var dlSession = []; // LoRa download session — all 0xCA records accumulate here
   var fetchSpeedRecs = 0, fetchSpeedBytes = 0, fetchSpeedStartMs = 0;
   var fetchAutoNav = true; // auto-navigate to latest session after each batch
+  var FETCH_VERBOSE = true;       // gate per-notify/per-batch fetch logs (turn off when stable)
+  var SESSION_SPLIT_RECS = 10000; // split large sessions for display/charting performance
   var dlSpeedRecs = 0, dlSpeedBytes = 0, dlSpeedStartMs = 0;
   var PHASES = ['idle','pad_ready','boost','coast','apogee','drogue','main_deploy','descent','landed','ground_test','sleep','startup','12','13','14','error'];
   var LR_HISTORY_COUNT = 10;
@@ -377,7 +379,7 @@ function initCharts() {
   function showPkt(buf,snr,rssi,bootMs,toC,isLive){var p=decodeTelem(buf);if(!p)return;var ph=p.flags&0xF,arm=!!(p.flags&0x10),lok=p.latF<50000,aok=p.altM!==-32768;var ch1f=!!(p.flags&0x20),ch2f=!!(p.flags&0x40),ch3f=!!(p.flags&0x80),lowb=!!(p.flags&0x100),rsv=(p.flags>>9)&0x7F;var hdrParts=[];hdrParts.push('dev:'+p.dev);if(aok)hdrParts.push('alt:'+p.altM+'m');hdrParts.push('lat:'+fmtGpsFrac(p.latF)+' lon:'+fmtGpsFrac(p.lonF));hdrParts.push(PHASES[ph].toUpperCase());if(arm)hdrParts.push('ARM');if(ch1f)hdrParts.push('CH1');if(ch2f)hdrParts.push('CH2');if(ch3f)hdrParts.push('CH3');if(lowb)hdrParts.push('LOWBAT');setV('hdr',hdrParts.join(' '),isLive);updateDetail('hdr',{dev:p.dev,alt:aok?p.altM:'--',latF:fmtGpsFrac(p.latF),lonF:fmtGpsFrac(p.lonF),phase:PHASES[ph],armed:arm,ch1_fired:ch1f,ch2_fired:ch2f,ch3_fired:ch3f,low_batt:lowb,rsv_9_15:'0b'+(rsv).toString(2).padStart(7,'0')});document.getElementById('phase').textContent=PHASES[ph].toUpperCase();document.getElementById('phase').className='st-phase p-'+PHASES[ph];var fusAlt=aok?p.altM:null,baroAlt=null,gpsAlt=null,bgRssi=null;if(p.pg){var t=p.pg.t,d=p.pg.d;if(t===1){fullGpsLat=d.lat;fullGpsLon=d.lon;document.getElementById('gps-map').href='https://www.google.com/maps?q='+d.lat.toFixed(7)+','+d.lon.toFixed(7);document.getElementById('gps-lnk').style.display='flex'}var df=PD[t];if(df&&df.f)setV(t,df.f(d),isLive);updateDetail(t,d);if(t===2)baroAlt=d.alt_cm/100;if(t===6)gpsAlt=d.alt_cm/100;if(t===12)bgRssi=d.bgRssi;if(t===3&&toC&&charts)pushChart(charts.mag,bootMs,[d.x,d.y,d.z]);if(t===4&&toC&&charts)pushChart(charts.acc,bootMs,[d.x,d.y,d.z]);if(t===5&&toC&&charts)pushChart(charts.gyr,bootMs,[d.x,d.y,d.z]);if(t===8&&toC&&charts)pushChart(charts.batt,bootMs,[d.batt,null]);if(t===14)loadThrustCurve(d)}if(toC&&charts){pushChart(charts.alt,bootMs,[fusAlt,gpsAlt,baroAlt]);pushChart(charts.snr,bootMs,[snr,rssi,bgRssi])}if(isLive&&voiceEnabled)voiceOnTelem(p,ph,arm,aok?p.altM:null)}
 
   function getLiveRecs(){return liveSource==='rkt'?rktLiveRecs:baseLiveRecs}
-  function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+sessions[viewIdx].length+')'}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
+  function updateNav(){var n=sessions.length;document.getElementById('btn-prev').disabled=(viewIdx===-1&&n===0)||(viewIdx===0);document.getElementById('btn-next').disabled=(viewIdx===-1)||(viewIdx>=n-1);var lbl=liveSource==='rkt'?'Live Rkt':'Live Base';var info;if(viewIdx===-1){info=lbl+(n?' | '+n+'sess':'')}else{var isDl=sessions[viewIdx]===dlSession;var s=sessions[viewIdx];var partTag=(s.partTotal>1)?(' p'+(s.partIdx+1)+'/'+s.partTotal):'';var tsTag='';if(s.startUtcMs){var d=new Date(s.startUtcMs);tsTag=' '+d.toISOString().replace('T',' ').slice(0,19)+'Z';}info=(viewIdx+1)+'/'+n+(isDl?' DL':'')+' ('+s.length+')'+partTag+tsTag}document.getElementById('sess-info').textContent=info;var bLive=document.getElementById('btn-live-base'),rLive=document.getElementById('btn-live-rkt');if(bLive)bLive.className=viewIdx===-1&&liveSource==='base'?'act':'';if(rLive)rLive.className=viewIdx===-1&&liveSource==='rkt'?'act':'';}
   function showView(idx){viewIdx=idx;clearCharts();document.getElementById('log').innerHTML='';updateNav();var recs=idx===-1?getLiveRecs():sessions[idx];for(var i=0;i<recs.length;i++){var r=recs[i];showRecord(r,true,false);addLogRec(r,idx!==-1)}}
   function addLogRec(rec,hist){
     var bytes=new Uint8Array(rec.payload);var hex=toHex(bytes);
@@ -560,21 +562,52 @@ function initCharts() {
     var recs=[];
     for(var k in allFetched)recs.push(allFetched[k]);
     recs.sort(function(a,b){return a.recNum-b.recNum});
-    sessions=[];
+    var rawSessions=[];
     var cur=[];
     for(var i=0;i<recs.length;i++){
       var r=recs[i];
-      // Assign type if not already set
       if(!r.type){
         var b0=r.payload.byteLength>0?new Uint8Array(r.payload)[0]:0;
         r.type=(b0===0xAF)?'pkt':'logpage';
       }
       // New session on timestamp reset (reboot boundary)
-      if(cur.length>0&&r.ts<cur[cur.length-1].ts){sessions.push(cur);cur=[];}
+      if(cur.length>0&&r.ts<cur[cur.length-1].ts){rawSessions.push(cur);cur=[];}
       cur.push(r);
     }
-    if(cur.length>0)sessions.push(cur);
-    // Append LoRa download session if non-empty
+    if(cur.length>0)rawSessions.push(cur);
+
+    // Extract first 0x0D UTC timestamp; split large sessions for display perf.
+    sessions=[];
+    for(var s=0;s<rawSessions.length;s++){
+      var sess=rawSessions[s];
+      var startUtcMs=null;
+      for(var j=0;j<sess.length;j++){
+        var rec=sess[j];
+        if(rec.type==='logpage' && rec.payload.byteLength>=9){
+          var u8=new Uint8Array(rec.payload);
+          if(u8[0]===0x0D){
+            var dv=new DataView(rec.payload);
+            var lo=dv.getUint32(1,true), hi=dv.getUint32(5,true);
+            startUtcMs=lo + hi*0x100000000;
+            break;
+          }
+        }
+      }
+      var n=sess.length;
+      if(n<=SESSION_SPLIT_RECS){
+        sess.startUtcMs=startUtcMs; sess.partIdx=0; sess.partTotal=1; sess.firstRec=sess[0].recNum;
+        sessions.push(sess);
+      } else {
+        var nParts=Math.ceil(n/SESSION_SPLIT_RECS);
+        for(var p=0;p<nParts;p++){
+          var chunk=sess.slice(p*SESSION_SPLIT_RECS,(p+1)*SESSION_SPLIT_RECS);
+          chunk.startUtcMs=startUtcMs;
+          chunk.partIdx=p; chunk.partTotal=nParts;
+          chunk.firstRec=chunk[0].recNum;
+          sessions.push(chunk);
+        }
+      }
+    }
     if (dlSession.length > 0) sessions.push(dlSession);
   }
   function updateFetchProgress(cursor) {
@@ -618,7 +651,7 @@ function initCharts() {
           document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
           rktFetchDone = false;
           rktFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
-            console.log('[fetch] rkt batch '+start+'-'+(start+count)+' ok='+ok+' lowestRn='+rktFetchLowestRn+' recsTotal='+fetchSpeedRecs);
+            if (FETCH_VERBOSE) console.log('[fetch] rkt batch '+start+'-'+(start+count)+' ok='+ok+' lowestRn='+rktFetchLowestRn+' recsTotal='+fetchSpeedRecs);
             if (fetchAbort) { rktDone(); return; }
             if (ok) {
               cursor = start;
@@ -651,28 +684,28 @@ function initCharts() {
 
     // Base station BLE fetch path
     if (bleConnected && bleLogFetchChar_) {
-      console.log('[fetch] starting base BLE fetch');
+      if (FETCH_VERBOSE) console.log('[fetch] starting base BLE fetch');
       bleReadStatus().then(function() {
         var recEl = document.getElementById('val-logrec');
         var newest = parseInt(recEl.textContent) || 0;
-        console.log('[fetch] newest='+newest);
+        if (FETCH_VERBOSE) console.log('[fetch] newest='+newest);
         if (newest === 0) { document.getElementById('btn-stop').style.display='none'; return; }
         // Fetch newest-first, skip already-fetched ranges, so re-clicking extends downward
         var cursor = newest;
         var batchSize = 2000;
         function blePage() {
-          if (fetchAbort || cursor <= 0) { console.log('[fetch] done condition cursor='+cursor+' abort='+fetchAbort); bleDone(); return; }
+          if (fetchAbort || cursor <= 0) { if (FETCH_VERBOSE) console.log('[fetch] done condition cursor='+cursor+' abort='+fetchAbort); bleDone(); return; }
           var start = Math.max(cursor - batchSize, 0);
           var count = cursor - start;
           // Skip ranges already in memory (allows re-click to continue where we left off)
           if (start >= fetchedLowest && cursor <= fetchedHighest) {
-            console.log('[fetch] skipping cached '+start+'-'+cursor);
+            if (FETCH_VERBOSE) console.log('[fetch] skipping cached '+start+'-'+cursor);
             cursor = start; blePage(); return;
           }
-          console.log('[fetch] requesting batch '+start+'-'+(start+count));
+          if (FETCH_VERBOSE) console.log('[fetch] requesting batch '+start+'-'+(start+count));
           document.getElementById('fst').textContent = '#'+start+'..'+(start+count-1)+'…';
           bleFetchLogs(start, count, function() { updateFetchProgress(cursor); }).then(function(ok) {
-            console.log('[fetch] batch '+start+'-'+(start+count)+' ok='+ok+' lowestRn='+bleFetchLowestRn+' recsTotal='+fetchSpeedRecs+' bytesTotal='+fetchSpeedBytes);
+            if (FETCH_VERBOSE) console.log('[fetch] batch '+start+'-'+(start+count)+' ok='+ok+' lowestRn='+bleFetchLowestRn+' recsTotal='+fetchSpeedRecs+' bytesTotal='+fetchSpeedBytes);
             if (fetchAbort) { bleDone(); return; }
             if (ok) {
               cursor = start;
@@ -869,12 +902,12 @@ function initCharts() {
         // ev.target.value.buffer can be a larger underlying ArrayBuffer with padding.
         var dv = ev.target.value;
         var len = dv.byteLength;
-        if (len === 0) {
-          console.log('[ble fetch] end marker');
+        bleFetchLastNotifyMs = Date.now();
+        if (len === 0 || (len === 1 && dv.getUint8(0) === 0xFF)) {
+          if (FETCH_VERBOSE) console.log('[ble fetch] end marker');
           bleFetchDone = true;
           return;
         }
-        bleFetchLastNotifyMs = Date.now();
         fetchSpeedBytes += len;
         var off = 0;
         var parsed = 0, dupes = 0;
@@ -989,9 +1022,9 @@ function initCharts() {
     rdv.setUint32(0, startRec, true);
     rdv.setUint16(4, count, true);
     try {
-      console.log('[bleFetchLogs] write req start='+startRec+' count='+count);
+      if (FETCH_VERBOSE) console.log('[bleFetchLogs] write req start='+startRec+' count='+count);
       await bleLogFetchChar_.writeValueWithResponse(req);
-      console.log('[bleFetchLogs] write ack — waiting for end marker');
+      if (FETCH_VERBOSE) console.log('[bleFetchLogs] write ack — waiting for end marker');
       var idleTimeoutMs = 3000; // 3s with no notify = stalled
       var lastProg = Date.now();
       while (!bleFetchDone && !fetchAbort && (Date.now() - bleFetchLastNotifyMs) < idleTimeoutMs) {
@@ -1157,9 +1190,9 @@ function initCharts() {
     rdv.setUint32(0, startRec, true);
     rdv.setUint16(4, count, true);
     try {
-      console.log('[rktFetchLogs] write req start='+startRec+' count='+count);
+      if (FETCH_VERBOSE) console.log('[rktFetchLogs] write req start='+startRec+' count='+count);
       await rktFetchChar_.writeValueWithResponse(req);
-      console.log('[rktFetchLogs] write ack — waiting for end marker');
+      if (FETCH_VERBOSE) console.log('[rktFetchLogs] write ack — waiting for end marker');
       var idleTimeoutMs = 3000;
       var lastProg = Date.now();
       while (!rktFetchDone && !fetchAbort && (Date.now() - rktFetchLastNotifyMs) < idleTimeoutMs) {
@@ -1239,12 +1272,12 @@ function initCharts() {
        try {
         var dv = ev.target.value;
         var len = dv.byteLength;
-        if (len === 0) {
-          console.log('[rkt fetch] end marker');
+        rktFetchLastNotifyMs = Date.now();
+        if (len === 0 || (len === 1 && dv.getUint8(0) === 0xFF)) {
+          if (FETCH_VERBOSE) console.log('[rkt fetch] end marker');
           rktFetchDone = true;
           return;
         }
-        rktFetchLastNotifyMs = Date.now();
         fetchSpeedBytes += len;
         var off = 0;
         var parsed = 0, dupes = 0;

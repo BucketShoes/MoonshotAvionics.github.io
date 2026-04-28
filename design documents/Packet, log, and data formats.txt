@@ -316,7 +316,7 @@ When we eventually combine services/chars, this will still be separate from the 
     the payload is the raw data page or packet payload as stored in the rocket flash).
     Empty notification (0 bytes) = end of requested range.
 TODO: @@@ this is wrong - the logs should each include the relevant timestamp from the log (this isnt the current time, its the time it was logged).
-TODO: it should also include the logged snr/rssi, same as base station does - although for the rocket, the majority of these are expected to be the sentinel 127, since most logs are locally generated - i.e. this is identical format to the base station char0004, except the interpretation differs because its a log from the rocket, rather than a log from the base station, so will be from a different log record index and different timestamp since boot (if they booted at different times and had different other logs before this)
+TODO: it should also include the logged snr/rssi, same as base station does - although for the rocket, the majority of these are expected to be the sentinel 127, since most logs are locally generated - i.e. this is identical format to the base station char0004, except the interpretation differs because its a log from the rocket, rather than a log from the base station about what it recieved from the rocket, so will be from a different log record index and different timestamp since boot (if they booted at different times and had different other logs before this)
 
   Char 0006 (WRITE | WRITE WITHOUT RESPONSE | NOTIFY) — OTA firmware chunk
     Same chunk wire format and notification protocol as base station char 0006 (see above).

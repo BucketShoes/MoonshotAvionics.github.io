@@ -388,6 +388,7 @@ void nonblockingLoopStats() {
 void setup() {
   bootMicros = micros();  // Capture boot time for tagged serial timestamps... TODO: wtf... boot is zero by definition, this is unnecesary
   Serial.begin(SERIAL_BAUD);
+  Serial.setTxTimeoutMs(0);  // non-blocking when USB host is absent (flight: no host)
 //  taggedSerial.begin(SERIAL_BAUD);
   pinMode(USER_BTN_PIN, INPUT_PULLUP);
   ledcAttach(LED_PIN, 1000, 11);
