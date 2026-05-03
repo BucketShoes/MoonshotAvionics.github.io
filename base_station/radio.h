@@ -54,7 +54,10 @@ enum WindowMode : uint8_t {
   WIN_BACKHAUL = 5, //timeslot reserved for relay backhaul beween multiple bae stations - rocket stays quiet, but listens similar to a WIN_CMD but on hop channel with backhaul modulation. not valid for sending normal commands, but can help sync
   WIN_MULTIPURPOSE = 6,//long slow cycle between various functions. full anchor timing and state machine required to know which modulation to use.
   WIN_RDF = 7, //for radio distance/direction finding. send multiple short packets at variable signal strength and changing SF/BW for improved distance estimation
-  WIN_GFSK = 8,//
+  WIN_GFSK = 8,//todo need different bandwidths
+  WIN_CONTINUE=9// extend previous slot. dont reset radio into standby at start of slot, etc.
+  WIN_NARROWBAND_TELEM=10, //longer range version, but not as limited as LR
+  WIN_WIDEBAND_TELEM=11, //extra bandwidth, gives all telemetry data pages in a single packet
 };
 
 
