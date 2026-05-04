@@ -1192,6 +1192,8 @@ function initCharts() {
         if (rktLiveRecs.length > MAX_PTS) rktLiveRecs.shift();
         showPkt(recData, 127, -130, captureMs, viewIdx === -1 && liveSource === 'rkt', true);
         if (viewIdx === -1 && liveSource === 'rkt') addLogRec(rec, false);
+        lastPktMs = Date.now();
+        mapAddPt(recData, 127, -130, -1);
       } else {
         var rec = {recNum: -1, snr: 127, rssi: -130, ts: captureMs, payload: recData, type: 'logpage'};
         rktLiveRecs.push(rec);
@@ -2193,24 +2195,40 @@ function initCharts() {
   }
 
   // Missing-packet timer: fires every second.
-  // Reads p10-rate input directly; only acts for rates giving period >= 2s.
+  // Reads p10-rate (base) or rkt-rate (rocket BLE) depending on liveSource.
   setInterval(function() {
-    if (!mapLastWall || !mapUserGps) return;
-    var rateEl = document.getElementById('p10-rate');
-    var rate = rateEl ? (parseInt(rateEl.value)|0) : 0;
-    if (rate === 0) return; // TX stopped — no markers
-    var period = rate > 0 ? 1 : Math.max(1, -rate); // fast rates use 1s period
-    if ((Date.now() - mapLastWall) / 1000 < period + 0.9) return;
+    if (!mapUserGps) return;
+    var now = Date.now();
+    var lastWall, period;
+    if (liveSource === 'rkt' && rktBleConnected) {
+      // Rocket BLE: rkt-rate values are µs intervals (same scale as p10-rate)
+      var rktRateEl = document.getElementById('rkt-rate');
+      var rktRateUs = rktRateEl ? (parseInt(rktRateEl.value)|0) : 0;
+      if (rktRateUs === 0) return; // max rate — skip markers
+      var rktPeriodS = rktRateUs / 1e6;
+      if (rktPeriodS > 1.0) return; // slower than 1 Hz — don't add markers
+      period = 1;
+      lastWall = mapLastWall;
+    } else {
+      if (!mapLastWall) return;
+      var rateEl = document.getElementById('p10-rate');
+      var rate = rateEl ? (parseInt(rateEl.value)|0) : 0;
+      if (rate === 0) return; // TX stopped — no markers
+      period = rate > 0 ? 1 : Math.max(1, -rate); // fast rates use 1s period
+      lastWall = mapLastWall;
+    }
+    if (!lastWall) return;
+    if ((now - lastWall) / 1000 < period + 0.9) return;
     // Don't spam: skip if we just added a missed marker within this period
     for (var i = mapPts.length - 1; i >= 0; i--) {
       if (!mapPts[i].isMissed) break;
-      if ((Date.now() - mapPts[i].wallTime) / 1000 < period * 0.9) return;
+      if ((now - mapPts[i].wallTime) / 1000 < period * 0.9) return;
     }
-    mapPts.push({wallTime: Date.now(), type: 'missed',
+    mapPts.push({wallTime: now, type: 'missed',
       uLat: mapUserGps.lat, uLon: mapUserGps.lon, uAcc: mapUserGps.acc,
       rLat: null, rLon: null, alt: null, snr: null, rssi: null,
       phase: null, recNum: null, pg: null, isMissed: true});
-    mapLastWall = Date.now();
+    mapLastWall = now;
     mapScheduleDraw();
   }, 1000);
 
