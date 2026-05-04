@@ -2205,9 +2205,7 @@ function initCharts() {
       var rktRateEl = document.getElementById('rkt-rate');
       var rktRateUs = rktRateEl ? (parseInt(rktRateEl.value)|0) : 0;
       if (rktRateUs === 0) return; // max rate — skip markers
-      var rktPeriodS = rktRateUs / 1e6;
-      if (rktPeriodS > 1.0) return; // slower than 1 Hz — don't add markers
-      period = 1;
+      period = Math.max(1, rktRateUs / 1e6);
       lastWall = mapLastWall;
     } else {
       if (!mapLastWall) return;
