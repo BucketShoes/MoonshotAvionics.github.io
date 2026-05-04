@@ -1185,6 +1185,7 @@ function initCharts() {
       var recData = buf.slice(off, off + recLen);
       off += recLen;
       var type = new Uint8Array(recData)[0];
+      if (type === 0xAF) console.log('[rkt BLE] 0xAF recLen='+recLen+' mapPtsBefore='+mapPts.length);
       if (type === 0xAF) {
         rktLastHeader = recData;
         var rec = {recNum: -1, snr: 127, rssi: -130, ts: captureMs, payload: recData, type: 'pkt'};
@@ -1194,6 +1195,7 @@ function initCharts() {
         if (viewIdx === -1 && liveSource === 'rkt') addLogRec(rec, false);
         lastPktMs = Date.now();
         mapAddPt(recData, 127, -130, -1);
+        console.log('[rkt BLE] mapAddPt done, mapPts.length='+mapPts.length+' mapVisible='+mapVisible);
       } else {
         var rec = {recNum: -1, snr: 127, rssi: -130, ts: captureMs, payload: recData, type: 'logpage'};
         rktLiveRecs.push(rec);
